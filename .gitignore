@@ -1,0 +1,10 @@
+/build/
+/out/
+/config.local.mk
+__pycache__/
+*.pyc
+# Retail binaries and game material are never committed (PRD D12).
+*.OVL
+*.ovl
+!/tests/**/.keep
+/fixtures/

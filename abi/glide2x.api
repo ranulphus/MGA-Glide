@@ -1,0 +1,136 @@
+# MGA-Glide master API table. One line per exported Glide 2.x function.
+# name | return | arguments | tier | used-by | status
+# tier: 1 = needed to start, 2 = state/texturing used by games, 3 = logged stub first.
+# used-by: g = GTA COMPFX.EXE, s = Screamer Rally STRT3FX.EXE (import lists, not call traces).
+# status: stub | partial | done. The decorated export is _<NAME>@<4*nargs>, uppercase.
+grAADrawLine | void | const GrVertex *v1, const GrVertex *v2 | 3 | gs | stub
+grAADrawPoint | void | const GrVertex *pt | 3 | gs | stub
+grAADrawPolygon | void | const int nverts, const int ilist[], const GrVertex vlist[] | 3 | gs | stub
+grAADrawPolygonVertexList | void | const int nverts, const GrVertex vlist[] | 3 | gs | stub
+grAADrawTriangle | void | const GrVertex *a, const GrVertex *b, const GrVertex *c, FxBool ab_antialias, FxBool bc_antialias, FxBool ca_antialias | 3 | gs | stub
+grAlphaBlendFunction | void | GrAlphaBlendFnc_t rgb_sf, GrAlphaBlendFnc_t rgb_df, GrAlphaBlendFnc_t alpha_sf, GrAlphaBlendFnc_t alpha_df | 2 | gs | stub
+grAlphaCombine | void | GrCombineFunction_t function, GrCombineFactor_t factor, GrCombineLocal_t local, GrCombineOther_t other, FxBool invert | 2 | gs | stub
+grAlphaControlsITRGBLighting | void | FxBool enable | 2 | gs | stub
+grAlphaTestFunction | void | GrCmpFnc_t function | 2 | gs | stub
+grAlphaTestReferenceValue | void | GrAlpha_t value | 2 | gs | stub
+grBufferClear | void | GrColor_t color, GrAlpha_t alpha, FxU16 depth | 1 | gs | stub
+grBufferNumPending | int | void | 2 | gs | stub
+grBufferSwap | void | int swap_interval | 1 | gs | stub
+grCheckForRoom | void | FxI32 n | 3 | gs | stub
+grChromakeyMode | void | GrChromakeyMode_t mode | 3 | gs | stub
+grChromakeyValue | void | GrColor_t value | 3 | gs | stub
+grClipWindow | void | FxU32 minx, FxU32 miny, FxU32 maxx, FxU32 maxy | 1 | gs | stub
+grColorCombine | void | GrCombineFunction_t function, GrCombineFactor_t factor, GrCombineLocal_t local, GrCombineOther_t other, FxBool invert | 2 | gs | stub
+grColorMask | void | FxBool rgb, FxBool a | 2 | gs | stub
+grConstantColorValue4 | void | float a, float r, float g, float b | 2 | gs | stub
+grConstantColorValue | void | GrColor_t value | 2 | gs | stub
+grCullMode | void | GrCullMode_t mode | 2 | gs | stub
+grDepthBiasLevel | void | FxI16 level | 2 | gs | stub
+grDepthBufferFunction | void | GrCmpFnc_t function | 2 | gs | stub
+grDepthBufferMode | void | GrDepthBufferMode_t mode | 2 | gs | stub
+grDepthMask | void | FxBool mask | 2 | gs | stub
+grDisableAllEffects | void | void | 2 | gs | stub
+grDitherMode | void | GrDitherMode_t mode | 2 | gs | stub
+grDrawLine | void | const GrVertex *v1, const GrVertex *v2 | 2 | gs | stub
+grDrawPlanarPolygon | void | int nverts, const int ilist[], const GrVertex vlist[] | 3 | gs | stub
+grDrawPlanarPolygonVertexList | void | int nverts, const GrVertex vlist[] | 3 | gs | stub
+grDrawPoint | void | const GrVertex *pt | 2 | gs | stub
+grDrawPolygon | void | int nverts, const int ilist[], const GrVertex vlist[] | 2 | gs | stub
+grDrawPolygonVertexList | void | int nverts, const GrVertex vlist[] | 2 | gs | stub
+grDrawTriangle | void | const GrVertex *a, const GrVertex *b, const GrVertex *c | 1 | gs | stub
+grErrorSetCallback | void | GrErrorCallbackFnc_t fnc | 1 | gs | stub
+grFogColorValue | void | GrColor_t fogcolor | 2 | gs | stub
+grFogMode | void | GrFogMode_t mode | 2 | gs | stub
+grFogTable | void | const GrFog_t ft[] | 2 | gs | stub
+grGammaCorrectionValue | void | float value | 2 | gs | stub
+grGlideGetState | void | GrState *state | 3 | gs | stub
+grGlideGetVersion | void | char version[80] | 1 | gs | stub
+grGlideInit | void | void | 1 | gs | stub
+grGlideSetState | void | const GrState *state | 3 | gs | stub
+grGlideShamelessPlug | void | const FxBool on | 3 | gs | stub
+grGlideShutdown | void | void | 1 | gs | stub
+grHints | void | GrHint_t hintType, FxU32 hintMask | 3 | gs | stub
+grLfbConstantAlpha | void | GrAlpha_t alpha | 3 | gs | stub
+grLfbConstantDepth | void | FxU16 depth | 3 | gs | stub
+grLfbLock | FxBool | GrLock_t type, GrBuffer_t buffer, GrLfbWriteMode_t writeMode, GrOriginLocation_t origin, FxBool pixelPipeline, GrLfbInfo_t *info | 2 | gs | stub
+grLfbReadRegion | FxBool | GrBuffer_t src_buffer, FxU32 src_x, FxU32 src_y, FxU32 src_width, FxU32 src_height, FxU32 dst_stride, void *dst_data | 2 | gs | stub
+grLfbUnlock | FxBool | GrLock_t type, GrBuffer_t buffer | 2 | gs | stub
+grLfbWriteColorFormat | void | GrColorFormat_t colorFormat | 2 | gs | stub
+grLfbWriteColorSwizzle | void | FxBool swizzleBytes, FxBool swapWords | 2 | gs | stub
+grLfbWriteRegion | FxBool | GrBuffer_t dst_buffer, FxU32 dst_x, FxU32 dst_y, GrLfbSrcFmt_t src_format, FxU32 src_width, FxU32 src_height, FxI32 src_stride, void *src_data | 2 | gs | stub
+grRenderBuffer | void | GrBuffer_t buffer | 1 | gs | stub
+grResetTriStats | void |  | 2 | gs | stub
+grSplash | void | float x, float y, float width, float height, FxU32 frame | 2 | gs | stub
+grSstConfigPipeline | void | GrChipID_t chip, FxU32 reg, FxU32 value | 3 | gs | stub
+grSstControl | FxBool | FxU32 code | 3 | gs | stub
+grSstIdle | void | void | 1 | gs | stub
+grSstIsBusy | FxBool | void | 3 | gs | stub
+grSstOrigin | void | GrOriginLocation_t origin | 2 | gs | stub
+grSstPerfStats | void | GrSstPerfStats_t *pStats | 3 | gs | stub
+grSstQueryBoards | FxBool | GrHwConfiguration *hwconfig | 1 | gs | stub
+grSstQueryHardware | FxBool | GrHwConfiguration *hwconfig | 1 | gs | stub
+grSstResetPerfStats | void | void | 3 | gs | stub
+grSstScreenHeight | FxU32 | void | 2 | gs | stub
+grSstScreenWidth | FxU32 | void | 2 | gs | stub
+grSstSelect | void | int which_sst | 1 | gs | stub
+grSstStatus | FxU32 | void | 3 | gs | stub
+grSstVideoLine | FxU32 | void | 3 | gs | stub
+grSstVidMode | void | FxU32 whichSst, void *vidTimings | 3 | gs | stub
+grSstVRetraceOn | FxBool | void | 3 | gs | stub
+grSstWinClose | void | void | 1 | gs | stub
+grSstWinOpen | FxBool | FxU32 hWnd, GrScreenResolution_t screen_resolution, GrScreenRefresh_t refresh_rate, GrColorFormat_t color_format, GrOriginLocation_t origin_location, int nColBuffers, int nAuxBuffers | 1 | gs | stub
+grTexCalcMemRequired | FxU32 | GrLOD_t lodmin, GrLOD_t lodmax, GrAspectRatio_t aspect, GrTextureFormat_t fmt | 2 | gs | stub
+grTexClampMode | void | GrChipID_t tmu, GrTextureClampMode_t s_clampmode, GrTextureClampMode_t t_clampmode | 2 | gs | stub
+grTexCombine | void | GrChipID_t tmu, GrCombineFunction_t rgb_function, GrCombineFactor_t rgb_factor, GrCombineFunction_t alpha_function, GrCombineFactor_t alpha_factor, FxBool rgb_invert, FxBool alpha_invert | 2 | gs | stub
+grTexCombineFunction | void | GrChipID_t tmu, GrTextureCombineFnc_t fnc | 3 | gs | stub
+grTexDetailControl | void | GrChipID_t tmu, int lod_bias, FxU8 detail_scale, float detail_max | 3 | gs | stub
+grTexDownloadMipMap | void | GrChipID_t tmu, FxU32 startAddress, FxU32 evenOdd, GrTexInfo *info | 2 | gs | stub
+grTexDownloadMipMapLevel | void | GrChipID_t tmu, FxU32 startAddress, GrLOD_t thisLod, GrLOD_t largeLod, GrAspectRatio_t aspectRatio, GrTextureFormat_t format, FxU32 evenOdd, void *data | 2 | gs | stub
+grTexDownloadMipMapLevelPartial | void | GrChipID_t tmu, FxU32 startAddress, GrLOD_t thisLod, GrLOD_t largeLod, GrAspectRatio_t aspectRatio, GrTextureFormat_t format, FxU32 evenOdd, void *data, int start, int end | 2 | gs | stub
+grTexDownloadTable | void | GrChipID_t tmu, GrTexTable_t type, void *data | 2 | gs | stub
+grTexDownloadTablePartial | void | GrChipID_t tmu, GrTexTable_t type, void *data, int start, int end | 2 | gs | stub
+grTexFilterMode | void | GrChipID_t tmu, GrTextureFilterMode_t minfilter_mode, GrTextureFilterMode_t magfilter_mode | 2 | gs | stub
+grTexLodBiasValue | void | GrChipID_t tmu, float bias | 2 | gs | stub
+grTexMaxAddress | FxU32 | GrChipID_t tmu | 2 | gs | stub
+grTexMinAddress | FxU32 | GrChipID_t tmu | 2 | gs | stub
+grTexMipMapMode | void | GrChipID_t tmu, GrMipMapMode_t mode, FxBool lodBlend | 2 | gs | stub
+grTexMultibase | void | GrChipID_t tmu, FxBool enable | 3 | gs | stub
+grTexMultibaseAddress | void | GrChipID_t tmu, GrTexBaseRange_t range, FxU32 startAddress, FxU32 evenOdd, GrTexInfo *info | 3 | gs | stub
+grTexNCCTable | void | GrChipID_t tmu, GrNCCTable_t table | 2 | gs | stub
+grTexSource | void | GrChipID_t tmu, FxU32 startAddress, FxU32 evenOdd, GrTexInfo *info | 2 | gs | stub
+grTexTextureMemRequired | FxU32 | FxU32 evenOdd, GrTexInfo *info | 2 | gs | stub
+grTriStats | void | FxU32 *trisProcessed, FxU32 *trisDrawn | 2 | gs | stub
+gu3dfGetInfo | FxBool | const char *filename, Gu3dfInfo *info | 2 | gs | stub
+gu3dfLoad | FxBool | const char *filename, Gu3dfInfo *data | 2 | gs | stub
+guAADrawTriangleWithClip | void | const GrVertex *a, const GrVertex *b, const GrVertex *c | 3 | gs | stub
+guAlphaSource | void | GrAlphaSource_t mode | 2 | gs | stub
+guColorCombineFunction | void | GrColorCombineFnc_t fnc | 2 | gs | stub
+guDrawPolygonVertexListWithClip | void | int nverts, const GrVertex vlist[] | 2 | gs | stub
+guDrawTriangleWithClip | void | const GrVertex *a, const GrVertex *b, const GrVertex *c | 2 | gs | stub
+guEncodeRLE16 | int | void *dst, void *src, FxU32 width, FxU32 height | 3 | gs | stub
+guEndianSwapBytes | FxU16 | FxU16 value | 2 | gs | stub
+guEndianSwapWords | FxU32 | FxU32 value | 2 | gs | stub
+guFbReadRegion | FxBool | int src_x, int src_y, int w, int h, void *dst, int strideInBytes | 2 | g | stub
+guFbWriteRegion | FxBool | int dst_x, int dst_y, int w, int h, const void *src, int strideInBytes | 2 | g | stub
+guFogGenerateExp2 | void | GrFog_t fogtable[], float density | 2 | gs | stub
+guFogGenerateExp | void | GrFog_t fogtable[], float density | 2 | gs | stub
+guFogGenerateLinear | void | GrFog_t fogtable[], float nearZ, float farZ | 2 | gs | stub
+guFogTableIndexToW | float | int i | 2 | gs | stub
+guMovieSetName | void | const char *name | 3 | gs | stub
+guMovieStart | void | void | 3 | gs | stub
+guMovieStop | void | void | 3 | gs | stub
+guMPDrawTriangle | void | const GrVertex *a, const GrVertex *b, const GrVertex *c | 3 | gs | stub
+guMPInit | void | void | 3 | gs | stub
+guMPTexCombineFunction | void | GrMPTextureCombineFnc_t tc | 3 | gs | stub
+guMPTexSource | void | GrChipID_t virtual_tmu, GrMipMapId_t mmid | 3 | gs | stub
+guTexAllocateMemory | GrMipMapId_t | GrChipID_t tmu, FxU8 odd_even_mask, int width, int height, GrTextureFormat_t fmt, GrMipMapMode_t mm_mode, GrLOD_t smallest_lod, GrLOD_t largest_lod, GrAspectRatio_t aspect, GrTextureClampMode_t s_clamp_mode, GrTextureClampMode_t t_clamp_mode, GrTextureFilterMode_t minfilter_mode, GrTextureFilterMode_t magfilter_mode, float lod_bias, FxBool trilinear | 2 | gs | stub
+guTexChangeAttributes | FxBool | GrMipMapId_t mmid, int width, int height, GrTextureFormat_t fmt, GrMipMapMode_t mm_mode, GrLOD_t smallest_lod, GrLOD_t largest_lod, GrAspectRatio_t aspect, GrTextureClampMode_t s_clamp_mode, GrTextureClampMode_t t_clamp_mode, GrTextureFilterMode_t minFilterMode, GrTextureFilterMode_t magFilterMode | 2 | gs | stub
+guTexCombineFunction | void | GrChipID_t tmu, GrTextureCombineFnc_t fnc | 3 | gs | stub
+guTexCreateColorMipMap | FxU16 * | void | 2 | gs | stub
+guTexDownloadMipMap | void | GrMipMapId_t mmid, const void *src, const GuNccTable *table | 2 | gs | stub
+guTexDownloadMipMapLevel | void | GrMipMapId_t mmid, GrLOD_t lod, const void **src | 2 | gs | stub
+guTexGetCurrentMipMap | GrMipMapId_t | GrChipID_t tmu | 2 | gs | stub
+guTexGetMipMapInfo | GrMipMapInfo * | GrMipMapId_t mmid | 2 | gs | stub
+guTexMemQueryAvail | FxU32 | GrChipID_t tmu | 2 | gs | stub
+guTexMemReset | void | void | 2 | gs | stub
+guTexSource | void | GrMipMapId_t id | 2 | gs | stub

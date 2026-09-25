@@ -1,0 +1,22 @@
+/* entry.h - how a Glide export is defined.
+ *
+ * Every public function is __stdcall and exported by name; the linker
+ * (option nocaseexact) produces the uppercase decorated names games import,
+ * e.g. _GRDRAWTRIANGLE@12. */
+#ifndef MGA_GLIDE_ENTRY_H
+#define MGA_GLIDE_ENTRY_H
+#include "glide/glide2.h"
+#include "api_ids.h"
+
+#if defined(__WATCOMC__)
+#  define GR_EXPORT __export
+#else
+#  define GR_EXPORT
+#endif
+
+#define GR_ENTRY(ret, name, args) ret GR_EXPORT GLIDE_API name args
+
+/* First-call bookkeeping for stubs and the call tracer. */
+void mg_stub_hit(int id);
+
+#endif

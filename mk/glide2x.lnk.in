@@ -1,0 +1,11 @@
+# wlink script for GLIDE2X.OVL (DOS/4G LE DLL).
+format os2 le dll initglobal
+option modname=glide2x
+option start=__DLLstart_
+option nocaseexact
+option nodefaultlibs
+option quiet
+option description 'MGA-Glide @VER@'
+libpath @WATCOM@/lib386
+libpath @WATCOM@/lib386/dos
+library clib3s.lib
