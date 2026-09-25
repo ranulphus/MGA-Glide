@@ -1,0 +1,70 @@
+[General]
+confirm_exit = 0
+confirm_save = 0
+confirm_reset = 0
+sound_gain = 0
+
+[Machine]
+machine = bf6
+cpu_family = pentium2_deschutes
+cpu_speed = 350000000
+cpu_multi = 3.5
+cpu_use_dynarec = 1
+fpu_type = internal
+mem_size = 65536
+time_sync = disabled
+
+[Video]
+gfxcard = productiva_g100
+voodoo = @VOODOO@
+
+[Matrox Productiva G100]
+memory = @G100_MB@
+
+[3DFX Voodoo Graphics]
+type = voodoo
+framebuffer_memory = 2
+texture_memory = 2
+render_threads = 2
+recompiler = 1
+bilinear = 1
+dithersub = 1
+
+[Input devices]
+keyboard_type = keyboard_ps2
+mouse_type = none
+
+[Sound]
+sndcard = @SNDCARD@
+
+[Storage controllers]
+hdc = internal
+fdc = internal
+
+[Ports (COM & LPT)]
+serial1_enabled = 1
+serial1_device = file
+serial2_enabled = 0
+lpt1_enabled = 0
+
+[File (COM) #1]
+path = @SERIAL@
+append = 0
+
+[Hard disks]
+hdd_01_parameters = 63, 16, 130, 0, ide
+hdd_01_fn = @CIMG@
+hdd_01_ide_channel = 0:0
+@EXTRA_HDD@
+
+[Floppy and CD-ROM drives]
+fdd_01_type = 35_2hd
+fdd_01_fn = @BOOTIMG@
+fdd_01_check_bpb = 0
+fdd_02_type = none
+
+[Other peripherals]
+unittester_enabled = 1
+
+[86Box Unit Tester]
+exit_enabled = 1

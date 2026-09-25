@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Build the pinned, locally patched 86Box used by Loop A, and fetch the ROMs.
+# Runs inside the dev container (tools/dev). Output:
+#   $BOX86_DIR/bin/86Box        -> current build (symlink)
+#   $BOX86_DIR/roms/            sparse checkout of the ROM set
+# The build is keyed by the pin plus the patch series, so it is a no-op when
+# nothing changed.
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+root=$(cd "$here/../.." && pwd)
+eval "$(sed -n 's/^\(BOX86_[A-Z]*\|ROMS_[A-Z]*\) *:= *\(.*\)$/\1=\2/p' "$root/tools/setup/versions.mk")"
+: "${BOX86_DIR:=${MGA_CACHE:-$HOME/.cache/mga-glide}/86box}"
+mkdir -p "$BOX86_DIR/bin"
+
+key=$( { echo "$BOX86_COMMIT"; cat "$here/series";
+         grep -v '^#' "$here/series" | while read -r p; do [ -n "$p" ] && cat "$here/patches/$p"; done; } \
+       | sha256sum | cut -c1-16)
+out=$BOX86_DIR/bin/86Box-$key
+
+if [ ! -x "$out" ]; then
+  src=$BOX86_DIR/src-$BOX86_COMMIT
+  if [ ! -d "$src/.git" ]; then
+    git init -q "$src"
+    git -C "$src" remote add origin "$BOX86_REPO"
+    git -C "$src" fetch -q --depth 1 origin "$BOX86_COMMIT"
+    git -C "$src" checkout -q FETCH_HEAD
+  fi
+  work=$BOX86_DIR/work-$key
+  rm -rf "$work"; mkdir -p "$work"
+  git -C "$src" archive "$BOX86_COMMIT" | tar -x -C "$work"
+  grep -v '^#' "$here/series" | while read -r p; do
+    [ -n "$p" ] || continue
+    echo "86box: applying $p"
+    (cd "$work" && patch -p1 --no-backup-if-mismatch -s < "$here/patches/$p")
+  done
+  cmake -S "$work" -B "$work/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+        -DDEV_BRANCH=ON -DQT=OFF -DSDL2=ON -DDYNAREC=ON \
+        -DDISCORD=OFF -DMUNT=OFF -DFLUIDSYNTH=OFF -DRTMIDI=OFF -DOPENAL=ON \
+        -DGDBSTUB=OFF -DNEW_DYNAREC=OFF > "$work/cmake.log"
+  ninja -C "$work/build" > "$work/ninja.log" || { tail -40 "$work/ninja.log"; exit 1; }
+  bin=$(find "$work/build" -type f -name 86Box -perm -u+x | head -1)
+  cp "$bin" "$out"
+  rm -rf "$work"
+  echo "86box: built $out"
+fi
+ln -sfn "$(basename "$out")" "$BOX86_DIR/bin/86Box"
+
+roms=$BOX86_DIR/roms
+if [ "$(cat "$roms/.commit" 2>/dev/null)" != "$ROMS_COMMIT" ]; then
+  rm -rf "$roms"
+  git init -q "$roms"
+  git -C "$roms" remote add origin "$ROMS_REPO"
+  git -C "$roms" config core.sparseCheckout true
+  printf '%s\n' /machines/bf6/ /video/matrox/ > "$roms/.git/info/sparse-checkout"
+  git -C "$roms" fetch -q --depth 1 --filter=blob:none origin "$ROMS_COMMIT"
+  git -C "$roms" checkout -q FETCH_HEAD
+  echo "$ROMS_COMMIT" > "$roms/.commit"
+  echo "86box: roms at $ROMS_COMMIT"
+fi
+for f in machines/bf6/Beh_70.bin video/matrox/productiva8mbsdr.BIN; do
+  [ -s "$roms/$f" ] || { echo "86box: missing ROM $f" >&2; exit 1; }
+done
+echo "86box: ready ($BOX86_DIR/bin/86Box, key $key)"

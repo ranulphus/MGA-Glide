@@ -1,0 +1,41 @@
+# DOS test programs (32-bit, DOS/4GW) and 16-bit batch helpers.
+BUILD_ID := $(shell git describe --always --dirty 2>/dev/null || echo unknown)
+OW_EXEFLAGS := $(OW_CFLAGS) -i=tests/shim -dHX_BUILD_ID="\"$(BUILD_ID)\""
+
+SHIM_SRCS := tests/shim/hx.c
+SHIM_OBJS := $(SHIM_SRCS:%.c=build/ow/exe/%.obj)
+
+build/ow/exe/%.obj: %.c | build/gen/stamp
+	@mkdir -p $(dir $@)
+	$(Q)echo "  WCC     $<"
+	$(Q)$(WCC) $(OW_EXEFLAGS) -ad=$(@:.obj=.d) -fo=$@ $<
+
+# build/ow/dos/<NAME>.EXE from a list of objects.
+define dos_exe
+build/ow/dos/$(1).EXE: $(2) $(SHIM_OBJS) build/ow/mgahal_exe.lib
+	@mkdir -p build/ow/dos
+	$$(Q)echo "  WLINK   $$@"
+	$$(Q)$$(WLINK) system dos4g option quiet option stack=64k name $$@ \
+	  $$(addprefix file ,$(2) $$(SHIM_OBJS)) library build/ow/mgahal_exe.lib option map=$$(@:.EXE=.map)
+DOS_EXES += build/ow/dos/$(1).EXE
+endef
+
+$(eval $(call dos_exe,HELLO,build/ow/exe/tests/shim/hello.obj))
+
+# 16-bit .COM helpers.
+DOS_TOOLS := UTEXIT SERSAY WAITSEC REBOOT
+define dos_com
+build/ow/dos/$(1).COM: tools/dos/$(2).c
+	@mkdir -p build/ow/dos/obj16
+	$$(Q)echo "  WCC16   $$<"
+	$$(Q)$$(OWENV) $$(OWBIN)/wcc -bt=dos -ms -0 -os -zq -we -fo=build/ow/dos/obj16/$(2).obj $$<
+	$$(Q)$$(WLINK) system com option quiet name $$@ file build/ow/dos/obj16/$(2).obj
+endef
+$(eval $(call dos_com,UTEXIT,utexit))
+$(eval $(call dos_com,SERSAY,sersay))
+$(eval $(call dos_com,WAITSEC,waitsec))
+$(eval $(call dos_com,REBOOT,reboot))
+
+dostools: $(DOS_TOOLS:%=build/ow/dos/%.COM)
+dostests: $(DOS_EXES) dostools
+.PHONY: dostools dostests

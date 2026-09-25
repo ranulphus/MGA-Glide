@@ -5,6 +5,7 @@ include tools/setup/versions.mk
 include mk/ow.mk
 include mk/host.mk
 include mk/djgpp.mk
+include mk/dos.mk
 
 export WATCOM DJGPP_PREFIX MGA_CACHE OW_URL OW_SHA256 DJGPP_URL DJGPP_SHA256
 
@@ -37,7 +38,11 @@ build/ow/mgahal.lib: $(HAL_OW:%.c=build/ow/%.obj)
 	@rm -f $@
 	$(Q)echo "  WLIB    $@"
 	$(Q)$(WLIB) -q -b -n $@ $(addprefix +,$^)
-hal-ow: build/ow/mgahal.lib
+build/ow/mgahal_exe.lib: $(HAL_OW:%.c=build/ow/exe/%.obj)
+	@rm -f $@
+	$(Q)echo "  WLIB    $@"
+	$(Q)$(WLIB) -q -b -n $@ $(addprefix +,$^)
+hal-ow: build/ow/mgahal.lib build/ow/mgahal_exe.lib
 
 build/djgpp/libmgahal.a: $(HAL_DJGPP:%.c=build/djgpp/%.o)
 	@rm -f $@
@@ -94,3 +99,22 @@ help:
 	@echo "loopa TEST=..  run a DOS test in 86Box (see tools/loopa)"
 
 -include $(shell find build -name '*.d' 2>/dev/null)
+
+# ---- Loop A (86Box) ------------------------------------------------------
+.PHONY: 86box loopa loopa-selftest
+86box:
+	$(DEV) tools/86box/build.sh
+
+# make loopa TEST=hello [ARGS="--frames 10"] [OVL=build/ow/GLIDE2X.OVL]
+loopa: dostests
+	$(DEV) $(PYTHON) tools/loopa/run.py --name $(TEST) --exe build/ow/dos/$(shell echo $(TEST) | tr a-z A-Z).EXE \
+	  $(if $(ARGS),--args="$(ARGS)") $(if $(OVL),--ovl $(OVL))
+
+loopa-selftest: dostests
+	@set -e; \
+	check() { $(DEV) $(PYTHON) tools/loopa/run.py --name selftest-$$1 --exe build/ow/dos/HELLO.EXE \
+	            --idle 25 --boot-grace 20 $${3:+--args=$$3} >/dev/null || true; \
+	          got=$$(cat out/selftest-$$1/status); \
+	          if [ "$$got" = "$$2" ]; then echo "  selftest $$1: $$got (ok)"; \
+	          else echo "  selftest $$1: got $$got, want $$2"; exit 1; fi; }; \
+	check pass PASS; check fail FAIL --fail; check hang HANG --hang; check crash GUEST-EXC --crash

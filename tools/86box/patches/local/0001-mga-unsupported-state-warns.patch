@@ -1,0 +1,51 @@
+diff --git a/src/video/vid_mga.c b/src/video/vid_mga.c
+index f57bcea..688131f 100644
+--- a/src/video/vid_mga.c
++++ b/src/video/vid_mga.c
+@@ -38,6 +38,34 @@
+ #include <86box/vid_svga.h>
+ #include <86box/vid_svga_render.h>
+ 
++/* MGA-Glide local patch (WP-2): unsupported drawing-engine state must not
++ * stop the emulator. fatal() shows a blocking message box, which hangs a
++ * headless test run, so in this file it becomes a rate-limited warning on
++ * stderr and in the 86Box log, and emulation continues. */
++#include <stdarg.h>
++static void
++mystique_unsupported(const char *fmt, ...)
++{
++    static char last[256];
++    static int  repeats;
++    char        msg[256];
++    va_list     ap;
++
++    va_start(ap, fmt);
++    vsnprintf(msg, sizeof(msg), fmt, ap);
++    va_end(ap);
++    if (!strcmp(msg, last)) {
++        if (++repeats > 16)
++            return;
++    } else {
++        repeats = 0;
++        strncpy(last, msg, sizeof(last) - 1);
++    }
++    fprintf(stderr, "MGA-UNSUPPORTED: %s", msg);
++    pclog("MGA-UNSUPPORTED: %s", msg);
++}
++#define fatal mystique_unsupported
++
+ #define ROM_MILLENNIUM        "roms/video/matrox/matrox2064wr2.BIN"
+ #define ROM_MILLENNIUM_II     "roms/video/matrox/matrox2164wpc.BIN"
+ #define ROM_MILLENNIUM_II_AGP "roms/video/matrox/865-4.bin"
+@@ -5465,6 +5493,11 @@ blit_texture_trap(mystique_t *mystique)
+                                         goto skip_pixel;
+                                     break;
+ 
++                                case TEXCTL_STRANS:
++                                    if (ctransp || atransp)
++                                        goto skip_pixel;
++                                    break;
++
+                                 case TEXCTL_TMODULATE:
+                                     if (ctransp)
+                                         goto skip_pixel;

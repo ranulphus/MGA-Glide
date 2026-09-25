@@ -1,0 +1,45 @@
+diff --git a/src/char/char_file.c b/src/char/char_file.c
+index 36f23c5..5718786 100644
+--- a/src/char/char_file.c
++++ b/src/char/char_file.c
+@@ -111,6 +111,9 @@ char_file_write(uint8_t *buf, size_t len, void *priv)
+         buf += write_count;
+         len -= write_count;
+     }
++    /* MGA-Glide local patch: flush every write so a log survives a hang or
++     * crash and the harness can watch it grow. */
++    fflush(dev->file_out);
+     return ret;
+ }
+ 
+diff --git a/src/device/unittester.c b/src/device/unittester.c
+index 48486ef..a341bad 100644
+--- a/src/device/unittester.c
++++ b/src/device/unittester.c
+@@ -28,6 +28,8 @@
+ #include <86box/plat.h>
+ #include <86box/unittester.h>
+ #include <86box/video.h>
++#include <86box/hdd.h>
++#include <unistd.h>
+ 
+ enum fsm1_value {
+     UT_FSM1_WAIT_8,
+@@ -292,7 +294,16 @@ unittester_write(uint16_t port, uint8_t val, UNUSED(void *priv))
+ 
+                         /* Exit somewhat quickly! */
+                         unittester_log("[UT] Exit enabled, exiting with code %02X\n", unittester.exit_code);
+-                        exit(unittester.exit_code);
++                        /* MGA-Glide local patch: exit() from the CPU thread races
++                         * the SDL and render threads and can segfault, losing the
++                         * exit code and unflushed output. Sync the disk images and
++                         * the output streams, then leave without running atexit
++                         * handlers. (Not fflush(NULL): the console thread holds the
++                         * stdin lock while it waits for a line.) */
++                        hdd_image_sync_all();
++                        fflush(stdout);
++                        fflush(stderr);
++                        _exit(unittester.exit_code);
+ 
+                     } else {
+                         /* No - report successful command completion and continue program execution */
