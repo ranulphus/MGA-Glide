@@ -11,9 +11,9 @@ int mg_dll_started;
 
 int __DLLstart_(void *inst, unsigned reason)
 {
-    MGA_UNUSED(inst);
-    MGA_UNUSED(reason);
     mg_dll_started++;
+    mg_log_init();
+    mg_line("MGL-DLLSTART inst=%p reason=%u count=%d", inst, reason, mg_dll_started);
     return 1;
 }
 

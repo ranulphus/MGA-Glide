@@ -3,10 +3,15 @@
 UNIT_TESTS := $(patsubst tests/unit/%.c,%,$(wildcard tests/unit/test_*.c))
 UNIT_COMMON := tests/unit/unit.c
 UNIT_test_fmt := src/rt/fmt.c
+UNIT_test_leload := tests/shim/leload.c build/gen/glapi_names.c
 
-tests-host: $(UNIT_TESTS:%=build/host/tests/%)
-	@set -e; for t in $^; do echo "== $$t"; $$t; done; echo "tests-host: all passed"
+tests-host: $(UNIT_TESTS:%=build/host/tests/%) build/ow/GLIDE2X.OVL
+	@set -e; for t in $(UNIT_TESTS:%=build/host/tests/%); do echo "== $$t"; FIXTURES_DIR=$(FIXTURES_DIR) $$t; done; echo "tests-host: all passed"
 
-build/host/tests/%: tests/unit/%.c $(UNIT_COMMON) build/gen/stamp
+build/gen/glapi_names.c build/gen/glapi.h: build/gen/stamp
+
+.SECONDEXPANSION:
+build/host/tests/%: tests/unit/%.c $(UNIT_COMMON) $$(UNIT_$$*) build/gen/stamp
 	@mkdir -p $(dir $@)
-	$(HOST_CC) $(HOST_CFLAGS) -o $@ $< $(UNIT_COMMON) $(UNIT_$*) -lm
+	$(Q)echo "  CC      $@"
+	$(Q)$(HOST_CC) $(HOST_CFLAGS) -Itests/shim -o $@ $< $(UNIT_COMMON) $(UNIT_$*) -lm

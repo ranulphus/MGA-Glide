@@ -1,0 +1,7 @@
+system dos4g
+option quiet
+name build/ow/dos/S3IMPORT.EXE
+file build/ow/exe/tests/spike/s3import.obj
+file build/ow/exe/tests/shim/hx.obj
+library build/ow/mgahal_exe.lib
+import '_grGlideGetVersion@4' glide2x.'_GRGLIDEGETVERSION@4'

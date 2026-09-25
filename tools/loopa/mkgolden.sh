@@ -9,6 +9,9 @@ root=$(cd "$here/../.." && pwd)
 cache=${MGA_CACHE:-$HOME/.cache/mga-glide}
 key=$(cat "$0" "$here"/dos/* | sha256sum | cut -c1-12)
 gold=$cache/loopa/golden-$key
+mkdir -p "$cache/loopa"
+exec 9>"$cache/loopa/.golden.lock"
+flock 9
 if [ -s "$gold/boot.img" ] && [ -s "$gold/c.img" ]; then echo "$gold"; exit 0; fi
 
 FD_URL=https://www.ibiblio.org/pub/micro/pc-stuff/freedos/files/distributions/1.4/FD14-FloppyEdition.zip

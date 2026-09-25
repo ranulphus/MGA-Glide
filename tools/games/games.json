@@ -1,0 +1,22 @@
+{
+  "gta": {
+    "title": "Grand Theft Auto (1997 ECTS build, 3dfx)",
+    "fixture": "games/gta",
+    "dir": "GTA",
+    "ovl": "GTA\\GTADOS\\GLIDE2X.OVL",
+    "cwd": "GTA\\GTADOS",
+    "run": ["COMPFX.EXE"],
+    "sound": "",
+    "note": "GTA.BAT runs the K.EXE front end first; the 3dfx executable is run directly."
+  },
+  "sr": {
+    "title": "Screamer Rally (3dfx build)",
+    "fixture": "games/sr",
+    "dir": "SR",
+    "ovl": "SR\\GLIDE2X.OVL",
+    "cwd": "SR",
+    "run": ["STRT3FX.EXE"],
+    "sound": "",
+    "note": "setup.bat would copy hotcgl\\voodoo.ovl over glide2x.ovl; the harness installs the OVL itself."
+  }
+}

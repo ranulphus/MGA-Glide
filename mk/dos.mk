@@ -2,8 +2,13 @@
 BUILD_ID := $(shell git describe --always --dirty 2>/dev/null || echo unknown)
 OW_EXEFLAGS := $(OW_CFLAGS) -i=tests/shim -dHX_BUILD_ID="\"$(BUILD_ID)\""
 
-SHIM_SRCS := tests/shim/hx.c
+SHIM_SRCS := tests/shim/hx.c tests/shim/leload.c tests/shim/glbind.c build/gen/glapi_names.c
 SHIM_OBJS := $(SHIM_SRCS:%.c=build/ow/exe/%.obj)
+
+build/ow/exe/build/gen/%.obj: build/gen/%.c | build/gen/stamp
+	@mkdir -p $(dir $@)
+	$(Q)echo "  WCC     $<"
+	$(Q)$(WCC) $(OW_EXEFLAGS) -ad=$(@:.obj=.d) -fo=$@ $<
 
 build/ow/exe/%.obj: %.c | build/gen/stamp
 	@mkdir -p $(dir $@)
@@ -21,6 +26,7 @@ DOS_EXES += build/ow/dos/$(1).EXE
 endef
 
 $(eval $(call dos_exe,HELLO,build/ow/exe/tests/shim/hello.obj))
+$(eval $(call dos_exe,LESPIKE,build/ow/exe/tests/spike/lespike.obj))
 
 # 16-bit .COM helpers.
 DOS_TOOLS := UTEXIT SERSAY WAITSEC REBOOT
