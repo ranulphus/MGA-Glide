@@ -206,6 +206,12 @@
 #define TEXCTL_STRANS           (1u << 30)
 #define TEXCTL_ITRANS           (1u << 31)
 
+/* TEXCTL2 (G200+). */
+#define TEXCTL2_DECALBLEND      (1u << 0)
+#define TEXCTL2_IDECAL          (1u << 1)
+#define TEXCTL2_DECALDIS        (1u << 2)
+#define TEXCTL2_SPECEN          (1u << 6)
+
 /* TEXWIDTH / TEXHEIGHT: tw[5:0], rfw[14:9], twmask[28:18]. */
 #define TEXWH(log2, rf, mask)   ((uint32_t)(log2) | ((uint32_t)((rf) & 63) << 9) | ((uint32_t)(mask) << 18))
 
@@ -213,6 +219,13 @@
 #define TEXFILTER_NRST          0x0u
 #define TEXFILTER_BILIN         0x2u
 #define TEXFILTER_CNST          0x3u
+#define TEXFILTER_MM1S          0x8u      /* G200+: nearest level, point */
+#define TEXFILTER_MM2S          0x9u      /* nearest level, bilinear */
+#define TEXFILTER_MM4S          0xAu      /* two levels, point */
+#define TEXFILTER_MM8S          0xCu      /* two levels, bilinear */
+#define TEXFILTER_FILTERALPHA   (1u << 20)
+#define TEXFILTER_FTHRES(x)     ((uint32_t)(x) << 21)
+#define TEXFILTER_MAPNB(x)      ((uint32_t)(x) << 29)
 #define TEXFILTER_MIN(x)        ((uint32_t)(x))
 #define TEXFILTER_MAG(x)        ((uint32_t)(x) << 4)
 

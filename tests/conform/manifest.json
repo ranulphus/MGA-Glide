@@ -103,15 +103,21 @@
      "dy": 117,
      "cols": 6,
      "n": 24,
-     "approx": [
-      8,
-      10,
-      11,
-      12,
-      13,
-      14,
-      15
-     ],
+     "approx": {
+      "g100": [
+       8,
+       10,
+       11,
+       12,
+       13,
+       14,
+       15
+      ],
+      "g200": [
+       12,
+       13
+      ]
+     },
      "names": [
       "ZERO",
       "CCRGB",
@@ -167,6 +173,10 @@
     }
    }
   },
-  "why": "cells in 'approx' need an add, a subtract or a texture-alpha factor, which the G100 lacks (G200: specular add); docs/combine-coverage.md"
+  "why": "cells in 'approx' need an add, a subtract or a texture-alpha factor: the G100 has none of them, the G200 adds via specular but cannot subtract or blend by texel alpha; docs/combine-coverage.md"
+ },
+ "t23": {
+  "nocompare": true,
+  "why": "benchmark: reports HX-STAT bench lines, nothing to compare"
  }
 }

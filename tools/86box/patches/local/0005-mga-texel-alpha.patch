@@ -1,0 +1,28 @@
+diff --git a/src/video/vid_mga.c b/src/video/vid_mga.c
+index e6fb063..91a95f8 100644
+--- a/src/video/vid_mga.c
++++ b/src/video/vid_mga.c
+@@ -5364,6 +5364,7 @@ static uint16_t texture_texel_fetch(mystique_t *mystique, int *tex_r, int *tex_g
+             *tex_r = ((src >> 10) & 0x1f) << 3;
+             *tex_g = ((src >> 5) & 0x1f) << 3;
+             *tex_b = (src & 0x1f) << 3;
++            *tex_a = (src & 0x8000) ? 255 : 0;      /* MGA-Glide local patch: the 1-bit alpha */
+             if (((src >> 15) & mystique->dwgreg.ta_mask) == mystique->dwgreg.ta_key)
+                 *atransp = 1;
+             else
+@@ -5371,10 +5372,11 @@ static uint16_t texture_texel_fetch(mystique_t *mystique, int *tex_r, int *tex_g
+             break;
+         case TEXCTL_TEXFORMAT_TW12:
+             src    = *(uint16_t*)((&svga->vram[(mystique->dwgreg.texorg + ((t * tex_pitch) + s) * 2) & mystique->vram_mask]));
+-            *tex_r = ((src >> 8) & 0xf) << 4;
+-            *tex_g = ((src >> 4) & 0xf) << 4;
+-            *tex_b = (src & 0xf) << 4;
+-            *tex_a = ((src >> 12) & 0xf) << 4;
++            /* MGA-Glide local patch: 4-bit fields expand by replication. */
++            *tex_r = ((src >> 8) & 0xf) * 17;
++            *tex_g = ((src >> 4) & 0xf) * 17;
++            *tex_b = (src & 0xf) * 17;
++            *tex_a = ((src >> 12) & 0xf) * 17;
+             if (mystique->dwgreg.texctl & TEXCTL_AZEROEXTEND) {
+                 *atransp = (((src >> 12) & 0xf) & mystique->dwgreg.ta_mask)  == mystique->dwgreg.ta_key;
+             } else {

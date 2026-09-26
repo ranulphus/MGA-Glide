@@ -55,7 +55,7 @@ build/host/libmgahal.a: $(HAL_HOST:%.c=build/host/%.o)
 	ar rcs $@ $^
 hal-host: build/host/libmgahal.a
 
-build/gen/stubs.c build/gen/api_names.c build/gen/api_ids.h build/gen/api_names.h build/gen/thunks.c build/gen/replay_gen.c: build/gen/stamp
+build/gen/stubs.c build/gen/api_names.c build/gen/api_ids.h build/gen/api_names.h build/gen/thunks.c build/gen/replay_gen.c build/gen/proxy_thunks.c build/gen/glapi_names.c: build/gen/stamp
 
 # ---- Runtime DLL ---------------------------------------------------------
 RT_SRCS := $(wildcard src/rt/*.c src/dll/*.c src/glide/*.c src/lfb/*.c src/tex/*.c src/combine/*.c src/trace/*.c)
@@ -71,6 +71,26 @@ build/ow/GLIDE2X.OVL: $(RT_OBJS) build/ow/mgahal.lib build/ow/glide2x.lnk
 	  $(addprefix file ,$(RT_OBJS)) library build/ow/mgahal.lib
 	$(Q)$(PYTHON) tools/abi/lefix.py $@ >/dev/null
 runtime: build/ow/GLIDE2X.OVL
+
+# GLTRACE.OVL: the recording proxy in front of a retail runtime (docs/trace.md).
+PX_OBJS := build/ow/gen/proxy_thunks.obj build/ow/proxy/proxy.obj build/ow/proxy/leload.obj \
+           build/ow/src/trace/trace.obj build/ow/src/trace/trfmt.obj build/ow/src/tex/texfmt.obj \
+           build/ow/src/dll/config.obj build/ow/src/dll/dllmain.obj \
+           $(patsubst %.c,build/ow/%.obj,$(wildcard src/rt/*.c)) build/ow/gen/api_names.obj build/ow/gen/glapi_names.obj
+build/ow/proxy/%.obj: src/proxy/%.c | build/gen/stamp
+	@mkdir -p $(dir $@)
+	$(Q)echo "  WCC     $<"
+	$(Q)$(WCC) $(OW_CFLAGS) $(OW_DLLFLAGS) -i=tests/shim -ad=$(@:.obj=.d) -adt=$@ -add=$< -adfs -fo=$@ $<
+build/ow/proxy/leload.obj: tests/shim/leload.c | build/gen/stamp
+	@mkdir -p $(dir $@)
+	$(Q)echo "  WCC     $<"
+	$(Q)$(WCC) $(OW_CFLAGS) $(OW_DLLFLAGS) -i=tests/shim -ad=$(@:.obj=.d) -adt=$@ -add=$< -adfs -fo=$@ $<
+build/ow/GLTRACE.OVL: $(PX_OBJS) build/ow/mgahal.lib build/ow/glide2x.lnk
+	$(Q)echo "  WLINK   $@"
+	$(Q)$(WLINK) @build/ow/glide2x.lnk name $@ option map=build/ow/GLTRACE.map \
+	  $(addprefix file ,$(PX_OBJS)) library build/ow/mgahal.lib
+	$(Q)$(PYTHON) tools/abi/lefix.py $@ >/dev/null
+gltrace: build/ow/GLTRACE.OVL
 
 check-exports: build/ow/GLIDE2X.OVL
 	$(PYTHON) tools/abi/check_exports.py $< abi/glide2x.api abi/games/*.names

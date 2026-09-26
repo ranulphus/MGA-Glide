@@ -31,6 +31,13 @@ BOX86_DIR = os.environ.get("BOX86_DIR", os.path.join(CACHE, "86box"))
 WATCOM = os.environ.get("WATCOM", os.path.expanduser("~/.local/opt/watcom-20260901"))
 
 
+
+# Matrox cards the harness can fit: 86Box internal name, config section.
+CARDS = {
+    "g100": ("productiva_g100", "Matrox Productiva G100"),
+    "g200": ("millennium_g200", "Matrox Millennium G200 (MGA-Glide emulation)"),
+}
+
 def sh(cmd, **kw):
     return subprocess.run(cmd, check=True, **kw)
 
@@ -94,6 +101,8 @@ def build_config(vm, a, serial, cimg, bootimg, extra_hdd):
         "@VOODOO_RECOMPILER@": str(a.voodoo_recompiler),
         "@VOODOO_THREADS@": str(a.voodoo_threads),
         "@G100_MB@": str(a.g100_mb),
+        "@GFXCARD@": CARDS[a.card][0],
+        "@GFXNAME@": CARDS[a.card][1],
         "@SNDCARD@": a.sound or "none",
         "@SERIAL@": serial,
         "@CIMG@": cimg,
@@ -366,6 +375,8 @@ def main():
     ap.add_argument("--voodoo-threads", type=int, default=int(os.environ.get("VOODOO_THREADS", "1")))
     ap.add_argument("--voodoo-recompiler", type=int, default=int(os.environ.get("VOODOO_RECOMPILER", "0")))
     ap.add_argument("--g100-mb", type=int, default=8)
+    ap.add_argument("--card", choices=sorted(CARDS), default=os.environ.get("MGA_CARD", "g100"),
+                    help="Matrox card: g100, or g200 (the local emulation, patch 0004)")
     ap.add_argument("--sound", default=None)
     ap.add_argument("--timeout", type=float, default=float(os.environ.get("LOOPA_TIMEOUT", 300)))
     ap.add_argument("--idle", type=float, default=float(os.environ.get("LOOPA_IDLE", 60)))

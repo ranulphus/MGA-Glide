@@ -13,6 +13,7 @@ typedef struct {
     double  z;             /* 16-bit Z units (0..65535) or 32-bit units (0..2^32-1) */
     float   r, g, b, a;    /* 0..255 */
     float   fog;           /* 0..255 fog factor (255 = no fog) */
+    float   sr, sg, sb;    /* 0..255 specular colour added after texturing (G200+) */
     float   s, t, q;       /* texture: s/w, t/w, 1/w, already scaled (see texture setup) */
 } mga_svtx;
 
@@ -24,7 +25,8 @@ enum {
     MGA_S_FOG    = 1u << 4,    /* interpolate fog */
     MGA_S_TEX    = 1u << 5,    /* interpolate s, t, q */
     MGA_S_AFFINE = 1u << 6,    /* q constant: texture is affine (NPCEN) */
-    MGA_S_VOODOO_EDGES = 1u << 7   /* Voodoo column rule instead of exact centres */
+    MGA_S_VOODOO_EDGES = 1u << 7,  /* Voodoo column rule instead of exact centres */
+    MGA_S_SPEC   = 1u << 8     /* interpolate the specular colour (G200+, TEXCTL2.specen) */
 };
 
 typedef struct {

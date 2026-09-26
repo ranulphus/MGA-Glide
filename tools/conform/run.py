@@ -24,6 +24,7 @@ REF_OVL = os.environ.get("REF_OVL", os.path.join(FIX, "ovl", "gta.ovl"))
 MGA_OVL = os.path.join(ROOT, "build", "ow", "GLIDE2X.OVL")
 EXE = os.path.join(ROOT, "build", "ow", "dos", "CONFORM.EXE")
 REFDIR = os.path.join(ROOT, "tests", "conform", "ref", "voodoo")
+CARD = os.environ.get("MGA_CARD", "g100")
 MANIFEST = json.load(open(os.path.join(ROOT, "tests", "conform", "manifest.json")))
 JOBS = int(os.environ.get("LOOPA_JOBS", "6"))
 
@@ -35,7 +36,7 @@ def tests_from(args):
 def run_one(test, ovl, outdir):
     cmd = [sys.executable, os.path.join(ROOT, "tools", "loopa", "run.py"), "--name", test,
            "--exe", EXE, "--args", test, "--ovl", ovl, "--out", outdir,
-           "--timeout", "180", "--idle", "60"]
+           "--timeout", "180", "--idle", "60", "--card", CARD]
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return json.load(open(os.path.join(outdir, "result.json")))
 
@@ -45,6 +46,8 @@ def cmd_ref(tests):
         sys.exit("reference OVL %s missing (run tools/fixtures/extract.py)" % REF_OVL)
     import hashlib
     sha = hashlib.sha256(open(REF_OVL, "rb").read()).hexdigest()
+
+    tests = [t for t in tests if not MANIFEST.get(t, {}).get("nocompare")]
 
     def job(t):
         out = os.path.join(ROOT, "out", "conform-ref", t)
@@ -74,6 +77,9 @@ def cmd_check(tests):
         frames = {}
         refd = os.path.join(REFDIR, t)
         ok = r["status"] == "PASS"
+        if cfg.get("nocompare"):
+            return t, {"run": r["status"], "ok": ok, "frames": {}, "stats": r.get("stats", []),
+                       "tests": [x for x in r.get("tests", []) if x["result"] != "PASS"]}
         if os.path.isdir(refd):
             for fn in sorted(os.listdir(refd)):
                 if not fn.endswith(".png"):
@@ -85,6 +91,9 @@ def cmd_check(tests):
                     continue
                 fc = dict(cfg)
                 fc.update(cfg.get("frames", {}).get(fn, {}))
+                cells = fc.get("cells")
+                if cells and isinstance(cells.get("approx"), dict):
+                    fc["cells"] = dict(cells, approx=cells["approx"].get(CARD, []))
                 c = imgcmp.compare(os.path.join(refd, fn), got, fc["tol"], fc["frac"], fc["edge"],
                                    fc["box"], os.path.join(out, fn[:-4] + ".diff.png"), fc.get("ignore", ()),
                                    fc.get("cells"))
@@ -105,6 +114,7 @@ def cmd_check(tests):
                 "; ".join("%s %s" % (x["name"], x["detail"]) for x in res["tests"])))
     os.makedirs(os.path.join(ROOT, "out", "conform"), exist_ok=True)
     json.dump(summary, open(os.path.join(ROOT, "out", "conform", "summary.json"), "w"), indent=1)
+    json.dump(summary, open(os.path.join(ROOT, "out", "conform", "summary-%s.json" % CARD), "w"), indent=1)
     return 0 if all(v["ok"] for v in summary.values()) else 1
 
 

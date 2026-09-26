@@ -26,16 +26,17 @@ mdel -i "$b" ::/FDAUTO.BAT ::/SETUP.BAT 2>/dev/null || true
 mcopy -o -i "$b" "$here/dos/FDCONFIG.SYS" ::/FDCONFIG.SYS
 mcopy -o -i "$b" "$here/dos/AUTOEXEC.BAT" ::/AUTOEXEC.BAT
 
-# Hard disk: 63 x 16 x 130 = 131040 sectors (64 MB), one FAT16 partition.
+# Hard disk: 63 x 16 x 1000 = 1008000 sectors (492 MB, under the 1024-cylinder
+# BIOS limit; room for call traces), sparse, one FAT16 partition.
 c=$gold.part/c.img
-dd if=/dev/zero of="$c" bs=512 count=131040 status=none
+dd if=/dev/zero of="$c" bs=512 count=0 seek=1008000 status=none
 cat > "$tmp/mtoolsrc" <<EOT
 drive c: file="$c" partition=1
 mtools_skip_check=1
 EOT
 MTOOLSRC=$tmp/mtoolsrc mpartition -I -B /dev/null c: 2>/dev/null || MTOOLSRC=$tmp/mtoolsrc mpartition -I c:
-MTOOLSRC=$tmp/mtoolsrc mpartition -c -t 130 -h 16 -s 63 -a c:
-MTOOLSRC=$tmp/mtoolsrc mformat -t 130 -h 16 -s 63 -v HX c:
+MTOOLSRC=$tmp/mtoolsrc mpartition -c -t 1000 -h 16 -s 63 -a c:
+MTOOLSRC=$tmp/mtoolsrc mformat -t 1000 -h 16 -s 63 -v HX c:
 MTOOLSRC=$tmp/mtoolsrc mmd c:/HX c:/OUT
 rm -rf "$gold"; mv "$gold.part" "$gold"
 echo "$gold"

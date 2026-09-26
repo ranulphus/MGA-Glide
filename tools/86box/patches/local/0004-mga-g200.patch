@@ -1,0 +1,718 @@
+diff --git a/src/include/86box/video.h b/src/include/86box/video.h
+index 12467c4..757aebe 100644
+--- a/src/include/86box/video.h
++++ b/src/include/86box/video.h
+@@ -514,6 +514,7 @@ extern const device_t millennium_ii_device;
+ extern const device_t millennium_ii_agp_device;
+ #ifdef USE_G100
+ extern const device_t productiva_g100_device;
++extern const device_t millennium_g200_device;
+ #endif /* USE_G100 */
+ 
+ /* JEGA */
+diff --git a/src/video/vid_mga.c b/src/video/vid_mga.c
+index 0ae5c5f..e6fb063 100644
+--- a/src/video/vid_mga.c
++++ b/src/video/vid_mga.c
+@@ -200,6 +200,28 @@ mystique_unsupported(const char *fmt, ...)
+ #define REG_SOFTRAP    0x2c48
+ #define REG_ALPHASTART 0x2c70
+ #define REG_ALPHACTRL  0x2c7c
++/* MGA-Glide local patch (WP-3): G200 registers. */
++#define REG_TEXCTL2    0x2c3c
++#define REG_DWGSYNC    0x2c4c
++#define REG_SPECRSTART 0x2c80
++#define REG_SPECRXINC  0x2c84
++#define REG_SPECRYINC  0x2c88
++#define REG_SPECGSTART 0x2c8c
++#define REG_SPECGXINC  0x2c90
++#define REG_SPECGYINC  0x2c94
++#define REG_SPECBSTART 0x2c98
++#define REG_SPECBXINC  0x2c9c
++#define REG_SPECBYINC  0x2ca0
++#define REG_TEXORG1    0x2ca4
++#define REG_TEXORG2    0x2ca8
++#define REG_TEXORG3    0x2cac
++#define REG_TEXORG4    0x2cb0
++#define REG_SRCORG     0x2cb4
++#define REG_DSTORG     0x2cb8
++#define TEXCTL2_DECALBLEND (1 << 0)
++#define TEXCTL2_SPECEN     (1 << 6)
++#define ALPHACTRL_ASTIPPLE (1 << 11)
++#define ALPHACTRL_ATEN     (1 << 12)
+ #define REG_ALPHAXINC  0x2c74
+ #define REG_ALPHAYINC  0x2c78
+ #define REG_FOGSTART   0x1cc4
+@@ -442,6 +464,7 @@ enum {
+     MGA_1164SG, /*Mystique 220*/
+     MGA_2164W, /*Millennium II*/
+     MGA_G100,  /*Productiva G100*/
++    MGA_G200,  /*Millennium G200 (MGA-Glide local emulation)*/
+ };
+ 
+ enum {
+@@ -545,6 +568,13 @@ typedef struct mystique_t {
+             alphactrl, alphaxinc : 24, alphayinc : 24, alphastart : 24,
+             texfilter;
+ 
++        /* MGA-Glide local patch (WP-3): G200 state. dstorg_px is DSTORG in
++         * pixels, folded into the effective ydstorg/ytop/ybot so the
++         * G100 addressing and clipping paths apply unchanged. */
++        uint32_t texorgn[4], texctl2, dstorg, srcorg, dwgsync,
++            ydstorg_reg, ytop_reg, ybot_reg, dstorg_px;
++        uint32_t specstart[3], specxinc[3], specyinc[3];
++
+         uint32_t src[4], ar[7],
+             dr[16], tmr[9];
+ 
+@@ -1565,6 +1595,27 @@ mystique_write_xreg(mystique_t *mystique, int reg, uint8_t val)
+     }
+ }
+ 
++
++/* MGA-Glide local patch (WP-3): effective origins. On the G200, DSTORG
++ * (bytes) moves the colour buffer; ZORG is absolute, so depth addresses
++ * leave DSTORG out. */
++static void
++g200_origin_update(mystique_t *mystique)
++{
++    int bpp;
++    switch (mystique->maccess & MACCESS_PWIDTH_MASK) {
++        case MACCESS_PWIDTH_16: bpp = 2; break;
++        case MACCESS_PWIDTH_24: bpp = 3; break;
++        case MACCESS_PWIDTH_32: bpp = 4; break;
++        default: bpp = 1; break;
++    }
++    mystique->dwgreg.dstorg_px = (mystique->type >= MGA_G200) ? mystique->dwgreg.dstorg / bpp : 0;
++    mystique->dwgreg.ydstorg   = mystique->dwgreg.ydstorg_reg + mystique->dwgreg.dstorg_px;
++    mystique->dwgreg.ytop      = mystique->dwgreg.ytop_reg + mystique->dwgreg.dstorg_px;
++    mystique->dwgreg.ybot      = mystique->dwgreg.ybot_reg + mystique->dwgreg.dstorg_px;
++    mystique->dwgreg.z_base    = (mystique->dwgreg.ydstorg - mystique->dwgreg.dstorg_px) * ((mystique->maccess & MACCESS_ZWIDTH) ? 4 : 2) + mystique->dwgreg.zorg;
++}
++
+ static uint8_t
+ mystique_ctrl_read_b(uint32_t addr, void *priv)
+ {
+@@ -1604,6 +1655,9 @@ mystique_ctrl_read_b(uint32_t addr, void *priv)
+         ret = tvp3026_ramdac_in(addr_0x03, rs2, rs3, svga->ramdac, svga);
+     } else
+         switch (addr & 0x3fff) {
++            case REG_DWGSYNC: case REG_DWGSYNC + 1: case REG_DWGSYNC + 2: case REG_DWGSYNC + 3:
++                ret = (mystique->dwgreg.dwgsync >> ((addr & 3) * 8)) & 0xff;
++                break;
+             case REG_FIFOSTATUS:
+                 fifocount = FIFO_SIZE - FIFO_ENTRIES;
+                 if (fifocount > (mystique->type <= MGA_1064SG ? 32 : 64))
+@@ -1815,10 +1869,11 @@ mystique_accel_ctrl_write_b(uint32_t addr, uint8_t val, void *priv)
+         case REG_MACCESS + 3:
+             WRITE8(addr, mystique->maccess, val);
+             mystique->dwgreg.dither = mystique->maccess >> 30;
++            g200_origin_update(mystique);
+             if (mystique->type < MGA_2164W)
+                 mystique->maccess &= ~MACCESS_ZWIDTH;
+             else
+-                mystique->dwgreg.z_base = mystique->dwgreg.ydstorg * ((mystique->maccess & MACCESS_ZWIDTH) ? 4 : 2) + mystique->dwgreg.zorg;
++                g200_origin_update(mystique);
+             break;
+ 
+         case REG_MCTLWTST:
+@@ -1954,20 +2009,22 @@ mystique_accel_ctrl_write_b(uint32_t addr, uint8_t val, void *priv)
+         case REG_YDSTORG + 1:
+         case REG_YDSTORG + 2:
+         case REG_YDSTORG + 3:
+-            WRITE8(addr, mystique->dwgreg.ydstorg, val);
+-            mystique->dwgreg.z_base = mystique->dwgreg.ydstorg * ((mystique->maccess & MACCESS_ZWIDTH) ? 4 : 2) + mystique->dwgreg.zorg;
++            WRITE8(addr, mystique->dwgreg.ydstorg_reg, val);
++            g200_origin_update(mystique);
+             break;
+         case REG_YTOP:
+         case REG_YTOP + 1:
+         case REG_YTOP + 2:
+         case REG_YTOP + 3:
+-            WRITE8(addr, mystique->dwgreg.ytop, val);
++            WRITE8(addr, mystique->dwgreg.ytop_reg, val);
++            g200_origin_update(mystique);
+             break;
+         case REG_YBOT:
+         case REG_YBOT + 1:
+         case REG_YBOT + 2:
+         case REG_YBOT + 3:
+-            WRITE8(addr, mystique->dwgreg.ybot, val);
++            WRITE8(addr, mystique->dwgreg.ybot_reg, val);
++            g200_origin_update(mystique);
+             break;
+ 
+         case REG_CXLEFT:
+@@ -2438,7 +2495,7 @@ mystique_accel_ctrl_write_l(uint32_t addr, uint32_t val, void *priv)
+ 
+         case REG_ZORG:
+             mystique->dwgreg.zorg   = val;
+-            mystique->dwgreg.z_base = mystique->dwgreg.ydstorg * ((mystique->maccess & MACCESS_ZWIDTH) ? 4 : 2) + mystique->dwgreg.zorg;
++            g200_origin_update(mystique);
+             break;
+ 
+         case REG_PLNWT:
+@@ -2654,6 +2711,36 @@ mystique_accel_ctrl_write_l(uint32_t addr, uint32_t val, void *priv)
+             mystique->dwgreg.alphactrl = val;
+             break;
+ 
++        /* MGA-Glide local patch (WP-3): G200 registers. */
++        case REG_DSTORG:
++            mystique->dwgreg.dstorg = val;
++            g200_origin_update(mystique);
++            break;
++        case REG_SRCORG:
++            mystique->dwgreg.srcorg = val;
++            break;
++        case REG_TEXCTL2:
++            mystique->dwgreg.texctl2 = val;
++            break;
++        case REG_DWGSYNC:
++            mystique->dwgreg.dwgsync = val;
++            break;
++        case REG_TEXORG1:
++        case REG_TEXORG2:
++        case REG_TEXORG3:
++        case REG_TEXORG4:
++            mystique->dwgreg.texorgn[((addr & 0x3ffc) - REG_TEXORG1) >> 2] = val;
++            break;
++        case REG_SPECRSTART: case REG_SPECGSTART: case REG_SPECBSTART:
++            mystique->dwgreg.specstart[((addr & 0x3ffc) - REG_SPECRSTART) / 12] = val & 0xffffff;
++            break;
++        case REG_SPECRXINC: case REG_SPECGXINC: case REG_SPECBXINC:
++            mystique->dwgreg.specxinc[((addr & 0x3ffc) - REG_SPECRXINC) / 12] = val & 0xffffff;
++            break;
++        case REG_SPECRYINC: case REG_SPECGYINC: case REG_SPECBYINC:
++            mystique->dwgreg.specyinc[((addr & 0x3ffc) - REG_SPECRYINC) / 12] = val & 0xffffff;
++            break;
++
+         case REG_ALPHASTART:
+             mystique->dwgreg.alphastart = val;
+             break;
+@@ -4641,7 +4728,7 @@ blit_line(mystique_t *mystique, int closed, int autoline)
+                     bool z_check_pass = false;
+                     if (mystique->maccess_running & MACCESS_ZWIDTH) {
+                         uint32_t  z     = (mystique->dwgreg.extended_dr[0] & (1ull << 47ull)) ? 0 : (mystique->dwgreg.extended_dr[0] >> 15ull);
+-                        uint32_t *z_p   = (uint32_t *) &svga->vram[(mystique->dwgreg.ydst_lin * 4 + mystique->dwgreg.zorg) & mystique->vram_mask];
++                        uint32_t *z_p   = (uint32_t *) &svga->vram[((mystique->dwgreg.ydst_lin - mystique->dwgreg.dstorg_px) * 4 + mystique->dwgreg.zorg) & mystique->vram_mask];
+                         uint32_t  old_z = z_p[x];
+                         z_check_pass = z_check_32(z, old_z, mystique->dwgreg.dwgctrl_running & DWGCTRL_ZMODE_MASK);
+                         if (z_write && z_check_pass) {
+@@ -4649,7 +4736,7 @@ blit_line(mystique_t *mystique, int closed, int autoline)
+                         }
+                     } else {
+                         uint16_t  z     = ((int32_t) mystique->dwgreg.dr[0] < 0) ? 0 : (mystique->dwgreg.dr[0] >> 15);
+-                        uint16_t *z_p   = (uint16_t *) &svga->vram[(mystique->dwgreg.ydst_lin * 2 + mystique->dwgreg.zorg) & mystique->vram_mask];
++                        uint16_t *z_p   = (uint16_t *) &svga->vram[((mystique->dwgreg.ydst_lin - mystique->dwgreg.dstorg_px) * 2 + mystique->dwgreg.zorg) & mystique->vram_mask];
+                         uint16_t  old_z = z_p[x];
+                         z_check_pass = z_check(z, old_z, mystique->dwgreg.dwgctrl_running & DWGCTRL_ZMODE_MASK);
+                         if (z_write && z_check_pass) {
+@@ -4816,6 +4903,76 @@ blit_line_start(mystique_t *mystique, int closed, int autoline)
+     }
+ }
+ 
++
++/* MGA-Glide local patch (WP-3): G200 alpha test and blending (ALPHACTRL
++ * src[3:0] dst[7:4] aten[12] atmode[15:13] atref[23:16]). Returns 0 when
++ * the alpha test rejects the pixel. Destination alpha is 255 in 16 bpp. */
++static int
++g200_blend(mystique_t *mystique, int x, int *r, int *g, int *b, int a, int dest32)
++{
++    const uint32_t ac  = mystique->dwgreg.alphactrl;
++    const int      sfn = ac & 0xf, dfn = (ac >> 4) & 0xf;
++    svga_t        *svga = &mystique->svga;
++    int            sc[3], dc[3], da = 255, i;
++
++    if (ac & ALPHACTRL_ATEN) {
++        int ref = (ac >> 16) & 0xff, pass;
++        switch ((ac >> 13) & 7) {
++            case 2: pass = a == ref; break;
++            case 3: pass = a != ref; break;
++            case 4: pass = a < ref; break;
++            case 5: pass = a <= ref; break;
++            case 6: pass = a > ref; break;
++            case 7: pass = a >= ref; break;
++            default: pass = 1; break;
++        }
++        if (!pass)
++            return 0;
++    }
++    if (sfn == 1 && dfn == 0)
++        return 1;
++    if (dest32) {
++        uint32_t d = ((uint32_t *) svga->vram)[(mystique->dwgreg.ydst_lin + x) & mystique->vram_mask_l];
++        dc[0] = (d >> 16) & 0xff; dc[1] = (d >> 8) & 0xff; dc[2] = d & 0xff; da = d >> 24;
++    } else {
++        uint16_t d = ((uint16_t *) svga->vram)[(mystique->dwgreg.ydst_lin + x) & mystique->vram_mask_w];
++        dc[0] = ((d >> 11) & 0x1f) << 3; dc[0] |= dc[0] >> 5;
++        dc[1] = ((d >> 5) & 0x3f) << 2;  dc[1] |= dc[1] >> 6;
++        dc[2] = (d & 0x1f) << 3;         dc[2] |= dc[2] >> 5;
++    }
++    sc[0] = *r; sc[1] = *g; sc[2] = *b;
++    for (i = 0; i < 3; i++) {
++        int fs, fd, v;
++        switch (sfn) {
++            case 0: fs = 0; break;
++            case 1: fs = 255; break;
++            case 2: fs = dc[i]; break;
++            case 3: fs = 255 - dc[i]; break;
++            case 4: fs = a; break;
++            case 5: fs = 255 - a; break;
++            case 6: fs = da; break;
++            case 7: fs = 255 - da; break;
++            case 8: fs = a < 255 - da ? a : 255 - da; break;
++            default: fs = 255; break;
++        }
++        switch (dfn) {
++            case 0: fd = 0; break;
++            case 1: fd = 255; break;
++            case 2: fd = sc[i]; break;
++            case 3: fd = 255 - sc[i]; break;
++            case 4: fd = a; break;
++            case 5: fd = 255 - a; break;
++            case 6: fd = da; break;
++            case 7: fd = 255 - da; break;
++            default: fd = 0; break;
++        }
++        v = (sc[i] * fs + dc[i] * fd + 127) / 255;
++        sc[i] = v > 255 ? 255 : v;
++    }
++    *r = sc[0]; *g = sc[1]; *b = sc[2];
++    return 1;
++}
++
+ static void
+ blit_trap(mystique_t *mystique)
+ {
+@@ -4828,6 +4985,8 @@ blit_trap(mystique_t *mystique)
+     int       z_write;
+     int       y;
+     int       err_l = (int32_t)mystique->dwgreg.ar[1];
++    uint32_t  a_back_g200 = 0;
++    const int dest32_g200 = ((mystique->maccess_running & MACCESS_PWIDTH_MASK) == MACCESS_PWIDTH_32);
+     int       err_r = (int32_t)mystique->dwgreg.ar[4];
+     const int trans_sel = (mystique->dwgreg.dwgctrl_running & DWGCTRL_TRANS_MASK) >> DWGCTRL_TRANS_SHIFT;
+     bool transc = !!(mystique->dwgreg.dwgctrl_running & DWGCTRL_TRANSC);
+@@ -4993,7 +5152,7 @@ blit_trap(mystique_t *mystique)
+ 
+             for (y = 0; y < mystique->dwgreg.length; y++) {
+                 uint8_t const *const trans   = &trans_masks[trans_sel][(mystique->dwgreg.selline & 3) * 4];
+-                uint16_t            *z_p     = (uint16_t *) &svga->vram[(mystique->dwgreg.ydst_lin * ((mystique->maccess_running & MACCESS_ZWIDTH) ? 4 : 2) + mystique->dwgreg.zorg) & mystique->vram_mask];
++                uint16_t            *z_p     = (uint16_t *) &svga->vram[((mystique->dwgreg.ydst_lin - mystique->dwgreg.dstorg_px) * ((mystique->maccess_running & MACCESS_ZWIDTH) ? 4 : 2) + mystique->dwgreg.zorg) & mystique->vram_mask];
+                 int16_t              x_l     = mystique->dwgreg.fxleft & 0xffff;
+                 int16_t              x_r     = mystique->dwgreg.fxright & 0xffff;
+                 int16_t              old_x_l = x_l;
+@@ -5005,6 +5164,7 @@ blit_trap(mystique_t *mystique)
+                 r_back = mystique->dwgreg.dr[4];
+                 g_back = mystique->dwgreg.dr[8];
+                 b_back = mystique->dwgreg.dr[12];
++                a_back_g200 = mystique->dwgreg.alphastart;
+ 
+                 while (x_l != x_r) {
+                     if (x_l >= mystique->dwgreg.cxleft && x_l <= mystique->dwgreg.cxright && mystique->dwgreg.ydst_lin >= mystique->dwgreg.ytop && mystique->dwgreg.ydst_lin <= mystique->dwgreg.ybot && trans[x_l & 3]) {
+@@ -5033,6 +5193,13 @@ blit_trap(mystique_t *mystique)
+                             if (!(mystique->dwgreg.dr[12] & (1 << 23)))
+                                 b = (mystique->dwgreg.dr[12] >> 15) & 0xff;
+ 
++                            if (mystique->type >= MGA_G200) {
++                                /* MGA-Glide local patch (WP-3): the G200 blends in TRAP too. */
++                                int a = (mystique->dwgreg.alphastart & (1 << 23)) ? 0 : ((mystique->dwgreg.alphastart >> 15) & 0xff);
++                                if (!g200_blend(mystique, x_l, &r, &g, &b, a, dest32_g200))
++                                    goto trap_next_g200;
++                            }
++
+                             if (z_write) {
+                                 if (mystique->maccess_running & MACCESS_ZWIDTH) {
+                                     *(uint32_t*)(&z_p[x_l * 2]) = (mystique->dwgreg.extended_dr[0] & (1ull << 47ull)) ? 0 : (mystique->dwgreg.extended_dr[0] >> 15ull);
+@@ -5070,6 +5237,8 @@ blit_trap(mystique_t *mystique)
+                         }
+                     }
+ 
++trap_next_g200:
++                    mystique->dwgreg.alphastart = (mystique->dwgreg.alphastart + mystique->dwgreg.alphaxinc) & 0xFFFFFF;
+                     if (mystique->maccess_running & MACCESS_ZWIDTH) {
+                         mystique->dwgreg.extended_dr[0] += mystique->dwgreg.extended_dr[2];
+                         mystique->dwgreg.dr[0] = (mystique->dwgreg.extended_dr[0] >> 16) & 0xFFFFFFFF;
+@@ -5094,6 +5263,7 @@ blit_trap(mystique_t *mystique)
+                     mystique->dwgreg.dr[0] = z_back + mystique->dwgreg.dr[3];
+                     mystique->dwgreg.extended_dr[0] = (mystique->dwgreg.extended_dr[0] & ~0xFFFFull) | ((uint64_t)mystique->dwgreg.dr[0] << 16ull);
+                 }
++                mystique->dwgreg.alphastart = (a_back_g200 + mystique->dwgreg.alphayinc) & 0xFFFFFF;
+                 mystique->dwgreg.dr[4]  = r_back + mystique->dwgreg.dr[7];
+                 mystique->dwgreg.dr[8]  = g_back + mystique->dwgreg.dr[11];
+                 mystique->dwgreg.dr[12] = b_back + mystique->dwgreg.dr[15];
+@@ -5118,6 +5288,7 @@ blit_trap(mystique_t *mystique)
+                     mystique->dwgreg.dr[0] += dx * mystique->dwgreg.dr[2];
+                     mystique->dwgreg.extended_dr[0] = (mystique->dwgreg.extended_dr[0] & ~0xFFFFull) | ((uint64_t)mystique->dwgreg.dr[0] << 16ull);
+                 }
++                mystique->dwgreg.alphastart = (mystique->dwgreg.alphastart + dx * mystique->dwgreg.alphaxinc) & 0xFFFFFF;
+                 mystique->dwgreg.dr[4] += dx * mystique->dwgreg.dr[6];
+                 mystique->dwgreg.dr[8] += dx * mystique->dwgreg.dr[10];
+                 mystique->dwgreg.dr[12] += dx * mystique->dwgreg.dr[14];
+@@ -5269,7 +5440,7 @@ persp_correct(mystique_t* mystique, int* s, int* t, int* q, double* s_frac, doub
+ }
+ 
+ static int
+-texture_read(mystique_t *mystique, int *tex_r, int *tex_g, int *tex_b, int *atransp, int *tex_a)
++texture_read_level(mystique_t *mystique, int *tex_r, int *tex_g, int *tex_b, int *atransp, int *tex_a)
+ {
+     const int          tex_shift = 3 + ((mystique->dwgreg.texctl & TEXCTL_TPITCH_MASK) >> TEXCTL_TPITCH_SHIFT);
+     const uint16_t     tckey     = mystique->dwgreg.textrans & TEXTRANS_TCKEY_MASK;
+@@ -5358,6 +5529,113 @@ texture_read(mystique_t *mystique, int *tex_r, int *tex_g, int *tex_b, int *atra
+     return ((src & tkmask) == tckey);
+ }
+ 
++/* MGA-Glide local patch (WP-3): G200 mipmapping. TEXORG1..4 hold levels
++ * 1..4, TEXFILTER mapnb[31:29] the last level and minfilter[3:0] the mode
++ * (8 nearest level, point; 9 nearest level, bilinear; 0xA two levels,
++ * point; 0xC two levels, bilinear). The level comes from the per-pixel
++ * gradients of the texture coordinates, lambda = 0.5 log2 of the larger
++ * squared gradient, as the Voodoo computes it; G200 silicon is to be
++ * checked on the bench (PRD milestone S / M5). Each level halves the
++ * width, height and pitch. */
++static void
++g200_uv(mystique_t *mystique, int32_t S, int32_t T, int32_t Q, double *u, double *v)
++{
++    const int s_shift = 20 - (mystique->dwgreg.texwidth & TEXWIDTH_TW_MASK);
++    const int t_shift = 20 - (mystique->dwgreg.texheight & TEXHEIGHT_TH_MASK);
++    if (mystique->dwgreg.texctl & TEXCTL_NPCEN) {
++        *u = S / (double) (1 << s_shift);
++        *v = T / (double) (1 << t_shift);
++    } else {
++        double q = FixedToFloat(Q);
++        if (q == 0.0)
++            q = 1e-9;
++        *u = (double) (S >> s_shift) / q;
++        *v = (double) (T >> t_shift) / q;
++    }
++}
++
++static int
++g200_read_level(mystique_t *mystique, int level, int filt, int *tex_r, int *tex_g, int *tex_b, int *atransp, int *tex_a)
++{
++    const uint32_t org = mystique->dwgreg.texorg, tw = mystique->dwgreg.texwidth, th = mystique->dwgreg.texheight;
++    const uint32_t tc = mystique->dwgreg.texctl, tf = mystique->dwgreg.texfilter;
++    int            ret;
++    if (level > 0) {
++        int w = (int) ((tw & TEXWIDTH_TWMASK_MASK) >> TEXWIDTH_TWMASK_SHIFT) + 1;
++        int h = (int) ((th & TEXHEIGHT_THMASK_MASK) >> TEXHEIGHT_THMASK_SHIFT) + 1;
++        int lw = (int) (tw & TEXWIDTH_TW_MASK) - level, lh = (int) (th & TEXHEIGHT_TH_MASK) - level;
++        w >>= level; h >>= level;
++        if (w < 1) w = 1;
++        if (h < 1) h = 1;
++        if (lw < 0) lw = 0;
++        if (lh < 0) lh = 0;
++        mystique->dwgreg.texorg    = mystique->dwgreg.texorgn[level - 1];
++        mystique->dwgreg.texwidth  = (tw & ~(TEXWIDTH_TW_MASK | TEXWIDTH_TWMASK_MASK)) | (uint32_t) lw | ((uint32_t) (w - 1) << TEXWIDTH_TWMASK_SHIFT);
++        mystique->dwgreg.texheight = (th & ~(TEXHEIGHT_TH_MASK | TEXHEIGHT_THMASK_MASK)) | (uint32_t) lh | ((uint32_t) (h - 1) << TEXHEIGHT_THMASK_SHIFT);
++        if (tc & TEXCTL_TPITCHLIN) {
++            int pitch = (int) ((tc & TEXCTL_TPITCHEXT_MASK) >> 9);
++            if (!pitch)
++                pitch = 2048;
++            pitch >>= level;
++            if (pitch < 1)
++                pitch = 1;
++            mystique->dwgreg.texctl = (tc & ~TEXCTL_TPITCHEXT_MASK) | ((uint32_t) (pitch & 0x7ff) << 9);
++        } else {
++            int tp = (int) ((tc & TEXCTL_TPITCH_MASK) >> TEXCTL_TPITCH_SHIFT) - level;
++            mystique->dwgreg.texctl = (tc & ~TEXCTL_TPITCH_MASK) | ((uint32_t) (tp < 0 ? 0 : tp) << TEXCTL_TPITCH_SHIFT);
++        }
++    }
++    mystique->dwgreg.texfilter = (tf & ~0xfu) | (uint32_t) filt;
++    ret = texture_read_level(mystique, tex_r, tex_g, tex_b, atransp, tex_a);
++    mystique->dwgreg.texorg    = org;
++    mystique->dwgreg.texwidth  = tw;
++    mystique->dwgreg.texheight = th;
++    mystique->dwgreg.texctl    = tc;
++    mystique->dwgreg.texfilter = tf;
++    return ret;
++}
++
++static int
++texture_read(mystique_t *mystique, int *tex_r, int *tex_g, int *tex_b, int *atransp, int *tex_a)
++{
++    const uint32_t tf    = mystique->dwgreg.texfilter;
++    const int      minf  = tf & 0xf, magf = (tf >> 4) & 0xf, last = (tf >> 29) & 7;
++    double         u, v, ux, vx, uy, vy, gx, gy, g, lambda;
++    int            level, filt, two, ret;
++
++    if (mystique->type < MGA_G200 || minf < 8 || !last)
++        return texture_read_level(mystique, tex_r, tex_g, tex_b, atransp, tex_a);
++    g200_uv(mystique, (int32_t) mystique->dwgreg.tmr[6], (int32_t) mystique->dwgreg.tmr[7], (int32_t) mystique->dwgreg.tmr[8], &u, &v);
++    g200_uv(mystique, (int32_t) (mystique->dwgreg.tmr[6] + mystique->dwgreg.tmr[0]), (int32_t) (mystique->dwgreg.tmr[7] + mystique->dwgreg.tmr[2]),
++            (int32_t) (mystique->dwgreg.tmr[8] + mystique->dwgreg.tmr[4]), &ux, &vx);
++    g200_uv(mystique, (int32_t) (mystique->dwgreg.tmr[6] + mystique->dwgreg.tmr[1]), (int32_t) (mystique->dwgreg.tmr[7] + mystique->dwgreg.tmr[3]),
++            (int32_t) (mystique->dwgreg.tmr[8] + mystique->dwgreg.tmr[5]), &uy, &vy);
++    gx = (ux - u) * (ux - u) + (vx - v) * (vx - v);
++    gy = (uy - u) * (uy - u) + (vy - v) * (vy - v);
++    g  = gx > gy ? gx : gy;
++    lambda = g > 0 ? 0.5 * log2(g) : -64.0;
++    if (lambda <= 0.0)
++        return g200_read_level(mystique, 0, magf == 2 ? 2 : 0, tex_r, tex_g, tex_b, atransp, tex_a);
++    filt  = (minf == 0x9 || minf == 0xc) ? 2 : 0;
++    two   = (minf == 0xa || minf == 0xc);
++    level = (int) floor(lambda);
++    if (level >= last) {
++        level = last;
++        two   = 0;
++    }
++    ret = g200_read_level(mystique, level, filt, tex_r, tex_g, tex_b, atransp, tex_a);
++    if (two) {
++        int r2, g2, b2, a2 = 255, at2 = 0;
++        double f = lambda - level;
++        g200_read_level(mystique, level + 1, filt, &r2, &g2, &b2, &at2, &a2);
++        *tex_r = (int) (*tex_r + (r2 - *tex_r) * f);
++        *tex_g = (int) (*tex_g + (g2 - *tex_g) * f);
++        *tex_b = (int) (*tex_b + (b2 - *tex_b) * f);
++        *tex_a = (int) (*tex_a + (a2 - *tex_a) * f);
++    }
++    return ret;
++}
++
+ static void
+ blit_texture_trap(mystique_t *mystique)
+ {
+@@ -5374,7 +5652,7 @@ blit_texture_trap(mystique_t *mystique)
+ 
+             for (y = 0; y < mystique->dwgreg.length; y++) {
+                 uint8_t const *const trans   = &trans_masks[trans_sel][(mystique->dwgreg.selline & 3) * 4];
+-                uint16_t            *z_p     = (uint16_t *) &svga->vram[(mystique->dwgreg.ydst_lin * ((mystique->maccess_running & MACCESS_ZWIDTH) ? 4 : 2) + mystique->dwgreg.zorg) & mystique->vram_mask];
++                uint16_t            *z_p     = (uint16_t *) &svga->vram[((mystique->dwgreg.ydst_lin - mystique->dwgreg.dstorg_px) * ((mystique->maccess_running & MACCESS_ZWIDTH) ? 4 : 2) + mystique->dwgreg.zorg) & mystique->vram_mask];
+                 int16_t              x_l     = mystique->dwgreg.fxleft & 0xffff;
+                 int16_t              x_r     = mystique->dwgreg.fxright & 0xffff;
+                 int16_t              old_x_l = x_l;
+@@ -5391,6 +5669,10 @@ blit_texture_trap(mystique_t *mystique)
+                 uint32_t q_back = mystique->dwgreg.tmr[8];
+                 uint32_t a_back = mystique->dwgreg.alphastart;
+                 uint32_t fog_back = mystique->dwgreg.fogstart;
++                uint32_t spec_back[3];
++                spec_back[0] = mystique->dwgreg.specstart[0];
++                spec_back[1] = mystique->dwgreg.specstart[1];
++                spec_back[2] = mystique->dwgreg.specstart[2];
+ 
+                 while (x_l != x_r) {
+                     if (x_l >= mystique->dwgreg.cxleft && x_l <= mystique->dwgreg.cxright && mystique->dwgreg.ydst_lin >= mystique->dwgreg.ytop && mystique->dwgreg.ydst_lin <= mystique->dwgreg.ybot && trans[x_l & 3]) {
+@@ -5452,11 +5734,11 @@ blit_texture_trap(mystique_t *mystique)
+                                         break;
+                                     default:
+                                     case 0x1: /* interpolated alpha */
+-                                        if ((mystique->dwgreg.alphactrl & (1 << 11)))
++                                        if ((mystique->dwgreg.alphactrl & (1 << 11)) || mystique->type >= MGA_G200)
+                                             final_a = i_a;
+                                         break;
+                                     case 0x2: /* modulated alpha */
+-                                        if (!(mystique->dwgreg.alphactrl & (1 << 11)))
++                                        if (!(mystique->dwgreg.alphactrl & (1 << 11)) && mystique->type < MGA_G200)
+                                             final_a = tex_a;
+                                         else
+                                             final_a = ((i_a * tex_a) >> 8) & 0xFF;
+@@ -5526,6 +5808,24 @@ blit_texture_trap(mystique_t *mystique)
+                                     fatal("Bad TEXCTL %08x %08x\n", mystique->dwgreg.texctl, mystique->dwgreg.texctl & (TEXCTL_TMODULATE | TEXCTL_STRANS | TEXCTL_ITRANS | TEXCTL_DECALCKEY));
+                             }
+ 
++                            if (mystique->type >= MGA_G200) {
++                                /* MGA-Glide local patch (WP-3): decal blended by
++                                 * texel alpha, then the specular add. */
++                                if ((mystique->dwgreg.texctl2 & TEXCTL2_DECALBLEND) && !(mystique->dwgreg.texctl & TEXCTL_TMODULATE)) {
++                                    tex_r = (tex_r * tex_a + i_r * (255 - tex_a)) / 255;
++                                    tex_g = (tex_g * tex_a + i_g * (255 - tex_a)) / 255;
++                                    tex_b = (tex_b * tex_a + i_b * (255 - tex_a)) / 255;
++                                }
++                                if (mystique->dwgreg.texctl2 & TEXCTL2_SPECEN) {
++                                    int sp[3], c;
++                                    for (c = 0; c < 3; c++)
++                                        sp[c] = (mystique->dwgreg.specstart[c] & (1 << 23)) ? 0 : ((mystique->dwgreg.specstart[c] >> 15) & 0xff);
++                                    tex_r += sp[0]; if (tex_r > 255) tex_r = 255;
++                                    tex_g += sp[1]; if (tex_g > 255) tex_g = 255;
++                                    tex_b += sp[2]; if (tex_b > 255) tex_b = 255;
++                                }
++                            }
++
+                             if (mystique->type >= MGA_G100 && (mystique->maccess_running & MACCESS_FOGEN))
+                             {
+                                 tex_r = (tex_r * ((i_fog) / 255.)) + (mystique->dwgreg.fogcol >> 16) * ((255 - i_fog) / 255.);
+@@ -5533,7 +5833,10 @@ blit_texture_trap(mystique_t *mystique)
+                                 tex_b = (tex_b * ((i_fog) / 255.)) + ((mystique->dwgreg.fogcol) & 0xFF) * ((255 - i_fog) / 255.);
+                             }
+ 
+-                            if (final_a != 255)
++                            if (mystique->type >= MGA_G200 && !(mystique->dwgreg.alphactrl & ALPHACTRL_ASTIPPLE)) {
++                                if (!g200_blend(mystique, x_l, &tex_r, &tex_g, &tex_b, final_a, dest32))
++                                    goto skip_pixel;
++                            } else if (final_a != 255)
+                             {
+                                 {
+                                     double threshold = bayer_mat[mystique->dwgreg.selline & 3][x_l & 3];
+@@ -5585,6 +5888,8 @@ skip_pixel:
+                     mystique->dwgreg.alphastart += mystique->dwgreg.alphaxinc;
+                     mystique->dwgreg.fogstart &= 0xFFFFFF;
+                     mystique->dwgreg.alphastart &= 0xFFFFFF;
++                    for (int c = 0; c < 3; c++)
++                        mystique->dwgreg.specstart[c] = (mystique->dwgreg.specstart[c] + mystique->dwgreg.specxinc[c]) & 0xFFFFFF;
+                 }
+ 
+                 if (mystique->maccess_running & MACCESS_ZWIDTH) {
+@@ -5604,6 +5909,8 @@ skip_pixel:
+                 mystique->dwgreg.alphastart = a_back + mystique->dwgreg.alphayinc;
+                 mystique->dwgreg.fogstart &= 0xFFFFFF;
+                 mystique->dwgreg.alphastart &= 0xFFFFFF;
++                for (int c = 0; c < 3; c++)
++                    mystique->dwgreg.specstart[c] = (spec_back[c] + mystique->dwgreg.specyinc[c]) & 0xFFFFFF;
+ 
+                 while ((int32_t) mystique->dwgreg.ar[1] < 0 && mystique->dwgreg.ar[0]) {
+                     mystique->dwgreg.ar[1] += mystique->dwgreg.ar[0];
+@@ -5635,6 +5942,8 @@ skip_pixel:
+                 mystique->dwgreg.alphastart += dx * mystique->dwgreg.alphaxinc;
+                 mystique->dwgreg.fogstart &= 0xFFFFFF;
+                 mystique->dwgreg.alphastart &= 0xFFFFFF;
++                for (int c = 0; c < 3; c++)
++                    mystique->dwgreg.specstart[c] = (mystique->dwgreg.specstart[c] + dx * mystique->dwgreg.specxinc[c]) & 0xFFFFFF;
+ 
+                 mystique->dwgreg.ydst++;
+                 mystique->dwgreg.ydst &= 0x7fffff;
+@@ -6393,13 +6702,17 @@ mystique_pci_read(UNUSED(int func), int addr, UNUSED(int len), void *priv)
+                 break;
+ 
+             case 0x02:
+-                if (mystique->type == MGA_G100)
++                if (mystique->type == MGA_G200)
++                    ret = 0x21;
++                else if (mystique->type == MGA_G100)
+                     ret = 0x01;
+                 else
+                     ret = (mystique->type == MGA_2164W) ? (mystique->is_agp ? 0x1f : 0x1b) : ((mystique->type == MGA_2064W) ? 0x19 : 0x1a);
+                 break; /*MGA*/
+             case 0x03:
+-                if (mystique->type == MGA_G100)
++                if (mystique->type == MGA_G200)
++                    ret = 0x05;
++                else if (mystique->type == MGA_G100)
+                     ret = 0x10;
+                 else
+                     ret = 0x05;
+@@ -6709,7 +7022,7 @@ mystique_pci_write(UNUSED(int func), int addr, UNUSED(int len), uint8_t val, voi
+ 
+             if (mystique->pci_regs[0x30] & 0x01) {
+                 uint32_t biosaddr = (mystique->pci_regs[0x32] << 16) | (mystique->pci_regs[0x33] << 24);
+-                mem_mapping_set_addr(&mystique->bios_rom.mapping, biosaddr, (mystique->type == MGA_G100) ? 0x10000 : 0x8000);
++                mem_mapping_set_addr(&mystique->bios_rom.mapping, biosaddr, (mystique->type >= MGA_G100) ? 0x10000 : 0x8000);
+             } else
+                 mem_mapping_disable(&mystique->bios_rom.mapping);
+             return;
+@@ -6732,11 +7045,11 @@ mystique_pci_write(UNUSED(int func), int addr, UNUSED(int len), uint8_t val, voi
+             if (val & 0x40) {
+                 if (mystique->pci_regs[0x30] & 0x01) {
+                     uint32_t biosaddr = (mystique->pci_regs[0x32] << 16) | (mystique->pci_regs[0x33] << 24);
+-                    mem_mapping_set_addr(&mystique->bios_rom.mapping, biosaddr, (mystique->type == MGA_G100) ? 0x10000 : 0x8000);
++                    mem_mapping_set_addr(&mystique->bios_rom.mapping, biosaddr, (mystique->type >= MGA_G100) ? 0x10000 : 0x8000);
+                 } else
+                     mem_mapping_disable(&mystique->bios_rom.mapping);
+             } else
+-                mem_mapping_set_addr(&mystique->bios_rom.mapping, 0x000c0000, (mystique->type == MGA_G100) ? 0x10000 : 0x8000);
++                mem_mapping_set_addr(&mystique->bios_rom.mapping, 0x000c0000, (mystique->type >= MGA_G100) ? 0x10000 : 0x8000);
+             break;
+ 
+         case 0x4c:
+@@ -6825,7 +7138,7 @@ mystique_init(const device_t *info)
+     mystique->type   = info->local;
+     mystique->is_agp = !!(info->flags & DEVICE_AGP);
+ 
+-    if (mystique->type == MGA_G100)
++    if (mystique->type >= MGA_G100)
+         mystique->pll_ref_clock = 27000000.0f;
+     else
+         mystique->pll_ref_clock = 14318181.0f;
+@@ -6836,17 +7149,48 @@ mystique_init(const device_t *info)
+         romfn = mystique->is_agp ? ROM_MILLENNIUM_II_AGP : ROM_MILLENNIUM_II;
+     else if (mystique->type == MGA_1064SG)
+         romfn = ROM_MYSTIQUE;
+-    else if (mystique->type == MGA_G100)
++    else if (mystique->type >= MGA_G100)
+         romfn = ROM_G100;
+     else
+         romfn = ROM_MYSTIQUE_220;
+ 
+-    if (mystique->type == MGA_G100)
++    if (mystique->type >= MGA_G100)
+         rom_init(&mystique->bios_rom, romfn, 0xc0000, 0x10000, 0xffff, 0, MEM_MAPPING_EXTERNAL);
+     else
+         rom_init(&mystique->bios_rom, romfn, 0xc0000, 0x8000, 0x7fff, 0, MEM_MAPPING_EXTERNAL);
+     mem_mapping_disable(&mystique->bios_rom.mapping);
+ 
++    if (mystique->type == MGA_G200 && mystique->bios_rom.rom) {
++        /* MGA-Glide local patch (WP-3): no G200 BIOS in the ROM set; the G100
++         * BIOS drives the shared VGA/VBE hardware. Its PCI data structure
++         * names the G200 so the system BIOS runs it for this card. */
++        uint8_t *r   = mystique->bios_rom.rom;
++        int      len = r[2] * 512, pcir = r[0x18] | (r[0x19] << 8), i;
++        uint8_t  sum = 0;
++        if (len > 0 && len <= 0x10000 && pcir + 8 < len && !memcmp(&r[pcir], "PCIR", 4)) {
++            /* The code also looks for its card by device ID: PCI BIOS find
++             * device (mov cx,1001h / mov dx,102Bh), and compares of the ID
++             * read back (cmp ax,1001h; cmp eax,1001102Bh). */
++            static const struct { uint8_t pat[6]; int n, at; } sites[] = {
++                { { 0xb9, 0x01, 0x10, 0xba, 0x2b, 0x10 }, 6, 1 },
++                { { 0xed, 0x3d, 0x01, 0x10 }, 4, 2 },
++                { { 0x66, 0x3d, 0x2b, 0x10, 0x01, 0x10 }, 6, 4 },
++            };
++            int k;
++            r[pcir + 6] = 0x21;
++            r[pcir + 7] = 0x05;
++            for (k = 0; k < 3; k++)
++                for (i = 0; i + sites[k].n <= len; i++)
++                    if (!memcmp(&r[i], sites[k].pat, sites[k].n)) {
++                        r[i + sites[k].at]     = 0x21;
++                        r[i + sites[k].at + 1] = 0x05;
++                    }
++            for (i = 0; i < len - 1; i++)
++                sum += r[i];
++            r[len - 1] = (uint8_t) -sum;
++        }
++    }
++
+     mystique->vram_size   = device_get_config_int("memory");
+     mystique->vram_mask   = (mystique->vram_size << 20) - 1;
+     mystique->vram_mask_w = mystique->vram_mask >> 1;
+@@ -6879,7 +7223,7 @@ mystique_init(const device_t *info)
+                   NULL);
+         mystique->svga.clock_gen = mystique;
+         mystique->svga.getclock  = mystique_getclock;
+-        if (mystique->type == MGA_G100)
++        if (mystique->type >= MGA_G100)
+             mystique->svga.decode_mask = 0xffffff;
+     }
+ 
+@@ -7184,6 +7528,21 @@ const device_t millennium_ii_agp_device = {
+ };
+ 
+ #ifdef USE_G100
++/* MGA-Glide local patch (WP-3): an emulated Millennium G200 (AGP). */
++const device_t millennium_g200_device = {
++    .name          = "Matrox Millennium G200 (MGA-Glide emulation)",
++    .internal_name = "millennium_g200",
++    .flags         = DEVICE_AGP,
++    .local         = MGA_G200,
++    .init          = mystique_init,
++    .close         = mystique_close,
++    .reset         = NULL,
++    .available     = matrox_g100_available,
++    .speed_changed = mystique_speed_changed,
++    .force_redraw  = mystique_force_redraw,
++    .config        = g100_config
++};
++
+ const device_t productiva_g100_device = {
+     .name          = "Matrox Productiva G100",
+     .internal_name = "productiva_g100",
+diff --git a/src/video/vid_table.c b/src/video/vid_table.c
+index 5731eb8..f30cf5b 100644
+--- a/src/video/vid_table.c
++++ b/src/video/vid_table.c
+@@ -209,6 +209,7 @@ video_cards[] = {
+     { .device = &millennium_ii_agp_device,                      .flags = VIDEO_FLAG_TYPE_SECONDARY },
+ #ifdef USE_G100
+     { .device = &productiva_g100_device,                        .flags = VIDEO_FLAG_TYPE_SPECIAL   },
++    { .device = &millennium_g200_device,                        .flags = VIDEO_FLAG_TYPE_SPECIAL   },
+ #endif /*USE_G100 */
+     { .device = &s3_trio3d2x_agp_device,                        .flags = VIDEO_FLAG_TYPE_NONE      },
+     { .device = &s3_virge_gx2_agp_device,                       .flags = VIDEO_FLAG_TYPE_NONE      },

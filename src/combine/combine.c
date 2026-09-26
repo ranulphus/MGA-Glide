@@ -90,6 +90,18 @@ void mg_combine_vertex(const GrVertex *v, int csrc, float rgb[3])
     }
 }
 
+void mg_combine_vertex_spec(const GrVertex *v, int spec, float rgb[3])
+{
+    const mg_state *s = &mg.st;
+    if (spec == SPEC_LOCAL_ALPHA) {
+        rgb[0] = rgb[1] = rgb[2] = alpha_sel_local(v);
+    } else if (s->cc_local == GR_COMBINE_LOCAL_DEPTH) {
+        rgb[0] = rgb[1] = rgb[2] = depth_local(v);
+    } else {
+        color_sel(v, s->cc_local == GR_COMBINE_LOCAL_CONSTANT, rgb);
+    }
+}
+
 float mg_combine_vertex_alpha(const GrVertex *v, int asrc)
 {
     const mg_state *s = &mg.st;
@@ -144,6 +156,7 @@ void mg_combine_plan(mg_plan *p)
     p->tex_white = 0;
     p->approx = 0;
     p->quadratic = 0;
+    p->spec = SPEC_NONE;
 
     /* What TMU0 hands to the colour unit. */
     switch (tmu0.rgb_func) {
@@ -192,6 +205,19 @@ void mg_combine_plan(mg_plan *p)
             p->color_src = CS_SOFT_FACTOR;
             return;
         }
+    }
+    /* G200 and later: texel x factor + local colour (or local alpha) is
+     * the modulate plus the specular add. */
+    if (mga.has_specular && s->cc_other == GR_COMBINE_OTHER_TEXTURE && !s->cc_invert && !tex_zero &&
+        (s->cc_func == GR_COMBINE_FUNCTION_SCALE_OTHER_ADD_LOCAL ||
+         s->cc_func == GR_COMBINE_FUNCTION_SCALE_OTHER_ADD_LOCAL_ALPHA) &&
+        !factor_is_texture(s->cc_factor, 1)) {
+        p->spec = s->cc_func == GR_COMBINE_FUNCTION_SCALE_OTHER_ADD_LOCAL ? SPEC_LOCAL : SPEC_LOCAL_ALPHA;
+        if (s->cc_factor != GR_COMBINE_FACTOR_ONE) {
+            p->modulate = 1;
+            p->color_src = CS_SOFT_FACTOR;
+        }
+        return;
     }
     /* Additive, subtractive and texture-alpha forms: the nearest the G100
      * can do is the texel scaled by the factor where that is per-vertex. */

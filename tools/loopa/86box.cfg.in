@@ -15,10 +15,10 @@ mem_size = 65536
 time_sync = disabled
 
 [Video]
-gfxcard = productiva_g100
+gfxcard = @GFXCARD@
 voodoo = @VOODOO@
 
-[Matrox Productiva G100]
+[@GFXNAME@]
 memory = @G100_MB@
 
 [3DFX Voodoo Graphics]
@@ -52,7 +52,7 @@ path = @SERIAL@
 append = 0
 
 [Hard disks]
-hdd_01_parameters = 63, 16, 130, 0, ide
+hdd_01_parameters = 63, 16, 1000, 0, ide
 hdd_01_fn = @CIMG@
 hdd_01_ide_channel = 0:0
 @EXTRA_HDD@

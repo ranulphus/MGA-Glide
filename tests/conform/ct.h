@@ -25,5 +25,6 @@ extern const ct_test ct_alpha_tests[];
 extern const ct_test ct_fog_tests[];
 extern const ct_test ct_lfb_tests[];
 extern const ct_test ct_combine_tests[];
+extern const ct_test ct_bench_tests[];
 
 #endif

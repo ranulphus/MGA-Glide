@@ -15,6 +15,7 @@ typedef struct {
     int  nsnap;
     int  trace;                /* write a Glide call trace */
     char trace_path[64];
+    char retail_path[64];      /* GLTRACE.OVL: the retail runtime to forward to */
     int  trace_from, trace_to; /* frame window */
     int  stats_every;          /* MGL-STAT line every N swaps (0 = off) */
     int  g100_additive;        /* 0 lumstipple, 1 skip, 2 stipple50 */

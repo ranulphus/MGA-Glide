@@ -125,7 +125,7 @@ void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, con
     int64_t area2, cross;
     int mid_right;
     double inv;
-    plane pz, pr, pg, pb, pa, pf, ps, pt, pq;
+    plane pz, pr, pg, pb, pa, pf, ps, pt, pq, psr, psg, psb;
     double K = 1.0;
     int k = 0;
     int32_t y_top, y_mid, y_bot, part;
@@ -169,6 +169,11 @@ void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, con
         make_plane(&pa, v, v[0]->a, v[1]->a, v[2]->a, inv);
     if (flags & MGA_S_FOG)
         make_plane(&pf, v, v[0]->fog, v[1]->fog, v[2]->fog, inv);
+    if (flags & MGA_S_SPEC) {
+        make_plane(&psr, v, v[0]->sr, v[1]->sr, v[2]->sr, inv);
+        make_plane(&psg, v, v[0]->sg, v[1]->sg, v[2]->sg, inv);
+        make_plane(&psb, v, v[0]->sb, v[1]->sb, v[2]->sb, inv);
+    }
     if (flags & MGA_S_TEX) {
         /* Prescale K = 2^k keeps the most bits through the engine's
          * truncation of s/w before the divide by q (TMR6 12.20 < 2048,
@@ -229,6 +234,15 @@ void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, con
         fifo_reserve(2);
         MGA_WR32(MGAREG_FOGXINC, (uint32_t)fx(pf.dx, 32768.0) & 0xFFFFFF);
         MGA_WR32(MGAREG_FOGYINC, (uint32_t)fx(pf.dy, 32768.0) & 0xFFFFFF);
+    }
+    if (flags & MGA_S_SPEC) {
+        fifo_reserve(6);
+        MGA_WR32(MGAREG_SPECRXINC, (uint32_t)fx(psr.dx, 32768.0) & 0xFFFFFF);
+        MGA_WR32(MGAREG_SPECRYINC, (uint32_t)fx(psr.dy, 32768.0) & 0xFFFFFF);
+        MGA_WR32(MGAREG_SPECGXINC, (uint32_t)fx(psg.dx, 32768.0) & 0xFFFFFF);
+        MGA_WR32(MGAREG_SPECGYINC, (uint32_t)fx(psg.dy, 32768.0) & 0xFFFFFF);
+        MGA_WR32(MGAREG_SPECBXINC, (uint32_t)fx(psb.dx, 32768.0) & 0xFFFFFF);
+        MGA_WR32(MGAREG_SPECBYINC, (uint32_t)fx(psb.dy, 32768.0) & 0xFFFFFF);
     }
 
     if (flags & MGA_S_TEX) {
@@ -306,6 +320,12 @@ void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, con
         if (flags & MGA_S_FOG) {
             fifo_reserve(1);
             MGA_WR32(MGAREG_FOGSTART, col_start(eval(&pf, v[0], px, py)));
+        }
+        if (flags & MGA_S_SPEC) {
+            fifo_reserve(3);
+            MGA_WR32(MGAREG_SPECRSTART, col_start(eval(&psr, v[0], px, py)));
+            MGA_WR32(MGAREG_SPECGSTART, col_start(eval(&psg, v[0], px, py)));
+            MGA_WR32(MGAREG_SPECBSTART, col_start(eval(&psb, v[0], px, py)));
         }
         if (flags & MGA_S_TEX) {
             fifo_reserve(3);

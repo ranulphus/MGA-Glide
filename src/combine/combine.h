@@ -21,7 +21,10 @@ typedef struct {
     int tex_white;      /* texture combine yields 1 (use the white texture) */
     int approx;         /* the result is an approximation (logged once per state) */
     int quadratic;      /* product of two iterated terms: subdivide to keep it close */
+    int spec;           /* G200 specular add: SPEC_LOCAL / SPEC_LOCAL_ALPHA, 0 = none */
 } mg_plan;
+
+enum { SPEC_NONE, SPEC_LOCAL, SPEC_LOCAL_ALPHA };
 
 void mg_combine_plan(mg_plan *p);
 
@@ -48,5 +51,6 @@ void mg_alpha_plan(mg_aplan *a);
 /* Per-vertex evaluation of the Voodoo colour / alpha combine units. */
 void  mg_combine_vertex(const GrVertex *v, int csrc, float rgb[3]);
 float mg_combine_vertex_alpha(const GrVertex *v, int asrc);
+void  mg_combine_vertex_spec(const GrVertex *v, int spec, float rgb[3]);
 
 #endif

@@ -29,6 +29,7 @@ static void set_opt(const char *key, const char *val)
     else if (!strcmp(key, "exit_after")) mg_config.exit_after = to_int(val);
     else if (!strcmp(key, "trace")) mg_config.trace = to_int(val);
     else if (!strcmp(key, "trace_path")) strncpy(mg_config.trace_path, val, sizeof mg_config.trace_path - 1);
+    else if (!strcmp(key, "retail")) strncpy(mg_config.retail_path, val, sizeof mg_config.retail_path - 1);
     else if (!strcmp(key, "trace_from")) mg_config.trace_from = to_int(val);
     else if (!strcmp(key, "trace_to")) mg_config.trace_to = to_int(val);
     else if (!strcmp(key, "stats")) mg_config.stats_every = to_int(val);
@@ -87,6 +88,7 @@ void mg_config_load(void)
     mg_config.gamma_enable = 1;
     mg_config.hooks = 1;         /* 0: keep a linear ramp whatever the game asks */
     strcpy(mg_config.trace_path, "MGTRACE.BIN");
+    strcpy(mg_config.retail_path, "GLIDE2X.3DF");
     mg_config.trace_to = 0x7FFFFFFF;
     if (mg_read_file("MGAGLIDE.CFG", buf, sizeof buf) > 0)
         parse(buf);

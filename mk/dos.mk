@@ -28,6 +28,7 @@ endef
 $(eval $(call dos_exe,HELLO,build/ow/exe/tests/shim/hello.obj))
 $(eval $(call dos_exe,LESPIKE,build/ow/exe/tests/spike/lespike.obj))
 $(eval $(call dos_exe,PROBE,build/ow/exe/tests/hal/probe.obj))
+$(eval $(call dos_exe,ROMDUMP,build/ow/exe/tests/hal/romdump.obj))
 $(eval $(call dos_exe,TEXPROBE,build/ow/exe/tests/spike/texprobe.obj))
 CONFORM_OBJS := $(patsubst %.c,build/ow/exe/%.obj,$(wildcard tests/conform/*.c))
 GLPLAY_OBJS := build/ow/exe/tests/replay/glplay.obj build/ow/exe/build/gen/replay_gen.obj build/ow/exe/src/trace/trfmt.obj

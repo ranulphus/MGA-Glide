@@ -38,7 +38,7 @@ uint32_t mg_depth_clear_value(FxU16 depth)
 
 static uint32_t argb_const(void) { return mg_color_to_argb(mg.st.constant_color); }
 
-static void vtx(mga_svtx *o, const GrVertex *v, int wmode, int csrc, int asrc)
+static void vtx(mga_svtx *o, const GrVertex *v, int wmode, int csrc, int asrc, int spec)
 {
     uint32_t c;
     o->X16 = snap16(v->x);
@@ -87,6 +87,12 @@ static void vtx(mga_svtx *o, const GrVertex *v, int wmode, int csrc, int asrc)
     else
         o->a = v->a < 0 ? 0 : (v->a > 255 ? 255 : v->a);
     o->fog = mg.fog_on ? (float)(255.0 - mg_fog_vertex(v)) : 255.0f;
+    if (spec) {
+        float srgb[3];
+        mg_combine_vertex_spec(v, spec, srgb);
+        o->sr = srgb[0]; o->sg = srgb[1]; o->sb = srgb[2];
+    } else
+        o->sr = o->sg = o->sb = 0;
     o->q = (mg.st.stw_hint & GR_STWHINT_W_DIFF_TMU0) ? v->tmuvtx[0].oow : v->oow;
     o->s = v->tmuvtx[0].sow;          /* scaled to the bound level below */
     o->t = v->tmuvtx[0].tow;
@@ -211,9 +217,13 @@ typedef struct {
     tex_variant var;          /* keyed texture variant (alpha test / chroma key) */
     uint32_t    alphactrl;    /* ALPHACTRL for the draw */
     int         akey0;        /* key texels whose alpha field is 0 (formats that keep alpha) */
+    int         vertex_alpha; /* G200: blending or alpha test reads the iterated alpha */
+    int         mip_n;        /* G200: levels in the hardware mip window (0/1 = single level) */
+    uint32_t    texctl2;      /* G200: TEXCTL2 (specular enable) */
 } draw_opts;
 
-static void emit_texture_state(const tex_level_hw *hw, int modulate, const draw_opts *o)
+static void emit_texture_state(const tex_level_hw *hw, int modulate, const draw_opts *o,
+                               const uint32_t *mip_org, int mip_n)
 {
     /* takey=1, tamask=0: texel alpha never keys (G100 spec: opaque). A
      * keyed variant uses tamask=1, takey=0: alpha 0 is transparent. */
@@ -226,10 +236,23 @@ static void emit_texture_state(const tex_level_hw *hw, int modulate, const draw_
     if (tmu0.clamp_s == GR_TEXTURECLAMP_CLAMP) texctl |= TEXCTL_CLAMPU;
     if (tmu0.clamp_t == GR_TEXTURECLAMP_CLAMP) texctl |= TEXCTL_CLAMPV;
     if (modulate) texctl |= TEXCTL_TMODULATE;
-    fifo_reserve(5);
+    fifo_reserve(10);
     MGA_WR32(MGAREG_TEXORG, hw->org);
     MGA_WR32(MGAREG_TEXCTL, texctl);
-    MGA_WR32(MGAREG_TEXFILTER, TEXFILTER_MIN(filt) | TEXFILTER_MAG(filt));
+    if (mga.has_texctl2)
+        MGA_WR32(MGAREG_TEXCTL2, o->texctl2);
+    if (mip_n > 1) {
+        /* G200 window: levels 1..n-1 at TEXORG1..; the chip picks the level
+         * per pixel (nearest level; texel filter as the game chose). */
+        static const uint32_t orgreg[4] = { MGAREG_TEXORG1, MGAREG_TEXORG2, MGAREG_TEXORG3, MGAREG_TEXORG4 };
+        int k;
+        for (k = 1; k < mip_n; k++)
+            MGA_WR32(orgreg[k - 1], mip_org[k]);
+        MGA_WR32(MGAREG_TEXFILTER, TEXFILTER_MIN(filt == TEXFILTER_BILIN ? TEXFILTER_MM2S : TEXFILTER_MM1S) |
+                                   TEXFILTER_MAG(filt) | TEXFILTER_FILTERALPHA | TEXFILTER_FTHRES(0x10) |
+                                   TEXFILTER_MAPNB(mip_n - 1));
+    } else
+        MGA_WR32(MGAREG_TEXFILTER, TEXFILTER_MIN(filt) | TEXFILTER_MAG(filt));
     MGA_WR32(MGAREG_TEXTRANS, 0x0000FFFFu);
     MGA_WR32(MGAREG_ALPHACTRL, o->alphactrl);
 }
@@ -322,7 +345,26 @@ static void draw_band(const mga_svtx *a0, const mga_svtx *b0, const mga_svtx *c0
     sb.s *= (float)sig_s; sb.t *= (float)sig_t;
     sc.s *= (float)sig_s; sc.t *= (float)sig_t;
     tex_adjust(&sa, &sb, &sc, &hw);
-    emit_texture_state(&hw, plan->modulate, o);
+    {
+        uint32_t mip_org[5];
+        int mip_n = 0;
+        if (o->mip_n > 1 && !plan->tex_white) {
+            /* Bind the following levels while each is 8x8 or more (their
+             * pitch then halves, as the G200 expects) and converts to the
+             * same hardware format. */
+            tex_level_hw hk;
+            mip_org[0] = hw.org;
+            for (mip_n = 1; mip_n < o->mip_n; mip_n++) {
+                if (lod + mip_n > tmu0.small ||
+                    tex_bind_level((GrLOD_t)(lod + mip_n), o->var.kind ? &o->var : NULL, &hk) < 0 ||
+                    hk.hwfmt != hw.hwfmt || hk.w_log2 != hw.w_log2 - mip_n || hk.h_log2 != hw.h_log2 - mip_n ||
+                    hk.w_log2 < 3 || hk.h_log2 < 3)
+                    break;
+                mip_org[mip_n] = hk.org;
+            }
+        }
+        emit_texture_state(&hw, plan->modulate, o, mip_org, mip_n);
+    }
     ctx->tex_tw = hw.w_log2;
     ctx->tex_th = hw.h_log2;
     ctx->clip_y0 = row0 < 0 ? 0 : row0;
@@ -372,6 +414,20 @@ static void draw_textured(const GrVertex *a, const GrVertex *b, const GrVertex *
     }
     if (need_lod)
         lod_setup(&L, a, b, c);
+    if (need_lod && mga.max_mip_levels > 1 && tmu0.lod_bias == 0.0f && !F.on) {
+        /* G200: one draw with a hardware mip window starting at the finest
+         * level any part of the triangle needs. (No LOD bias register, so a
+         * biased chain keeps the banded path.) */
+        draw_opts mo = *o;
+        GrLOD_t l0 = level_for(lod_at(&L, a->x, a->y)), l;
+        double cxm = (a->x + b->x + c->x) / 3.0, cym = (a->y + b->y + c->y) / 3.0;
+        l = level_for(lod_at(&L, b->x, b->y)); if (l < l0) l0 = l;
+        l = level_for(lod_at(&L, c->x, c->y)); if (l < l0) l0 = l;
+        l = level_for(lod_at(&L, cxm, cym)); if (l < l0) l0 = l;
+        mo.mip_n = mga.max_mip_levels > 5 ? 5 : mga.max_mip_levels;
+        draw_band(sa, sb, sc, ctx, plan, &mo, l0, 0, mg.mode.height, NULL);
+        return;
+    }
     cx = (a->x + b->x + c->x) / 3.0;
     run_start = r0;
     run_lod = (GrLOD_t)-1;
@@ -422,6 +478,7 @@ static int atest_pass(int func, int a, int ref)
 static int alpha_setup(mg_plan *plan, const mg_aplan *ap, draw_opts *o, mga_svtx *sa, mga_svtx *sb, mga_svtx *sc)
 {
     const mg_state *s = &mg.st;
+    uint32_t at_bits = 0;
     mga_svtx *v[3];
     int i, tex_alpha = ap->alpha_src == AS_TEXTURE || ap->alpha_src == AS_MODULATED_ITER ||
                        ap->alpha_src == AS_MODULATED_CONST || ap->alpha_src == AS_MODULATED_SOFT;
@@ -439,8 +496,12 @@ static int alpha_setup(mg_plan *plan, const mg_aplan *ap, draw_opts *o, mga_svtx
         if (ap->invert)
             v[i]->a = 255 - v[i]->a;
     }
-    /* Alpha test. */
-    if (ap->atest != GR_CMP_ALWAYS) {
+    /* Alpha test: native on the G200 family, otherwise keyed texture
+     * variants (texture alpha) or a per-triangle decision (vertex alpha). */
+    if (ap->atest != GR_CMP_ALWAYS && mga.has_alpha_test) {
+        static const uint8_t atmode[8] = { 0, 4, 2, 5, 6, 3, 7, 0 };   /* by GR_CMP_* */
+        at_bits = ALPHACTRL_ATEN | ALPHACTRL_ATMODE(atmode[ap->atest & 7]) | ALPHACTRL_ATREF(s->alpha_test_ref);
+    } else if (ap->atest != GR_CMP_ALWAYS) {
         if (tex_alpha && plan->textured) {
             o->var.kind |= TV_ATEST;
             o->var.afunc = ap->atest;
@@ -472,8 +533,13 @@ static int alpha_setup(mg_plan *plan, const mg_aplan *ap, draw_opts *o, mga_svtx
         }
     }
     /* Blending. */
-    if (ap->native) {
-        o->alphactrl = ap->factors | ALPHACTRL_ALPHASEL(tex_alpha ? ALPHASEL_MODULATED : ALPHASEL_DIFFUSE);
+    if (mga.has_alpha_blend) {
+        uint32_t f = ap->native ? ap->factors : (ALPHACTRL_SRC(BLEND_ONE) | ALPHACTRL_DST(BLEND_ZERO));
+        int sel = !(tex_alpha && plan->textured) ? ALPHASEL_DIFFUSE
+                : ap->alpha_src == AS_TEXTURE ? ALPHASEL_TEXTURE : ALPHASEL_MODULATED;
+        o->alphactrl = f | at_bits | ALPHACTRL_ALPHASEL(sel);
+        /* Any alpha but the texel's own comes from the alpha plane. */
+        o->vertex_alpha = (ap->native || at_bits) && sel != ALPHASEL_TEXTURE;
         return 1;
     }
     if (ap->stipple) {
@@ -654,11 +720,13 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
             plan.modulate = 1;
         }
     }
-    vtx(&sa, a, wmode, plan.color_src, ap.alpha_src);
-    vtx(&sb, b, wmode, plan.color_src, ap.alpha_src);
-    vtx(&sc, c, wmode, plan.color_src, ap.alpha_src);
+    vtx(&sa, a, wmode, plan.color_src, ap.alpha_src, plan.spec);
+    vtx(&sb, b, wmode, plan.color_src, ap.alpha_src, plan.spec);
+    vtx(&sc, c, wmode, plan.color_src, ap.alpha_src, plan.spec);
     memset(&opts, 0, sizeof opts);
-    opts.alphactrl = ALPHACTRL_G100_FIXED | ALPHACTRL_ALPHASEL(ALPHASEL_DIFFUSE);
+    opts.alphactrl = mga.has_alpha_blend ? ALPHACTRL_SRC(BLEND_ONE) | ALPHACTRL_DST(BLEND_ZERO) |
+                                           ALPHACTRL_ALPHASEL(ALPHASEL_DIFFUSE)
+                                         : ALPHACTRL_G100_FIXED | ALPHACTRL_ALPHASEL(ALPHASEL_DIFFUSE);
     if (!alpha_setup(&plan, &ap, &opts, &sa, &sb, &sc))
         return;
     mg_validate();
@@ -677,10 +745,21 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
     }
     ctx.clip_y0 = 0;
     ctx.clip_y1 = mg.mode.height;
+    if (opts.vertex_alpha)
+        ctx.flags |= MGA_S_ALPHA;
+    if (plan.spec) {
+        ctx.flags |= MGA_S_SPEC;
+        opts.texctl2 |= TEXCTL2_SPECEN;
+    }
     if (!plan.textured) {
         ctx.dwgctl |= DWG_OPCOD_TRAP;
         if (plan.color_src == CS_ITERATED || plan.color_src == CS_ITER_ALPHA || plan.color_src == CS_SOFT)
             ctx.flags |= MGA_S_COLOR;
+        if (mga.has_alpha_blend) {
+            /* The G200 blends and alpha-tests plain trapezoids too. */
+            fifo_reserve(1);
+            MGA_WR32(MGAREG_ALPHACTRL, opts.alphactrl);
+        }
         setup_triangle(&sa, &sb, &sc, &ctx);
     } else {
         ctx.dwgctl |= DWG_OPCOD_TEXTURE_TRAP;
