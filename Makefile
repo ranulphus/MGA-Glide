@@ -167,10 +167,18 @@ loopa-selftest: dostests runtime
 
 # Conformance suite (tools/conform/run.py). References come from a retail
 # OVL on the emulated Voodoo and are committed; checks run MGA-Glide.
-.PHONY: conform conform-ref conform-ci
+.PHONY: conform conform-ref conform-ci rig hreplay hreplay-check gltrace smoke-djgpp
 conform: runtime dostests
 	$(DEV) $(PYTHON) tools/conform/run.py check $(TESTS)
 conform-ref: dostests
 	$(DEV) $(PYTHON) tools/conform/run.py ref $(TESTS)
 conform-ci: runtime dostests
 	$(PYTHON) tools/conform/run.py check
+	MGA_CARD=g200 $(PYTHON) tools/conform/run.py check
+
+# Loop C rig program (static x86-64 Linux, for cuda6; docs/loop-c-results.md).
+build/mgarig: tests/rig/mgarig.c $(HAL_COMMON) hal/port/linux.c $(wildcard hal/include/mga/*.h)
+	$(Q)echo "  CC      $@"
+	$(Q)$(HOST_CC) -static -O2 -std=gnu99 -Wall -Wextra -Werror -Ihal/include -o $@ tests/rig/mgarig.c \
+	  hal/src/engine.c hal/src/fifo.c hal/src/chip.c hal/src/pci.c hal/src/setup/trap.c hal/port/linux.c -lm
+rig: build/mgarig

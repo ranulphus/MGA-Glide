@@ -21,6 +21,7 @@ jobs:
       - run: python3 tools/ci/no_3dfx.py
       - run: make check-header
       - run: make tests-host
+      - run: make hreplay rig
 
   ow:
     runs-on: ubuntu-24.04
@@ -29,13 +30,15 @@ jobs:
       - uses: actions/cache@v4
         with: { path: .mga-opt/watcom, key: "ow-${{ hashFiles('tools/setup/versions.mk') }}" }
       - run: make setup-ow
-      - run: make runtime dostests check-exports check-clib
+      - run: make runtime dostests check-exports check-clib gltrace
+      - run: python3 tools/abi/check_exports.py build/ow/GLTRACE.OVL abi/glide2x.api abi/games/*.names
       - uses: actions/upload-artifact@v4
         with:
           name: dos-binaries
           path: |
             build/ow/GLIDE2X.OVL
             build/ow/GLIDE2X.map
+            build/ow/GLTRACE.OVL
             build/ow/dos/*.EXE
             build/ow/dos/*.COM
 
@@ -46,7 +49,8 @@ jobs:
       - uses: actions/cache@v4
         with: { path: .mga-opt/djgpp, key: "djgpp-${{ hashFiles('tools/setup/versions.mk') }}" }
       - run: make setup-djgpp
-      - run: make hal-djgpp
+      - run: make hal-djgpp smoke-djgpp
+      - run: tools/hal-export.sh && make -C build/hal-export hal-djgpp hal-host tests-host smoke-djgpp
 
   loopa:
     runs-on: ubuntu-24.04
@@ -64,6 +68,7 @@ jobs:
       - run: make 86box
       - run: make loopa-selftest
       - run: make conform-ci
+      - run: make hreplay-check
       - if: always()
         uses: actions/upload-artifact@v4
         with: { name: loopa-out, path: out/ }
