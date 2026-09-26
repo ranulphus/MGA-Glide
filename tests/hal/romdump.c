@@ -5,7 +5,7 @@
  * and reports its size and CRC. The dump stays with the owner of the card:
  * it goes into the local 86Box ROM set, never into this repository.
  *
- * Steps: size the ROM BAR (write all ones, read back), place it at an
+ * Steps: set OPTION.biosen (the BAR only decodes with it), size the ROM BAR (write all ones, read back), place it at an
  * address the card is not using (just above the framebuffer aperture),
  * enable decoding, copy the image (length from its header, 512-byte units),
  * then restore the BAR. */
@@ -19,7 +19,7 @@ static uint8_t image[128 * 1024];
 
 int main(int argc, char **argv)
 {
-    uint32_t old_bar, size_mask, size, base, len, i;
+    uint32_t old_bar, old_option, size_mask, size, base, len, i;
     volatile uint8_t *rom;
     FILE *f;
     int ok;
@@ -29,6 +29,9 @@ int main(int argc, char **argv)
     hx_test("pci", ok, "%s id=%04x rev=%02x", ok ? mga.name : "none", mga.device_id, mga.revision);
     if (!ok)
         hx_done(HX_INIT_FAILED);
+    /* OPTION.biosen (bit 30) must be set for the ROM BAR to decode. */
+    old_option = mga_pci_read32(mga.bus, mga.dev, mga.fn, 0x40);
+    mga_pci_write32(mga.bus, mga.dev, mga.fn, 0x40, old_option | (1u << 30));
     old_bar = mga_pci_read32(mga.bus, mga.dev, mga.fn, 0x30);
     mga_pci_write32(mga.bus, mga.dev, mga.fn, 0x30, 0xFFFFF800u);
     size_mask = mga_pci_read32(mga.bus, mga.dev, mga.fn, 0x30) & 0xFFFFF800u;
@@ -41,8 +44,15 @@ int main(int argc, char **argv)
     /* Use the BIOS-assigned address if there is one, else one above the
      * framebuffer aperture (aligned to the ROM size). */
     base = old_bar & 0xFFFFF800u;
-    if (!base)
-        base = (mga.fb_phys + 0x02000000u + size - 1) & ~(size - 1);
+    if (!base) {
+        /* Above every aperture of the card (framebuffer, MMIO, ILOAD). */
+        uint32_t top = mga.fb_phys + mga.fb_size;
+        if (mga.mmio_phys + 0x4000u > top) top = mga.mmio_phys + 0x4000u;
+        if (mga.iload_phys + 0x800000u > top) top = mga.iload_phys + 0x800000u;
+        base = (top + size - 1) & ~(size - 1);
+    }
+    hx_log("HX-STAT rombar old=%08lx size=%lu use=%08lx option=%08lx", (unsigned long)old_bar,
+           (unsigned long)size, (unsigned long)base, (unsigned long)old_option);
     mga_pci_write32(mga.bus, mga.dev, mga.fn, 0x30, base | 1u);
     rom = (volatile uint8_t *)sys_map_phys(base, size);
     if (!rom) {
@@ -53,6 +63,7 @@ int main(int argc, char **argv)
     for (i = 0; i < size; i++)
         image[i] = rom[i];
     mga_pci_write32(mga.bus, mga.dev, mga.fn, 0x30, old_bar);
+    mga_pci_write32(mga.bus, mga.dev, mga.fn, 0x40, old_option);
     ok = image[0] == 0x55 && image[1] == 0xAA;
     len = ok ? (uint32_t)image[2] * 512u : 0;
     if (!len || len > size)
