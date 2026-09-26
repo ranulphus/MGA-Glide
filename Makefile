@@ -110,14 +110,21 @@ loopa: dostests
 	$(DEV) $(PYTHON) tools/loopa/run.py --name $(TEST) --exe build/ow/dos/$(shell echo $(TEST) | tr a-z A-Z).EXE \
 	  $(if $(ARGS),--args="$(ARGS)") $(if $(OVL),--ovl $(OVL))
 
-loopa-selftest: dostests
+loopa-selftest: dostests runtime
 	@set -e; \
 	check() { $(DEV) $(PYTHON) tools/loopa/run.py --name selftest-$$1 --exe build/ow/dos/HELLO.EXE \
 	            --idle 25 --boot-grace 20 $${3:+--args=$$3} >/dev/null || true; \
 	          got=$$(cat out/selftest-$$1/status); \
 	          if [ "$$got" = "$$2" ]; then echo "  selftest $$1: $$got (ok)"; \
 	          else echo "  selftest $$1: got $$got, want $$2"; exit 1; fi; }; \
-	check pass PASS; check fail FAIL --fail; check hang HANG --hang; check crash GUEST-EXC --crash
+	check pass PASS; check fail FAIL --fail; check hang HANG --hang; check crash GUEST-EXC --crash; \
+	hook() { $(DEV) $(PYTHON) tools/loopa/run.py --name selftest-hook-$$1 --exe build/ow/dos/CONFORM.EXE \
+	           --args=$$1 --ovl build/ow/GLIDE2X.OVL --idle 30 --timeout 90 >/dev/null || true; \
+	         if grep -q "$$2" out/selftest-hook-$$1/serial.log && \
+	            grep -q "HX-VMODE bios=03" out/selftest-hook-$$1/serial.log; then \
+	           echo "  selftest hook-$$1: $$2, text mode restored (ok)"; \
+	         else echo "  selftest hook-$$1: expected $$2 and text mode"; exit 1; fi; }; \
+	hook x01 MGL-EXC; hook x02 MGL-EXIT-HOOK
 
 # Conformance suite (tools/conform/run.py). References come from a retail
 # OVL on the emulated Voodoo and are committed; checks run MGA-Glide.

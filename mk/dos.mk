@@ -33,7 +33,7 @@ CONFORM_OBJS := $(patsubst %.c,build/ow/exe/%.obj,$(wildcard tests/conform/*.c))
 $(eval $(call dos_exe,CONFORM,$(CONFORM_OBJS)))
 
 # 16-bit .COM helpers.
-DOS_TOOLS := UTEXIT SERSAY WAITSEC REBOOT
+DOS_TOOLS := UTEXIT SERSAY WAITSEC REBOOT VMODE
 define dos_com
 build/ow/dos/$(1).COM: tools/dos/$(2).c
 	@mkdir -p build/ow/dos/obj16
@@ -45,6 +45,7 @@ $(eval $(call dos_com,UTEXIT,utexit))
 $(eval $(call dos_com,SERSAY,sersay))
 $(eval $(call dos_com,WAITSEC,waitsec))
 $(eval $(call dos_com,REBOOT,reboot))
+$(eval $(call dos_com,VMODE,vmode))
 
 dostools: $(DOS_TOOLS:%=build/ow/dos/%.COM)
 dostests: $(DOS_EXES) dostools

@@ -1,5 +1,6 @@
 /* Untextured conformance tests t01-t09 and t21. */
 #include "ct.h"
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
@@ -299,7 +300,35 @@ static void t21(void)
     ct_close();
 }
 
+/* x01: a fault with the window open. The runtime's fault hook logs
+ * MGL-EXC, restores text mode and chains to DOS/4GW, which ends the
+ * program; the harness then checks the video mode (HX-VMODE). */
+void ct_bad_selector(void);
+#pragma aux ct_bad_selector = "mov ax, 0x1235" "mov es, ax" modify [eax];
+
+static void x01(void)
+{
+    if (ct_open(2, 1) < 0) return;
+    gl.grBufferClear(0x00FF0000, 0, 0);
+    gl.grBufferSwap(0);
+    hx_log("forcing #GP");
+    ct_bad_selector();
+    hx_log("still running after #GP");
+}
+
+/* x02: exit to DOS with the window open and no grGlideShutdown. */
+static void x02(void)
+{
+    if (ct_open(2, 1) < 0) return;
+    gl.grBufferClear(0x0000FF00, 0, 0);
+    gl.grBufferSwap(0);
+    hx_log("exiting without shutdown");
+    exit(3);
+}
+
 const ct_test ct_tests[] = {
+    { "x01", x01, "fault with the window open" },
+    { "x02", x02, "exit without grGlideShutdown" },
     { "t01", t01, "init, query, open, close" },
     { "t02", t02, "clears" },
     { "t03", t03, "swaps and render buffers" },

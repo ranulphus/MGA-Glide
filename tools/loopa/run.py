@@ -148,7 +148,7 @@ def run(a):
         shutil.copyfile(os.path.join(gold, "boot.img"), bootimg)
         sh(["cp", "--sparse=always", os.path.join(gold, "c.img"), cimg])
         d = Disk(cimg, tmp)
-        for t in ("UTEXIT.COM", "SERSAY.COM", "WAITSEC.COM", "REBOOT.COM"):
+        for t in ("UTEXIT.COM", "SERSAY.COM", "WAITSEC.COM", "REBOOT.COM", "VMODE.COM"):
             d.put(os.path.join(ROOT, "build/ow/dos", t), "/HX/" + t)
         d.put(os.path.join(WATCOM, "binw/dos4gw.exe"), "/HX/DOS4GW.EXE")
         d.mkdir("/TEST")
@@ -190,7 +190,7 @@ def run(a):
             run_lines += ["C:", "SERSAY HX-GAME-EXIT"]
         else:
             run_lines += ["C:\\TEST\\%s %s" % (exe_name, a.args or "")]
-        run_lines += ["SERSAY HX-EXIT program returned without ending the run",
+        run_lines += ["VMODE", "SERSAY HX-EXIT program returned without ending the run",
                       "UTEXIT 124"]
         rb = os.path.join(tmp, "RUN.BAT")
         open(rb, "wb").write(dos_bat(run_lines))

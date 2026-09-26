@@ -105,3 +105,8 @@ void *sys_real_ptr(uint16_t seg, uint16_t off)
     __djgpp_nearptr_enable();
     return (void *)((((uint32_t)seg << 4) + off) - (uint32_t)__djgpp_base_address);
 }
+
+int  sys_hook_faults(sys_fault_fn fn) { (void)fn; return -1; }
+void sys_unhook_faults(void) { }
+int  sys_hook_exit(sys_exit_fn fn) { (void)fn; return -1; }
+void sys_unhook_exit(void) { }

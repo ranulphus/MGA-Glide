@@ -43,6 +43,18 @@ void *sys_real_ptr(uint16_t seg, uint16_t off);
 uint32_t sys_time_us(void);
 void     sys_delay_us(uint32_t us);
 
+/* Fault and exit hooks. The fault hook runs for divide error, invalid
+ * opcode, #GP and #PF, on a private stack, with the exception number,
+ * error code and faulting EIP; the exit hook runs when the program asks
+ * DOS to terminate (INT 21h, AH=4Ch). Both always chain to the previous
+ * handler afterwards. Ports without them return -1. */
+typedef void (*sys_fault_fn)(int exc, uint32_t err, uint32_t eip);
+typedef void (*sys_exit_fn)(void);
+int  sys_hook_faults(sys_fault_fn fn);
+void sys_unhook_faults(void);
+int  sys_hook_exit(sys_exit_fn fn);
+void sys_unhook_exit(void);
+
 /* Plain memory for HAL-owned tables (not VRAM). */
 void *sys_alloc(uint32_t bytes);
 void  sys_free(void *p);

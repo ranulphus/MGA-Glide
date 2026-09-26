@@ -156,3 +156,200 @@ void sys_free(void *p)
 }
 
 void *sys_real_ptr(uint16_t seg, uint16_t off) { return (void *)(((uint32_t)seg << 4) + off); }
+
+/* ---- Fault and exit hooks ----------------------------------------------
+ * DPMI 0202h/0203h (processor exceptions) and 0204h/0205h (protected-mode
+ * interrupts). The stubs are entered with the host's selectors and stack:
+ * they load our DS from a CS-relative copy, move to a private stack (the
+ * C code assumes SS = DS in the flat model), call the C side, restore
+ * everything and jump to the previous handler, so the host (or the game's
+ * own handler) still sees the event exactly as before. */
+
+#pragma pack(push, 1)
+typedef struct { uint32_t off; uint16_t sel; } far48;
+#pragma pack(pop)
+
+#define HOOK_STACK 16384
+static uint8_t  hook_stack[HOOK_STACK];
+static uint16_t our_ds;
+static uint32_t hk_save_esp;
+static uint16_t hk_save_ss;
+static int      hk_exc, hk_busy;
+static uint32_t hk_err, hk_eip;
+static sys_fault_fn fault_fn;
+static sys_exit_fn  exit_fn;
+static far48 old_de, old_ud, old_gp, old_pf, old_21;
+static int faults_on, exit_on;
+
+static void fault_dispatch(void)
+{
+    if (hk_busy || !fault_fn)
+        return;
+    hk_busy = 1;
+    fault_fn(hk_exc, hk_err, hk_eip);
+    hk_busy = 0;
+}
+
+static void exit_dispatch(void)
+{
+    if (hk_busy || !exit_fn)
+        return;
+    hk_busy = 1;
+    exit_fn();
+    hk_busy = 0;
+}
+
+/* Common body: the stub pushed the exception number and called us. The
+ * DPMI exception frame follows: return EIP/CS, error code, EIP, CS... */
+static void __declspec(naked) fault_body(void)
+{
+    _asm {
+        pushad
+        push    ds
+        push    es
+        mov     bx, word ptr cs:our_ds
+        mov     eax, [esp + 44]
+        mov     ecx, [esp + 56]
+        mov     edx, [esp + 60]
+        mov     ds, bx
+        mov     es, bx
+        mov     hk_exc, eax
+        mov     hk_err, ecx
+        mov     hk_eip, edx
+        mov     hk_save_ss, ss
+        mov     hk_save_esp, esp
+        mov     ss, bx
+        mov     esp, offset hook_stack
+        add     esp, HOOK_STACK - 16
+        call    fault_dispatch
+        mov     ss, hk_save_ss
+        mov     esp, hk_save_esp
+        pop     es
+        pop     ds
+        popad
+        ret
+    }
+}
+
+#define FAULT_STUB(name, num, old) \
+    static void __declspec(naked) name(void) \
+    { \
+        _asm { push num } \
+        _asm { call fault_body } \
+        _asm { add esp, 4 } \
+        _asm { jmp fword ptr cs:old } \
+    }
+
+FAULT_STUB(stub_de, 0x00, old_de)
+FAULT_STUB(stub_ud, 0x06, old_ud)
+FAULT_STUB(stub_gp, 0x0D, old_gp)
+FAULT_STUB(stub_pf, 0x0E, old_pf)
+
+static void __declspec(naked) stub_21(void)
+{
+    _asm {
+        cmp     ah, 0x4C
+        jne     chain
+        pushad
+        push    ds
+        push    es
+        mov     bx, word ptr cs:our_ds
+        mov     ds, bx
+        mov     es, bx
+        mov     hk_save_ss, ss
+        mov     hk_save_esp, esp
+        mov     ss, bx
+        mov     esp, offset hook_stack
+        add     esp, HOOK_STACK - 16
+        call    exit_dispatch
+        mov     ss, hk_save_ss
+        mov     esp, hk_save_esp
+        pop     es
+        pop     ds
+        popad
+    chain:
+        jmp     fword ptr cs:old_21
+    }
+}
+
+static uint16_t get_cs(void);
+#pragma aux get_cs = "mov ax, cs" value [ax];
+static uint16_t get_ds(void);
+#pragma aux get_ds = "mov ax, ds" value [ax];
+
+static int dpmi_get(uint16_t fn, int n, far48 *v)
+{
+    union REGS r;
+    memset(&r, 0, sizeof r);
+    r.w.ax = fn;
+    r.h.bl = (uint8_t)n;
+    int386(0x31, &r, &r);
+    if (r.x.cflag)
+        return -1;
+    v->sel = r.w.cx;
+    v->off = r.x.edx;
+    return 0;
+}
+
+static int dpmi_set(uint16_t fn, int n, uint16_t sel, uint32_t off)
+{
+    union REGS r;
+    memset(&r, 0, sizeof r);
+    r.w.ax = fn;
+    r.h.bl = (uint8_t)n;
+    r.w.cx = sel;
+    r.x.edx = off;
+    int386(0x31, &r, &r);
+    return r.x.cflag ? -1 : 0;
+}
+
+int sys_hook_faults(sys_fault_fn fn)
+{
+    uint16_t cs = get_cs();
+    fault_fn = fn;
+    if (faults_on)
+        return 0;
+    our_ds = get_ds();
+    if (dpmi_get(0x0202, 0x00, &old_de) || dpmi_get(0x0202, 0x06, &old_ud) ||
+        dpmi_get(0x0202, 0x0D, &old_gp) || dpmi_get(0x0202, 0x0E, &old_pf))
+        return -1;
+    dpmi_set(0x0203, 0x00, cs, (uint32_t)stub_de);
+    dpmi_set(0x0203, 0x06, cs, (uint32_t)stub_ud);
+    dpmi_set(0x0203, 0x0D, cs, (uint32_t)stub_gp);
+    dpmi_set(0x0203, 0x0E, cs, (uint32_t)stub_pf);
+    faults_on = 1;
+    return 0;
+}
+
+void sys_unhook_faults(void)
+{
+    if (!faults_on)
+        return;
+    dpmi_set(0x0203, 0x00, old_de.sel, old_de.off);
+    dpmi_set(0x0203, 0x06, old_ud.sel, old_ud.off);
+    dpmi_set(0x0203, 0x0D, old_gp.sel, old_gp.off);
+    dpmi_set(0x0203, 0x0E, old_pf.sel, old_pf.off);
+    faults_on = 0;
+}
+
+int sys_hook_exit(sys_exit_fn fn)
+{
+    exit_fn = fn;
+    if (exit_on)
+        return 0;
+    our_ds = get_ds();
+    if (dpmi_get(0x0204, 0x21, &old_21))
+        return -1;
+    if (dpmi_set(0x0205, 0x21, get_cs(), (uint32_t)stub_21))
+        return -1;
+    exit_on = 1;
+    return 0;
+}
+
+void sys_unhook_exit(void)
+{
+    if (!exit_on)
+        return;
+    dpmi_set(0x0205, 0x21, old_21.sel, old_21.off);
+    exit_on = 0;
+}

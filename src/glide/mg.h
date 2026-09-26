@@ -117,5 +117,6 @@ void mg_frame_end(void);
 #include "mga/fp.h"
 
 void mg_gamma_apply(void);
+void mg_hooks_install(void);
 
 #endif

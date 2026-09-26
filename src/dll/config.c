@@ -37,6 +37,7 @@ static void set_opt(const char *key, const char *val)
     else if (!strcmp(key, "bilinear")) mg_config.forced_bilinear = to_int(val);
     else if (!strcmp(key, "gamma")) mg_config.gamma_enable = to_int(val);
     else if (!strcmp(key, "census")) mg_config.census = to_int(val);
+    else if (!strcmp(key, "hooks")) mg_config.hooks = to_int(val);
     else if (!strcmp(key, "snap")) {
         const char *p = val;
         mg_config.nsnap = 0;
@@ -83,7 +84,8 @@ void mg_config_load(void)
     mg_config.report_tmus = 1;
     mg_config.log_level = MG_LOG_INFO;
     mg_config.force_z32 = -1;           /* auto: 32-bit depth when VRAM allows */
-    mg_config.gamma_enable = 1;         /* 0: keep a linear ramp whatever the game asks */
+    mg_config.gamma_enable = 1;
+    mg_config.hooks = 1;         /* 0: keep a linear ramp whatever the game asks */
     strcpy(mg_config.trace_path, "MGTRACE.BIN");
     mg_config.trace_to = 0x7FFFFFFF;
     if (mg_read_file("MGAGLIDE.CFG", buf, sizeof buf) > 0)

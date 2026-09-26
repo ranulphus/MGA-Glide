@@ -228,10 +228,46 @@ GR_ENTRY(FxBool, grSstWinOpen, (FxU32 hWnd, GrScreenResolution_t screen_resoluti
     vbe_set_display_start(mg.buf_off[mg.front], pitch * 2, 16);
     mg_gamma_apply();
     mg.fogcol_valid = 0;
+    mg_hooks_install();
     mg_line("MGL-WINOPEN %dx%d mode=%03x pitch=%d buffers=%d aux=%d z%d vram=%u heap=%u",
             w, h, mg.mode.mode, pitch, mg.nbuffers, mg.has_aux, mg.zbits, mga.vram_bytes,
             mg.heap_end - mg.heap_off);
     return FXTRUE;
+}
+
+/* A fault while the window is open: leave the screen readable (the host
+ * prints its register dump next) and the engine idle, then chain. */
+static void on_fault(int exc, uint32_t err, uint32_t eip)
+{
+    mg_line("MGL-EXC %02x err=%x eip=%x", exc, err, eip);
+    if (mg.open) {
+        engine_reset();
+        vbe_set_text_mode();
+        mg.open = 0;
+    }
+    sys_unhook_exit();
+    sys_unhook_faults();
+}
+
+/* The game exits to DOS without grGlideShutdown. */
+static void on_exit(void)
+{
+    if (mg.open) {
+        mg_line("MGL-EXIT-HOOK video restored");
+        engine_sync(200000);
+        vbe_set_text_mode();
+        mg.open = 0;
+    }
+    sys_unhook_faults();
+    sys_unhook_exit();
+}
+
+void mg_hooks_install(void)
+{
+    if (!mg_config.hooks)
+        return;
+    if (sys_hook_faults(on_fault) < 0 || sys_hook_exit(on_exit) < 0)
+        mg_log(MG_LOG_WARN, "fault/exit hooks unavailable");
 }
 
 GR_ENTRY(void, grSstWinClose, (void))
@@ -241,6 +277,8 @@ GR_ENTRY(void, grSstWinClose, (void))
     engine_sync(200000);
     vbe_set_text_mode();
     mg.open = 0;
+    sys_unhook_faults();
+    sys_unhook_exit();
     mg_line("MGL-WINCLOSE frames=%u engine_resets=%u timeouts=%u", mg.frame, engine_resets, engine_timeouts);
 }
 

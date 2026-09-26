@@ -88,3 +88,8 @@ void *sys_alloc(uint32_t bytes) { return calloc(1, bytes); }
 void sys_free(void *p) { free(p); }
 
 void *sys_real_ptr(uint16_t seg, uint16_t off) { MGA_UNUSED(seg); MGA_UNUSED(off); return NULL; }
+
+int  sys_hook_faults(sys_fault_fn fn) { (void)fn; return -1; }
+void sys_unhook_faults(void) { }
+int  sys_hook_exit(sys_exit_fn fn) { (void)fn; return -1; }
+void sys_unhook_exit(void) { }

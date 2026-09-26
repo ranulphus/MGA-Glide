@@ -22,6 +22,7 @@ typedef struct {
     int  forced_bilinear;
     int  gamma_enable;
     int  census;               /* log distinct draw states (MGL-CENSUS) */
+    int  hooks;                /* fault / exit hooks that restore the video (default 1) */
 } mg_config_t;
 
 extern mg_config_t mg_config;
