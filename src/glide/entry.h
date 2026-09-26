@@ -21,6 +21,10 @@
  * call is). */
 #define GR_ENTRY(ret, name, args) ret GLIDE_API impl_##name args
 
+/* Bumped by every exported non-draw call (thunks.c): draw-time plans are
+ * recomputed only when it has changed. */
+extern FxU32 mg_state_gen;
+
 /* First-call bookkeeping for stubs and the call tracer. */
 void mg_stub_hit(int id);
 

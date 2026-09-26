@@ -136,6 +136,8 @@ def main(outdir):
                 th.append("        tr_blob(%s ? %s->data : 0, %s ? tr_texinfo_bytes(%s) : 0u);" % (n, n, n, n))
         th.append("        tr_end();")
         th.append("    }")
+        if not name.startswith(("grDraw", "grAADraw", "guDraw", "guAADraw", "guMPDraw")):
+            th.append("    mg_state_gen++;        /* any non-draw call may change draw state */")
         th.append("    mg_trace_depth++;")
         call = "impl_%s(%s)" % (name, ", ".join(n for _t, n in params))
         th.append("    %s%s;" % ("r = " if ret != "void" else "", call))

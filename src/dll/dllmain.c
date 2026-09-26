@@ -8,6 +8,7 @@
 #include "api_names.h"
 
 int mg_dll_started;
+FxU32 mg_state_gen = 1;
 
 int __DLLstart_(void *inst, unsigned reason)
 {

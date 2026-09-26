@@ -687,8 +687,19 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
         }
         a = &d[0]; b = &d[1]; c = &d[2];
     }
-    mg_combine_plan(&plan);
-    mg_alpha_plan(&ap);
+    {
+        /* Plans depend only on state: recompute them when it changed. */
+        static mg_plan c_plan;
+        static mg_aplan c_ap;
+        static uint32_t c_gen;
+        if (c_gen != mg_state_gen) {
+            mg_combine_plan(&c_plan);
+            mg_alpha_plan(&c_ap);
+            c_gen = mg_state_gen;
+        }
+        plan = c_plan;
+        ap = c_ap;
+    }
     if ((plan.quadratic || ap.quadratic) && !subdividing) {
         float ar = ((b->x - a->x) * (c->y - a->y) - (c->x - a->x) * (b->y - a->y)) * 0.5f;
         if (ar < 0) ar = -ar;
