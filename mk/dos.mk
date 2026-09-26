@@ -27,6 +27,7 @@ endef
 
 $(eval $(call dos_exe,HELLO,build/ow/exe/tests/shim/hello.obj))
 $(eval $(call dos_exe,LESPIKE,build/ow/exe/tests/spike/lespike.obj))
+$(eval $(call dos_exe,PROBE,build/ow/exe/tests/hal/probe.obj))
 
 # 16-bit .COM helpers.
 DOS_TOOLS := UTEXIT SERSAY WAITSEC REBOOT

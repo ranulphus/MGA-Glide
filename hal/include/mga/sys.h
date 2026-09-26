@@ -36,6 +36,9 @@ int sys_rm_int(uint8_t intno, sys_rmregs *r);
 void *sys_dos_alloc(uint32_t bytes, uint16_t *rm_segment);
 void  sys_dos_free(void *p);
 
+/* Pointer to real-mode memory seg:off (first megabyte). */
+void *sys_real_ptr(uint16_t seg, uint16_t off);
+
 /* Monotonic microsecond-ish clock for timeouts (resolution varies). */
 uint32_t sys_time_us(void);
 void     sys_delay_us(uint32_t us);

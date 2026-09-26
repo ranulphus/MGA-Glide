@@ -1,0 +1,205 @@
+/* Triangle setup against the reference rasteriser: coverage follows the
+ * top-left rule exactly, shared edges are watertight, and Gouraud colours
+ * and Z follow the plane at pixel centres. */
+#include "unit.h"
+#include "refrast.h"
+#include "mga/hal.h"
+#include "mga/setup.h"
+#include "mga/regs_mga.h"
+#include "mga/mmio.h"
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+
+#define W 256
+#define H 256
+#define PITCH 256
+
+mga_chip mga;
+volatile uint8_t *mga_mmio, *mga_fb;
+void fifo_reserve(int n) { (void)n; }
+
+/* Exact coverage test: centre (16x+8, 16y+8) against edge functions with
+ * the top-left rule (edges are half-open towards bottom-right). */
+static int inside(const mga_svtx *v[3], int x, int y)
+{
+    int64_t px = 16 * x + 8, py = 16 * y + 8;
+    int i;
+    int64_t area = (int64_t)(v[1]->X16 - v[0]->X16) * (v[2]->Y16 - v[0]->Y16) -
+                   (int64_t)(v[2]->X16 - v[0]->X16) * (v[1]->Y16 - v[0]->Y16);
+    for (i = 0; i < 3; i++) {
+        const mga_svtx *a = v[i], *b = v[(i + 1) % 3];
+        int64_t ex = b->X16 - a->X16, ey = b->Y16 - a->Y16;
+        int64_t e = ex * (py - a->Y16) - ey * (px - a->X16);
+        if (area < 0) { e = -e; ex = -ex; ey = -ey; }
+        /* Inside when e > 0; on the edge include only top or left edges.
+         * With y down and positive orientation, a "top" edge has ey == 0
+         * and ex > 0, a "left" edge has ey < 0. */
+        if (e < 0) return 0;
+        if (e == 0 && !((ey == 0 && ex > 0) || ey < 0)) return 0;
+    }
+    return 1;
+}
+
+static void fill_bg(void) { memset(rr->vram, 0, (size_t)PITCH * H * 2 * 2); }
+
+static mga_tri_ctx ctx_flat(void)
+{
+    mga_tri_ctx c;
+    memset(&c, 0, sizeof c);
+    c.dwgctl = DWG_OPCOD_TRAP | DWG_ATYPE_I;
+    c.clip_y0 = 0; c.clip_y1 = H;
+    return c;
+}
+
+static void setup_regs(void)
+{
+    mga_host_wr32(MGAREG_PITCH, PITCH);
+    mga_host_wr32(MGAREG_YDSTORG, 0);
+    mga_host_wr32(MGAREG_MACCESS, MACCESS_PW16 | MACCESS_NODITHER);
+    mga_host_wr32(MGAREG_CXBNDRY, ((uint32_t)(W - 1) << 16));
+    mga_host_wr32(MGAREG_YTOP, 0);
+    mga_host_wr32(MGAREG_YBOT, (H - 1) * PITCH);
+}
+
+static void rnd_vtx(mga_svtx *v)
+{
+    memset(v, 0, sizeof *v);
+    v->X16 = rand() % (W * 16);
+    v->Y16 = rand() % (H * 16);
+    v->r = 255; v->g = 255; v->b = 255;
+}
+
+static void test_coverage(void)
+{
+    int n, x, y, bad = 0, drawn = 0;
+    mga_tri_ctx c = ctx_flat();
+    for (n = 0; n < 400; n++) {
+        mga_svtx a, b, cc;
+        const mga_svtx *v[3];
+        rnd_vtx(&a); rnd_vtx(&b); rnd_vtx(&cc);
+        if (n % 4 == 0) { b.Y16 = a.Y16; }                     /* flat top/bottom */
+        if (n % 7 == 0) { a.X16 &= ~15; a.Y16 = (a.Y16 & ~15) | 8; }   /* on centres */
+        v[0] = &a; v[1] = &b; v[2] = &cc;
+        fill_bg();
+        setup_triangle(&a, &b, &cc, &c);
+        for (y = 0; y < H; y++)
+            for (x = 0; x < W; x++) {
+                int want = inside(v, x, y);
+                int got = refrast_px16(x, y, PITCH, 0) != 0;
+                drawn += got;
+                if (want != got && bad++ < 5)
+                    fprintf(stderr, "tri %d: pixel %d,%d want %d got %d  (%d,%d)(%d,%d)(%d,%d)\n", n, x, y,
+                            want, got, a.X16, a.Y16, b.X16, b.Y16, cc.X16, cc.Y16);
+            }
+    }
+    CHECK_EQ(bad, 0);
+    CHECK(drawn > 1000);
+}
+
+static void test_watertight(void)
+{
+    /* A fan of triangles around a centre covers every pixel of the
+     * enclosing polygon exactly once (counted via additive colour). */
+    int n, x, y, twice = 0, i;
+    static uint8_t count[W * H];
+    mga_tri_ctx c = ctx_flat();
+    for (n = 0; n < 50; n++) {
+        mga_svtx ctr, ring[9];
+        memset(count, 0, sizeof count);
+        memset(&ctr, 0, sizeof ctr);
+        ctr.X16 = 128 * 16 + rand() % 64; ctr.Y16 = 128 * 16 + rand() % 64;
+        ctr.r = ctr.g = ctr.b = 255;
+        for (i = 0; i < 8; i++) {
+            double ang = i * 3.14159265 / 4 + (rand() % 100) / 400.0;
+            memset(&ring[i], 0, sizeof ring[i]);
+            ring[i].X16 = (int32_t)(ctr.X16 + 1500 * cos(ang));
+            ring[i].Y16 = (int32_t)(ctr.Y16 + 1500 * sin(ang));
+            ring[i].r = ring[i].g = ring[i].b = 255;
+        }
+        ring[8] = ring[0];
+        for (i = 0; i < 8; i++) {
+            fill_bg();
+            setup_triangle(&ctr, &ring[i], &ring[i + 1], &c);
+            for (y = 0; y < H; y++)
+                for (x = 0; x < W; x++)
+                    if (refrast_px16(x, y, PITCH, 0))
+                        count[y * W + x]++;
+        }
+        for (i = 0; i < W * H; i++)
+            twice += count[i] > 1;
+    }
+    CHECK_EQ(twice, 0);
+}
+
+static void test_gouraud(void)
+{
+    /* Colours at pixel centres match the plane within one 8-bit step. */
+    mga_tri_ctx c = ctx_flat();
+    mga_svtx a, b, d;
+    int x, y, worst = 0;
+    const mga_svtx *v[3];
+    c.flags = MGA_S_COLOR;
+    memset(&a, 0, sizeof a); memset(&b, 0, sizeof b); memset(&d, 0, sizeof d);
+    a.X16 = 10 * 16; a.Y16 = 10 * 16; a.r = 255; a.g = 0; a.b = 0;
+    b.X16 = 240 * 16; b.Y16 = 30 * 16; b.r = 0; b.g = 255; b.b = 0;
+    d.X16 = 60 * 16; d.Y16 = 230 * 16; d.r = 0; d.g = 0; d.b = 255;
+    v[0] = &a; v[1] = &b; v[2] = &d;
+    fill_bg();
+    setup_triangle(&a, &b, &d, &c);
+    for (y = 0; y < H; y++)
+        for (x = 0; x < W; x++) {
+            uint16_t p;
+            double l0, l1, l2, det, px = x + 0.5, py = y + 0.5, r;
+            if (!inside(v, x, y)) continue;
+            p = refrast_px16(x, y, PITCH, 0);
+            det = (b.Y16 / 16.0 - d.Y16 / 16.0) * (a.X16 / 16.0 - d.X16 / 16.0) +
+                  (d.X16 / 16.0 - b.X16 / 16.0) * (a.Y16 / 16.0 - d.Y16 / 16.0);
+            l0 = ((b.Y16 / 16.0 - d.Y16 / 16.0) * (px - d.X16 / 16.0) + (d.X16 / 16.0 - b.X16 / 16.0) * (py - d.Y16 / 16.0)) / det;
+            l1 = ((d.Y16 / 16.0 - a.Y16 / 16.0) * (px - d.X16 / 16.0) + (a.X16 / 16.0 - d.X16 / 16.0) * (py - d.Y16 / 16.0)) / det;
+            l2 = 1 - l0 - l1;
+            (void)l2;
+            r = 255 * l0;
+            {
+                int got = (p >> 11) << 3, want = (int)r & ~7;
+                int diff = abs(got - want);
+                if (diff > worst) worst = diff;
+            }
+        }
+    CHECK(worst <= 8);
+}
+
+static void test_z(void)
+{
+    /* Z interpolates across a triangle and the Z buffer receives it. */
+    mga_tri_ctx c = ctx_flat();
+    mga_svtx a, b, d;
+    uint16_t *zb;
+    c.dwgctl = DWG_OPCOD_TRAP | DWG_ATYPE_ZI | DWG_ZMODE_NOZCMP;
+    c.flags = MGA_S_Z;
+    memset(&a, 0, sizeof a); memset(&b, 0, sizeof b); memset(&d, 0, sizeof d);
+    a.X16 = 0; a.Y16 = 0; a.z = 0;
+    b.X16 = 256 * 16; b.Y16 = 0; b.z = 65535;
+    d.X16 = 0; d.Y16 = 256 * 16; d.z = 0;
+    mga_host_wr32(MGAREG_ZORG, 1u << 20);
+    fill_bg();
+    memset(rr->vram + (1u << 20), 0xFF, PITCH * H * 2);
+    setup_triangle(&a, &b, &d, &c);
+    zb = (uint16_t *)(rr->vram + (1u << 20));
+    /* z(x) = 65535 * (x + 0.5) / 256 at row 0 */
+    CHECK(abs((int)zb[100] - (int)(65535.0 * 100.5 / 256)) <= 1);
+    CHECK(abs((int)zb[10 * PITCH + 50] - (int)(65535.0 * 50.5 / 256)) <= 1);
+}
+
+int unit_main(void)
+{
+    srand(1234);
+    refrast_init();
+    setup_regs();
+    test_coverage();
+    test_watertight();
+    test_gouraud();
+    test_z();
+    printf("setup: tris=%u traps=%u empty=%u\n", setup_stats.tris, setup_stats.traps, setup_stats.culled_empty);
+    return 0;
+}

@@ -86,3 +86,5 @@ void sys_delay_us(uint32_t us) { MGA_UNUSED(us); }
 
 void *sys_alloc(uint32_t bytes) { return calloc(1, bytes); }
 void sys_free(void *p) { free(p); }
+
+void *sys_real_ptr(uint16_t seg, uint16_t off) { MGA_UNUSED(seg); MGA_UNUSED(off); return NULL; }

@@ -99,3 +99,9 @@ void sys_delay_us(uint32_t us)
 
 void *sys_alloc(uint32_t bytes) { return malloc(bytes); }
 void sys_free(void *p) { free(p); }
+
+void *sys_real_ptr(uint16_t seg, uint16_t off)
+{
+    __djgpp_nearptr_enable();
+    return (void *)((((uint32_t)seg << 4) + off) - (uint32_t)__djgpp_base_address);
+}

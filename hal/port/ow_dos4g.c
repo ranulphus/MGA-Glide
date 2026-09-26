@@ -155,3 +155,5 @@ void sys_free(void *p)
     r.w.di = (uint16_t)(h & 0xFFFF);
     int386(0x31, &r, &r);
 }
+
+void *sys_real_ptr(uint16_t seg, uint16_t off) { return (void *)(((uint32_t)seg << 4) + off); }
