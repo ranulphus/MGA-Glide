@@ -37,6 +37,8 @@ def run_one(test, ovl, outdir):
     cmd = [sys.executable, os.path.join(ROOT, "tools", "loopa", "run.py"), "--name", test,
            "--exe", EXE, "--args", test, "--ovl", ovl, "--out", outdir,
            "--timeout", "180", "--idle", "60", "--card", CARD]
+    if os.environ.get("MGA_OPTS"):             # runtime options for every test, e.g. "bpp=32"
+        cmd += ["--pre", "SET MGAGLIDE=" + os.environ["MGA_OPTS"]]
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return json.load(open(os.path.join(outdir, "result.json")))
 

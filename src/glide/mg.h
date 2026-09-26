@@ -55,6 +55,7 @@ typedef struct {
     int         sst;                 /* selected board */
     mga_vbe_mode mode;
     int         width, height, pitch_px;
+    int         bpp;                 /* colour depth: 16, or 32 with MGAGLIDE bpp=32 */
     int         nbuffers, has_aux;
     uint32_t    buf_off[MG_MAX_BUFFERS];
     uint32_t    aux_off;

@@ -1,2 +1,0 @@
-src/glide/entry.h(26): Error! E1022: Missing or misspelled data type near 'uint32_t'
-src/glide/entry.h(26): Warning! W305: Type 'int' assumed in declaration of 'mg_state_gen'

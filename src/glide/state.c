@@ -84,7 +84,7 @@ void mg_target_for(GrBuffer_t b)
     t.color_off = mg_buffer_offset(b);
     t.z_off = mg.aux_off;
     t.pitch_px = mg.pitch_px;
-    t.bpp = 16;
+    t.bpp = mg.bpp;
     t.zbits = mg.zbits;
     engine_set_target(&t);
 }

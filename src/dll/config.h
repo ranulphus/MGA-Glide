@@ -24,6 +24,8 @@ typedef struct {
     int  gamma_enable;
     int  census;               /* log distinct draw states (MGL-CENSUS) */
     int  hooks;                /* fault / exit hooks that restore the video (default 1) */
+    int  bpp;                  /* enhancement: 32 = render in 8888 (default 16, as the Voodoo) */
+    int  trilinear;            /* enhancement: G200+ blends mip levels (default 0) */
 } mg_config_t;
 
 extern mg_config_t mg_config;

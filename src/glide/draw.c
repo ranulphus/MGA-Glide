@@ -248,7 +248,8 @@ static void emit_texture_state(const tex_level_hw *hw, int modulate, const draw_
         int k;
         for (k = 1; k < mip_n; k++)
             MGA_WR32(orgreg[k - 1], mip_org[k]);
-        MGA_WR32(MGAREG_TEXFILTER, TEXFILTER_MIN(filt == TEXFILTER_BILIN ? TEXFILTER_MM2S : TEXFILTER_MM1S) |
+        MGA_WR32(MGAREG_TEXFILTER, TEXFILTER_MIN(mg_config.trilinear ? (filt == TEXFILTER_BILIN ? TEXFILTER_MM8S : TEXFILTER_MM4S)
+                                                                     : (filt == TEXFILTER_BILIN ? TEXFILTER_MM2S : TEXFILTER_MM1S)) |
                                    TEXFILTER_MAG(filt) | TEXFILTER_FILTERALPHA | TEXFILTER_FTHRES(0x10) |
                                    TEXFILTER_MAPNB(mip_n - 1));
     } else

@@ -130,14 +130,14 @@ static const struct { int res, w, h; } resolutions[] = {
 /* Choose the smallest 16-bit 565 VBE mode that can hold w x h. The game
  * draws at its own size; a larger mode shows it in the top-left corner
  * (centring is a later refinement). */
-static int pick_mode(int w, int h, mga_vbe_mode *m)
+static int pick_mode(int w, int h, int bpp, mga_vbe_mode *m)
 {
     static const int sizes[][2] = { { 640, 480 }, { 800, 600 }, { 1024, 768 }, { 1280, 1024 }, { 1600, 1200 } };
     unsigned i;
-    if (vbe_find_mode(w, h, 16, m) == 0)
+    if (vbe_find_mode(w, h, bpp, m) == 0)
         return 0;
     for (i = 0; i < MGA_ARRAY_LEN(sizes); i++)
-        if (sizes[i][0] >= w && sizes[i][1] >= h && vbe_find_mode(sizes[i][0], sizes[i][1], 16, m) == 0)
+        if (sizes[i][0] >= w && sizes[i][1] >= h && vbe_find_mode(sizes[i][0], sizes[i][1], bpp, m) == 0)
             return 0;
     return -1;
 }
@@ -162,7 +162,12 @@ GR_ENTRY(FxBool, grSstWinOpen, (FxU32 hWnd, GrScreenResolution_t screen_resoluti
             w = resolutions[r].w;
             h = resolutions[r].h;
         }
-    if (pick_mode(w, h, &mg.mode) < 0) {
+    mg.bpp = mg_config.bpp == 32 ? 32 : 16;
+    if (pick_mode(w, h, mg.bpp, &mg.mode) < 0 && mg.bpp == 32) {
+        mg_log(MG_LOG_WARN, "no 32-bit VBE mode for %dx%d: using 16-bit", w, h);
+        mg.bpp = 16;
+    }
+    if (mg.bpp == 16 && pick_mode(w, h, 16, &mg.mode) < 0) {
         mg_log(MG_LOG_ERROR, "no VBE mode for %dx%d", w, h);
         return FXFALSE;
     }
@@ -180,8 +185,9 @@ GR_ENTRY(FxBool, grSstWinOpen, (FxU32 hWnd, GrScreenResolution_t screen_resoluti
     /* 32-bit depth keeps W-buffering precise; use it whenever the colour
      * buffers, a 32-bit aux buffer and a 2 MB texture heap fit. */
     {
-        uint32_t screen = (uint32_t)pitch * 2u * mg.mode.height;
-        uint32_t need32 = (screen + 0x1000) * (uint32_t)mg.nbuffers + screen * 2u + (2u << 20);
+        uint32_t screen = (uint32_t)pitch * (uint32_t)(mg.bpp / 8) * mg.mode.height;
+        uint32_t aux32 = (uint32_t)pitch * 4u * mg.mode.height;
+        uint32_t need32 = (screen + 0x1000) * (uint32_t)mg.nbuffers + aux32 + (2u << 20);
         if (mg_config.force_z32 >= 0)
             mg.zbits = mg_config.force_z32 ? 32 : 16;
         else
@@ -191,7 +197,7 @@ GR_ENTRY(FxBool, grSstWinOpen, (FxU32 hWnd, GrScreenResolution_t screen_resoluti
     mg.st.origin = origin_location == GR_ORIGIN_LOWER_LEFT ? GR_ORIGIN_LOWER_LEFT : GR_ORIGIN_UPPER_LEFT;
     /* Buffers are whole screens of the display mode so page flips land on
      * line boundaries; each is 4 KB aligned. */
-    bytes = (uint32_t)pitch * 2u * mg.mode.height;
+    bytes = (uint32_t)pitch * (uint32_t)(mg.bpp / 8) * mg.mode.height;
     off = 0;
     for (i = 0; i < mg.nbuffers; i++) {
         mg.buf_off[i] = off;
@@ -212,14 +218,14 @@ GR_ENTRY(FxBool, grSstWinOpen, (FxU32 hWnd, GrScreenResolution_t screen_resoluti
     mg.front = 0;
     mg.back = 1;
     mg.render_buffer = GR_BUFFER_BACKBUFFER;
-    engine_init(pitch, 16);
+    engine_init(pitch, mg.bpp);
     mg.open = 1;
     mg.dirty = ~0u;
     mg.st.clip_x0 = 0; mg.st.clip_y0 = 0; mg.st.clip_x1 = w; mg.st.clip_y1 = h;
     mg_validate();
     for (i = 0; i < mg.nbuffers; i++) {
         mga_target t;
-        t.color_off = mg.buf_off[i]; t.z_off = mg.aux_off; t.pitch_px = pitch; t.bpp = 16; t.zbits = mg.zbits;
+        t.color_off = mg.buf_off[i]; t.z_off = mg.aux_off; t.pitch_px = pitch; t.bpp = mg.bpp; t.zbits = mg.zbits;
         engine_set_target(&t);
         engine_set_clip(0, 0, mg.mode.width, mg.mode.height);
         engine_fill(0, 0, mg.mode.width, mg.mode.height, 0);
@@ -228,12 +234,12 @@ GR_ENTRY(FxBool, grSstWinOpen, (FxU32 hWnd, GrScreenResolution_t screen_resoluti
         engine_fill_depth(0, 0, mg.mode.width, mg.mode.height, 0);
     mg.dirty = ~0u;
     engine_sync(200000);
-    vbe_set_display_start(mg.buf_off[mg.front], pitch * 2, 16);
+    vbe_set_display_start(mg.buf_off[mg.front], pitch * (mg.bpp / 8), mg.bpp);
     mg_gamma_apply();
     mg.fogcol_valid = 0;
     mg_hooks_install();
-    mg_line("MGL-WINOPEN %dx%d mode=%03x pitch=%d buffers=%d aux=%d z%d vram=%u heap=%u",
-            w, h, mg.mode.mode, pitch, mg.nbuffers, mg.has_aux, mg.zbits, mga.vram_bytes,
+    mg_line("MGL-WINOPEN %dx%d mode=%03x bpp=%d pitch=%d buffers=%d aux=%d z%d vram=%u heap=%u",
+            w, h, mg.mode.mode, mg.bpp, pitch, mg.nbuffers, mg.has_aux, mg.zbits, mga.vram_bytes,
             mg.heap_end - mg.heap_off);
     return FXTRUE;
 }

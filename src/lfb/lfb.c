@@ -86,6 +86,40 @@ static uint32_t order_argb(uint32_t c)
     return r;
 }
 
+static uint32_t expand565(uint16_t c)
+{
+    uint32_t r = (c >> 11) & 31, g = (c >> 5) & 63, b = c & 31;
+    return ((r << 3 | r >> 2) << 16) | ((g << 2 | g >> 4) << 8) | (b << 3 | b >> 2);
+}
+
+/* Colour-buffer rows in either depth (MGAGLIDE bpp=32 keeps 8888). */
+static uint8_t *crow(uint32_t off, uint32_t y)
+{
+    return (uint8_t *)mga_fb + off + y * (uint32_t)mg.pitch_px * (uint32_t)(mg.bpp / 8);
+}
+
+static uint16_t get565(const uint8_t *row, uint32_t x)
+{
+    return mg.bpp == 32 ? argb_to_565(((const uint32_t *)row)[x]) : ((const uint16_t *)row)[x];
+}
+
+static void put565(uint8_t *row, uint32_t x, uint16_t c)
+{
+    if (mg.bpp == 32) ((uint32_t *)row)[x] = expand565(c);
+    else ((uint16_t *)row)[x] = c;
+}
+
+static uint32_t load_argb(const uint8_t *row, uint32_t x)
+{
+    return mg.bpp == 32 ? ((const uint32_t *)row)[x] & 0xFFFFFFu : expand565(((const uint16_t *)row)[x]);
+}
+
+static void store_argb(uint8_t *row, uint32_t x, uint32_t argb)
+{
+    if (mg.bpp == 32) ((uint32_t *)row)[x] = argb & 0xFFFFFFu;
+    else ((uint16_t *)row)[x] = argb_to_565(argb);
+}
+
 /* A 32-bit depth-buffer value as the Voodoo would hold it: the Z value's
  * top half, or in W mode the W code of the stored 2^31 * (1/w). */
 static uint16_t aux_value32(uint32_t v)
@@ -99,16 +133,17 @@ static uint16_t aux_value32(uint32_t v)
 static int need_shadow(GrLock_t type, GrBuffer_t buffer, GrLfbWriteMode_t mode, GrOriginLocation_t origin, FxBool pipe)
 {
     if ((type & 1) == GR_LFB_READ_ONLY) {
-        if (buffer == GR_BUFFER_AUXBUFFER && mg.zbits != 16)
-            return 1;
-        return origin == GR_ORIGIN_LOWER_LEFT;
+        if (buffer == GR_BUFFER_AUXBUFFER)
+            return mg.zbits != 16 || origin == GR_ORIGIN_LOWER_LEFT;
+        return origin == GR_ORIGIN_LOWER_LEFT || mg.bpp != 16;
     }
     if (pipe || mg_trace_on)
         return 1;                /* tracing: the shadow shows which pixels were written */
     if (buffer == GR_BUFFER_AUXBUFFER)
         return mode != GR_LFBWRITEMODE_ZA16 || mg.zbits != 16 ||
                mg.st.depth_mode == GR_DEPTHBUFFER_WBUFFER;
-    return !(mode == GR_LFBWRITEMODE_565 || mode == GR_LFBWRITEMODE_ANY) || origin == GR_ORIGIN_LOWER_LEFT;
+    return !(mode == GR_LFBWRITEMODE_565 || mode == GR_LFBWRITEMODE_ANY) || origin == GR_ORIGIN_LOWER_LEFT ||
+           mg.bpp != 16;
 }
 
 GR_ENTRY(FxBool, grLfbLock, (GrLock_t type, GrBuffer_t buffer, GrLfbWriteMode_t writeMode,
@@ -158,12 +193,13 @@ GR_ENTRY(FxBool, grLfbLock, (GrLock_t type, GrBuffer_t buffer, GrLfbWriteMode_t 
                 uint32_t sy = origin == GR_ORIGIN_LOWER_LEFT ? (uint32_t)mg.height - 1 - y : y;
                 const uint16_t *src16 = (const uint16_t *)(mga_fb + off) + sy * (uint32_t)mg.pitch_px;
                 const uint32_t *src32 = (const uint32_t *)(mga_fb + off) + sy * (uint32_t)mg.pitch_px;
+                const uint8_t *cr = crow(off, sy);
                 uint16_t *d = (uint16_t *)(shadow + y * SHADOW_STRIDE16);
                 for (x = 0; x < (uint32_t)mg.width; x++) {
-                    if (buffer == GR_BUFFER_AUXBUFFER && mg.zbits == 32)
-                        d[x] = aux_value32(src32[x]);
+                    if (buffer == GR_BUFFER_AUXBUFFER)
+                        d[x] = mg.zbits == 32 ? aux_value32(src32[x]) : src16[x];
                     else
-                        d[x] = src16[x];
+                        d[x] = get565(cr, x);
                 }
             }
             info->lfbPtr = shadow;
@@ -235,14 +271,9 @@ static int blend_factor(GrAlphaBlendFnc_t f, int is_src, int own, int other, int
     }
 }
 
-static uint32_t expand565(uint16_t c)
-{
-    uint32_t r = (c >> 11) & 31, g = (c >> 5) & 63, b = c & 31;
-    return ((r << 3 | r >> 2) << 16) | ((g << 2 | g >> 4) << 8) | (b << 3 | b >> 2);
-}
 
 /* One pipeline pixel: src is ARGB8888; depth is a Glide depth value. */
-static void pipe_pixel(uint32_t src, uint16_t depth, uint16_t *dst, uint16_t *z16, uint32_t *z32)
+static void pipe_pixel(uint32_t src, uint16_t depth, uint8_t *row, uint32_t px, uint16_t *z16, uint32_t *z32)
 {
     const mg_state *s = &mg.st;
     int sa = (int)(src >> 24), k;
@@ -267,7 +298,7 @@ static void pipe_pixel(uint32_t src, uint16_t depth, uint16_t *dst, uint16_t *z1
     if (s->blend_src == GR_BLEND_ONE && s->blend_dst == GR_BLEND_ZERO) {
         out = src;
     } else {
-        uint32_t d = expand565(*dst);
+        uint32_t d = load_argb(row, px);
         for (k = 0; k < 24; k += 8) {
             int sc = (int)((src >> k) & 0xFF), dc = (int)((d >> k) & 0xFF), v;
             int fs = blend_factor(s->blend_src, 1, sc, dc, sa, 255);
@@ -276,7 +307,7 @@ static void pipe_pixel(uint32_t src, uint16_t depth, uint16_t *dst, uint16_t *z1
             out |= (uint32_t)(v > 255 ? 255 : v) << k;
         }
     }
-    *dst = argb_to_565(out);
+    store_argb(row, px, out);
 }
 
 /* Decode one written LFB value to ARGB8888 (+ depth). */
@@ -313,8 +344,9 @@ static void write_back(void)
     int depth_buf = lk.buffer == GR_BUFFER_AUXBUFFER;
     for (y = 0; y < (uint32_t)mg.height; y++) {
         uint32_t dy = lk.origin == GR_ORIGIN_LOWER_LEFT ? (uint32_t)mg.height - 1 - y : y;
-        uint16_t *dst16 = (uint16_t *)(mga_fb + off) + dy * pitch;
+        uint16_t *dst16 = (uint16_t *)(mga_fb + off) + dy * pitch;   /* aux buffer rows */
         uint32_t *dst32 = (uint32_t *)(mga_fb + off) + dy * pitch;
+        uint8_t *cr = crow(off, dy);                                  /* colour buffer row */
         uint16_t *z16 = (uint16_t *)(mga_fb + mg.aux_off) + dy * pitch;
         uint32_t *z32 = (uint32_t *)(mga_fb + mg.aux_off) + dy * pitch;
         if (lk.pipe) {
@@ -332,7 +364,7 @@ static void write_back(void)
                 }
                 if (v == sv)
                     continue;
-                pipe_pixel(decode_lfb(v, &d), d, &dst16[x], &z16[x], &z32[x]);
+                pipe_pixel(decode_lfb(v, &d), d, cr, x, &z16[x], &z32[x]);
             }
             continue;
         }
@@ -348,13 +380,13 @@ static void write_back(void)
                 switch (lk.mode) {
                 case GR_LFBWRITEMODE_888:
                 case GR_LFBWRITEMODE_8888:
-                    dst16[x] = argb_to_565(order_argb(v));
+                    store_argb(cr, x, order_argb(v));
                     break;
                 default: {                                  /* colour + depth */
                     uint16_t cv = (uint16_t)(v & 0xFFFF), d = (uint16_t)(v >> 16);
                     if (lk.mode == GR_LFBWRITEMODE_565_DEPTH) c = cv;
                     else c = (uint16_t)(((cv & 0x7FE0) << 1) | ((cv >> 4) & 0x20) | (cv & 0x1F));
-                    dst16[x] = c;
+                    put565(cr, x, c);
                     if (mg.has_aux) {
                         if (mg.zbits == 32) z32[x] = mg_depth_clear_value(d);
                         else z16[x] = (uint16_t)mg_depth_clear_value(d);
@@ -374,9 +406,9 @@ static void write_back(void)
                     if (mg.zbits == 32) dst32[x] = mg_depth_clear_value(v);
                     else dst16[x] = (uint16_t)mg_depth_clear_value(v);
                 } else if (lk.mode == GR_LFBWRITEMODE_565) {
-                    dst16[x] = v;
+                    put565(cr, x, v);
                 } else {                                   /* 555 / 1555 */
-                    dst16[x] = (uint16_t)(((v & 0x7FE0) << 1) | ((v >> 4) & 0x20) | (v & 0x1F));
+                    put565(cr, x, (uint16_t)(((v & 0x7FE0) << 1) | ((v >> 4) & 0x20) | (v & 0x1F)));
                 }
             }
         }
@@ -479,8 +511,13 @@ GR_ENTRY(FxBool, grLfbReadRegion, (GrBuffer_t src_buffer, FxU32 src_x, FxU32 src
             uint32_t x;
             for (x = 0; x < src_width; x++)
                 d[x] = aux_value32(s[x]);
-        } else {
+        } else if (src_buffer == GR_BUFFER_AUXBUFFER || mg.bpp == 16) {
             memcpy(d, (const uint16_t *)(mga_fb + off) + sy * pitch + src_x, src_width * 2);
+        } else {
+            const uint8_t *cr = crow(off, sy);
+            uint32_t x;
+            for (x = 0; x < src_width; x++)
+                d[x] = get565(cr, src_x + x);
         }
     }
     return FXTRUE;
@@ -498,24 +535,27 @@ GR_ENTRY(FxBool, grLfbWriteRegion, (GrBuffer_t dst_buffer, FxU32 dst_x, FxU32 ds
     for (y = 0; y < src_height; y++) {
         uint32_t dy = dst_y + y;
         const uint8_t *s = (const uint8_t *)src_data + (int32_t)y * src_stride;
-        uint16_t *d;
+        uint8_t *cr;
+        uint16_t *zr;
         if (mg.st.origin == GR_ORIGIN_LOWER_LEFT)
             dy = (uint32_t)mg.height - 1 - dy;
-        d = (uint16_t *)(mga_fb + off) + dy * pitch + dst_x;
+        cr = crow(off, dy);
+        zr = (uint16_t *)(mga_fb + off) + dy * pitch;
         for (x = 0; x < src_width; x++) {
+            uint32_t dx = dst_x + x;
             switch (src_format) {
-            case GR_LFB_SRC_FMT_565: d[x] = ((const uint16_t *)s)[x]; break;
+            case GR_LFB_SRC_FMT_565: put565(cr, dx, ((const uint16_t *)s)[x]); break;
             case GR_LFB_SRC_FMT_555:
             case GR_LFB_SRC_FMT_1555: {
                 uint16_t v = ((const uint16_t *)s)[x];
-                d[x] = (uint16_t)(((v & 0x7FE0) << 1) | ((v >> 4) & 0x20) | (v & 0x1F));
+                put565(cr, dx, (uint16_t)(((v & 0x7FE0) << 1) | ((v >> 4) & 0x20) | (v & 0x1F)));
                 break; }
             case GR_LFB_SRC_FMT_888:
             case GR_LFB_SRC_FMT_8888:
-                d[x] = argb_to_565(order_argb(((const uint32_t *)s)[x]));
+                store_argb(cr, dx, order_argb(((const uint32_t *)s)[x]));
                 break;
             case GR_LFB_SRC_FMT_ZA16:
-                d[x] = ((const uint16_t *)s)[x];
+                zr[dx] = ((const uint16_t *)s)[x];
                 break;
             default:
                 mg_log(MG_LOG_WARN, "lfb: write format %d unsupported", (int)src_format);

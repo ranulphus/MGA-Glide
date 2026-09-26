@@ -21,7 +21,8 @@ GR_ENTRY(void, grBufferClear, (GrColor_t color, GrAlpha_t alpha, FxU16 depth))
         y1 = mg.height - mg.st.clip_y0;
     }
     if (mg.st.color_mask_rgb)
-        engine_fill(x0, y0, x1 - x0, y1 - y0, mg_argb_to_565(mg_color_to_argb(color)));
+        engine_fill(x0, y0, x1 - x0, y1 - y0, mg.bpp == 32 ? (mg_color_to_argb(color) & 0xFFFFFFu)
+                                                           : mg_argb_to_565(mg_color_to_argb(color)));
     if (mg.has_aux && mg.st.depth_mask && mg.st.depth_mode != GR_DEPTHBUFFER_DISABLE)
         engine_fill_depth(x0, y0, x1 - x0, y1 - y0, mg_depth_clear_value(depth));
 }
@@ -34,7 +35,7 @@ GR_ENTRY(void, grBufferSwap, (int swap_interval))
     engine_sync(200000);
     for (i = 0; i < swap_interval; i++)
         engine_vsync_wait(100000);
-    vbe_set_display_start(mg.buf_off[mg.back], mg.pitch_px * 2, 16);
+    vbe_set_display_start(mg.buf_off[mg.back], mg.pitch_px * (mg.bpp / 8), mg.bpp);
     t = mg.front;
     mg.front = mg.back;
     mg.back = (mg.nbuffers == 3) ? (3 - mg.front - t) : t;
