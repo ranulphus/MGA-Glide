@@ -1,0 +1,69 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+env:
+  MGA_NO_DOCKER: "1"
+  MGA_CACHE: ${{ github.workspace }}/.mga-cache
+  WATCOM: ${{ github.workspace }}/.mga-opt/watcom
+  DJGPP_PREFIX: ${{ github.workspace }}/.mga-opt/djgpp
+
+jobs:
+  host:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with: { path: .mga-opt/watcom, key: "ow-${{ hashFiles('tools/setup/versions.mk') }}" }
+      - run: sudo apt-get update && sudo apt-get install -y gcc-multilib
+      - run: make setup-ow
+      - run: python3 tools/ci/no_3dfx.py
+      - run: make check-header
+      - run: make tests-host
+
+  ow:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with: { path: .mga-opt/watcom, key: "ow-${{ hashFiles('tools/setup/versions.mk') }}" }
+      - run: make setup-ow
+      - run: make runtime dostests check-exports check-clib
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dos-binaries
+          path: |
+            build/ow/GLIDE2X.OVL
+            build/ow/GLIDE2X.map
+            build/ow/dos/*.EXE
+            build/ow/dos/*.COM
+
+  djgpp:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with: { path: .mga-opt/djgpp, key: "djgpp-${{ hashFiles('tools/setup/versions.mk') }}" }
+      - run: make setup-djgpp
+      - run: make hal-djgpp
+
+  loopa:
+    runs-on: ubuntu-24.04
+    needs: [ow]
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && xargs -a tools/docker/packages.txt sudo apt-get install -y --no-install-recommends
+      - uses: actions/cache@v4
+        with: { path: .mga-opt/watcom, key: "ow-${{ hashFiles('tools/setup/versions.mk') }}" }
+      - uses: actions/cache@v4
+        with:
+          path: .mga-cache/86box
+          key: "86box-${{ hashFiles('tools/setup/versions.mk', 'tools/86box/series', 'tools/86box/patches/**') }}"
+      - run: make setup-ow
+      - run: make 86box
+      - run: make loopa-selftest
+      - run: make conform-ci
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: loopa-out, path: out/ }

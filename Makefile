@@ -118,3 +118,8 @@ loopa-selftest: dostests
 	          if [ "$$got" = "$$2" ]; then echo "  selftest $$1: $$got (ok)"; \
 	          else echo "  selftest $$1: got $$got, want $$2"; exit 1; fi; }; \
 	check pass PASS; check fail FAIL --fail; check hang HANG --hang; check crash GUEST-EXC --crash
+
+# Conformance programs run in CI (extended as the suite grows).
+.PHONY: conform-ci
+conform-ci: dostests
+	@echo "conform-ci: no conformance programs yet"
