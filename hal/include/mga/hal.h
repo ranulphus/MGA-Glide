@@ -76,6 +76,7 @@ void     engine_init(int pitch_px, int bpp);
 int      engine_sync(uint32_t timeout_us);     /* 0 ok, -1 timeout (engine reset) */
 void     engine_reset(void);
 void     engine_set_target(const mga_target *t);
+void     engine_set_maccess_flags(uint32_t flags);     /* MACCESS_NODITHER / MACCESS_FOGEN */
 void     engine_set_clip(int x0, int y0, int x1, int y1);   /* inclusive-exclusive */
 void     engine_fill(int x, int y, int w, int h, uint32_t value);
 void     engine_fill_depth(int x, int y, int w, int h, uint32_t zvalue);

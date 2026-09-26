@@ -69,6 +69,9 @@ typedef struct {
     unsigned    dirty;
     GrErrorCallbackFnc_t error_cb;
     float       gamma;
+    int         fog_on;         /* MACCESS.FOGEN wanted by the current draw */
+    int         fogcol_valid;   /* fogcol_hw holds what FOGCOL contains */
+    uint32_t    fogcol_hw;
     char        version[32];
 } mg_ctx;
 
@@ -94,6 +97,12 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c);
 double   mg_wdepth_from_oow(float oow, int zbits);
 double   mg_oow_from_wcode(unsigned code);
 unsigned mg_wcode_from_oow(double oow);
+
+/* fog.c */
+int    mg_fog_source(void);                 /* GR_FOG_* source bits of the fog mode */
+double mg_fog_table_at(double oow);
+double mg_fog_vertex(const GrVertex *v);    /* 0 = no fog .. 255 = fog colour */
+void   mg_fog_emit_color(void);
 uint32_t mg_wdepth_from_code(FxU16 code, int zbits);
 uint32_t mg_depth_clear_value(FxU16 depth);
 /* combine.c */

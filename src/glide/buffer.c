@@ -48,30 +48,6 @@ GR_ENTRY(void, grBufferSwap, (int swap_interval))
 
 GR_ENTRY(int, grBufferNumPending, (void)) { return 0; }
 
-/* exp and log without libm, for the gamma ramp. */
-static double g_exp(double x)
-{
-    double r = 1.0, term = 1.0;
-    int i, k = 0;
-    while (x > 1.0) { x *= 0.5; k++; }
-    while (x < -1.0) { x *= 0.5; k++; }
-    for (i = 1; i < 20; i++) { term *= x / i; r += term; }
-    while (k--) r *= r;
-    return r;
-}
-
-static double g_ln(double v)
-{
-    double z, z2, ln;
-    int e = 0;
-    while (v >= 2.0) { v *= 0.5; e++; }
-    while (v < 1.0) { v *= 2.0; e--; }
-    z = (v - 1.0) / (v + 1.0);
-    z2 = z * z;
-    ln = 2.0 * z * (1.0 + z2 * (1.0 / 3 + z2 * (1.0 / 5 + z2 * (1.0 / 7 + z2 / 9))));
-    return ln + e * 0.6931471805599453;
-}
-
 /* Load the palette ramp for mg.gamma. In direct-colour modes each pixel
  * component indexes the palette RAM, and the video BIOS leaves whatever it
  * likes there, so the ramp is loaded at every window open, not only when
@@ -82,7 +58,7 @@ void mg_gamma_apply(void)
     double g = mg_config.gamma_enable ? mg.gamma : 1.0;
     int i;
     for (i = 0; i < 256; i++) {
-        double x = i / 255.0, y = i ? g_exp(g_ln(x) / g) : 0.0;
+        double x = i / 255.0, y = i ? mg_exp(mg_ln(x) / g) : 0.0;
         int v = (int)(y * 255.0 + 0.5);
         ramp[i] = (uint8_t)(v > 255 ? 255 : v);
     }

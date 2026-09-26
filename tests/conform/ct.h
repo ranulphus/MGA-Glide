@@ -22,5 +22,6 @@ typedef struct { const char *name; ct_fn fn; const char *what; } ct_test;
 extern const ct_test ct_tests[];
 extern const ct_test ct_tex_tests[];
 extern const ct_test ct_alpha_tests[];
+extern const ct_test ct_fog_tests[];
 
 #endif

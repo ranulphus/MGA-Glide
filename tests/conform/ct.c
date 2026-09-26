@@ -111,7 +111,7 @@ int main(int argc, char **argv)
         hx_done(HX_INIT_FAILED);
     }
     {
-        static const ct_test *const suites[] = { ct_tests, ct_tex_tests, ct_alpha_tests, NULL };
+        static const ct_test *const suites[] = { ct_tests, ct_tex_tests, ct_alpha_tests, ct_fog_tests, NULL };
         int si;
         for (si = 0; suites[si]; si++)
             for (i = 0; suites[si][i].name; i++) {

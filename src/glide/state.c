@@ -88,13 +88,8 @@ void mg_validate(void)
         }
         engine_set_clip(mg.st.clip_x0, y0, mg.st.clip_x1, y1);
     }
-    if (mg.dirty & (MG_DIRTY_TARGET | MG_DIRTY_RASTER)) {
-        uint32_t m = MACCESS_PW16 | (mg.zbits == 32 ? MACCESS_ZW32 : 0);
-        if (mg.st.dither == GR_DITHER_DISABLE)
-            m |= MACCESS_NODITHER;
-        fifo_reserve(1);
-        MGA_WR32(MGAREG_MACCESS, m);
-    }
+    engine_set_maccess_flags((mg.st.dither == GR_DITHER_DISABLE ? MACCESS_NODITHER : 0) |
+                             (mg.fog_on ? MACCESS_FOGEN : 0));
     mg.dirty = 0;
 }
 

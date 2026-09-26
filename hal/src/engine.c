@@ -25,9 +25,11 @@ static void emit_clip(void)
     MGA_WR32(MGAREG_YBOT, (uint32_t)(y1 - 1) * (uint32_t)cur.pitch_px + base);
 }
 
+static uint32_t maccess_extra;     /* caller-owned bits: NODITHER, FOGEN */
+
 static uint32_t maccess_for(int bpp, int zbits)
 {
-    uint32_t m = (bpp == 32) ? MACCESS_PW32 : MACCESS_PW16;
+    uint32_t m = ((bpp == 32) ? MACCESS_PW32 : MACCESS_PW16) | maccess_extra;
     if (zbits == 32)
         m |= MACCESS_ZW32;
     return m;
@@ -41,6 +43,7 @@ void engine_init(int pitch_px, int bpp)
     MGA_WR32(MGAREG_PITCH, (uint32_t)pitch_px);
     if (mga.has_ydstorg)
         MGA_WR32(MGAREG_YDSTORG, 0);
+    maccess_extra = 0;
     cur_maccess = maccess_for(bpp, 16);
     MGA_WR32(MGAREG_MACCESS, cur_maccess);
     MGA_WR32(MGAREG_PLNWT, 0xFFFFFFFFu);
@@ -120,6 +123,18 @@ void engine_set_target(const mga_target *t)
     cur = *t;
     cur_maccess = maccess_for(t->bpp, t->zbits);
     write_origin(t->color_off, t->bpp, t->z_off, t->zbits);
+    fifo_reserve(1);
+    MGA_WR32(MGAREG_MACCESS, cur_maccess);
+}
+
+/* Extra MACCESS bits kept across retargets and depth fills; written only
+ * when they change. */
+void engine_set_maccess_flags(uint32_t flags)
+{
+    if (flags == maccess_extra)
+        return;
+    maccess_extra = flags;
+    cur_maccess = maccess_for(cur.bpp, cur.zbits);
     fifo_reserve(1);
     MGA_WR32(MGAREG_MACCESS, cur_maccess);
 }

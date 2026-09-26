@@ -227,6 +227,7 @@ GR_ENTRY(FxBool, grSstWinOpen, (FxU32 hWnd, GrScreenResolution_t screen_resoluti
     engine_sync(200000);
     vbe_set_display_start(mg.buf_off[mg.front], pitch * 2, 16);
     mg_gamma_apply();
+    mg.fogcol_valid = 0;
     mg_line("MGL-WINOPEN %dx%d mode=%03x pitch=%d buffers=%d aux=%d z%d vram=%u heap=%u",
             w, h, mg.mode.mode, pitch, mg.nbuffers, mg.has_aux, mg.zbits, mga.vram_bytes,
             mg.heap_end - mg.heap_off);

@@ -21,4 +21,8 @@ void mg_log(int level, const char *fmt, ...);
 /* Raw protocol line for the harness, e.g. "MGL-INIT ..." (always emitted). */
 void mg_line(const char *fmt, ...);
 
+/* math.c */
+double mg_exp(double x);
+double mg_ln(double v);
+
 #endif

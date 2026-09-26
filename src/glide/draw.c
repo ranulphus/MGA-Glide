@@ -77,7 +77,7 @@ static void vtx(mga_svtx *o, const GrVertex *v, int wmode, int csrc)
         break;
     }
     o->a = v->a < 0 ? 0 : (v->a > 255 ? 255 : v->a);
-    o->fog = 255;
+    o->fog = mg.fog_on ? (float)(255.0 - mg_fog_vertex(v)) : 255.0f;
     o->q = (mg.st.stw_hint & GR_STWHINT_W_DIFF_TMU0) ? v->tmuvtx[0].oow : v->oow;
     o->s = v->tmuvtx[0].sow;          /* scaled to the bound level below */
     o->t = v->tmuvtx[0].tow;
@@ -230,12 +230,76 @@ static void emit_texture_state(const tex_level_hw *hw, int modulate, const draw_
  * horizontal bands, each at the level for its centre (PRD §7.4). */
 #define BAND_ROWS 8
 
+/* Table fog over a band of rows: a linear fit of the table around the
+ * band centre, through 1/w (which is linear in screen space). The fit is
+ * pulled towards the centre value where it would leave 0..255 anywhere in
+ * the band, because the fog iterator does not saturate. */
+typedef struct { int on; double X[3], Y[3], O[3]; } fog_fit;
+
+#define FOG_SPREAD 24           /* table-fog spread (of 255) that triggers banding */
+
+static int clip_rows(const fog_fit *F, double y0, double y1, double *px, double *py)
+{
+    double ix[8], iy[8], ox[8], oy[8];
+    int n = 3, m, i, pass;
+    for (i = 0; i < 3; i++) { ix[i] = F->X[i]; iy[i] = F->Y[i]; }
+    for (pass = 0; pass < 2; pass++) {
+        m = 0;
+        for (i = 0; i < n; i++) {
+            int j = (i + 1) % n;
+            double a = pass ? y1 - iy[i] : iy[i] - y0, b = pass ? y1 - iy[j] : iy[j] - y0;
+            if (a >= 0) { ox[m] = ix[i]; oy[m] = iy[i]; m++; }
+            if ((a >= 0) != (b >= 0) && m < 8) {
+                double t = a / (a - b);
+                ox[m] = ix[i] + t * (ix[j] - ix[i]); oy[m] = iy[i] + t * (iy[j] - iy[i]); m++;
+            }
+        }
+        for (i = 0; i < m; i++) { ix[i] = ox[i]; iy[i] = oy[i]; }
+        n = m;
+    }
+    for (i = 0; i < n; i++) { px[i] = ix[i]; py[i] = iy[i]; }
+    return n;
+}
+
+static void fog_band(const fog_fit *F, int row0, int row1, mga_svtx *sa, mga_svtx *sb, mga_svtx *sc)
+{
+    double area, ox, oy, xc, yc, oc, fc, d, k = 1.0, px[8], py[8];
+    mga_svtx *v[3];
+    int i, n;
+    v[0] = sa; v[1] = sb; v[2] = sc;
+    area = (F->X[1] - F->X[0]) * (F->Y[2] - F->Y[0]) - (F->X[2] - F->X[0]) * (F->Y[1] - F->Y[0]);
+    if (area == 0)
+        return;
+    ox = ((F->O[1] - F->O[0]) * (F->Y[2] - F->Y[0]) - (F->O[2] - F->O[0]) * (F->Y[1] - F->Y[0])) / area;
+    oy = ((F->X[1] - F->X[0]) * (F->O[2] - F->O[0]) - (F->X[2] - F->X[0]) * (F->O[1] - F->O[0])) / area;
+    n = clip_rows(F, row0, row1, px, py);
+    if (n < 3)
+        return;
+    xc = yc = 0;
+    for (i = 0; i < n; i++) { xc += px[i]; yc += py[i]; }
+    xc /= n; yc /= n;
+    oc = F->O[0] + ox * (xc - F->X[0]) + oy * (yc - F->Y[0]);
+    if (oc < 1e-9) oc = 1e-9;
+    fc = mg_fog_table_at(oc);
+    d = (mg_fog_table_at(oc * 1.03) - mg_fog_table_at(oc / 1.03)) / (oc * 1.03 - oc / 1.03);
+    for (i = 0; i < n; i++) {
+        double fv = fc + d * (ox * (px[i] - xc) + oy * (py[i] - yc));
+        if (fv > 255.0 && fv - fc > 0) { double kk = (255.0 - fc) / (fv - fc); if (kk < k) k = kk; }
+        if (fv < 0.0 && fv - fc < 0) { double kk = (0.0 - fc) / (fv - fc); if (kk < k) k = kk; }
+    }
+    for (i = 0; i < 3; i++)
+        v[i]->fog = (float)(255.0 - (fc + k * d * (F->O[i] - oc)));
+}
+
 static void draw_band(const mga_svtx *a0, const mga_svtx *b0, const mga_svtx *c0, mga_tri_ctx *ctx,
-                      const mg_plan *plan, const draw_opts *o, GrLOD_t lod, int row0, int row1)
+                      const mg_plan *plan, const draw_opts *o, GrLOD_t lod, int row0, int row1,
+                      const fog_fit *F)
 {
     mga_svtx sa = *a0, sb = *b0, sc = *c0;
     tex_level_hw hw;
     double sig_s, sig_t;
+    if (F && F->on)
+        fog_band(F, row0, row1, &sa, &sb, &sc);
     if (plan->tex_white || tex_bind_level(lod, o->var.kind ? &o->var : NULL, &hw) < 0) {
         tex_white(&hw);
         sig_s = sig_t = 0;
@@ -265,15 +329,12 @@ static void draw_textured(const GrVertex *a, const GrVertex *b, const GrVertex *
                           mga_tri_ctx *ctx, const mg_plan *plan, const draw_opts *o)
 {
     lod_planes L;
+    fog_fit F;
     int32_t ymin = sa->Y16, ymax = sa->Y16;
-    int row, r0, r1, run_start;
+    int row, r0, r1, run_start, need_lod;
     double cx;
     GrLOD_t run_lod;
-    if (tmu0.mipmap == GR_MIPMAP_DISABLE || tmu0.small == tmu0.large || plan->tex_white) {
-        draw_band(sa, sb, sc, ctx, plan, o, tmu0.large, 0, mg.mode.height);
-        return;
-    }
-    lod_setup(&L, a, b, c);
+    need_lod = !(tmu0.mipmap == GR_MIPMAP_DISABLE || tmu0.small == tmu0.large || plan->tex_white);
     if (sb->Y16 < ymin) ymin = sb->Y16;
     if (sc->Y16 < ymin) ymin = sc->Y16;
     if (sb->Y16 > ymax) ymax = sb->Y16;
@@ -282,25 +343,52 @@ static void draw_textured(const GrVertex *a, const GrVertex *b, const GrVertex *
     r1 = (ymax + 7) >> 4;
     if (r1 <= r0)
         return;
+    F.on = 0;
+    if (mg.fog_on && mg_fog_source() == GR_FOG_WITH_TABLE && r1 - r0 > BAND_ROWS) {
+        double fmin = sa->fog, fmax = sa->fog;
+        if (sb->fog < fmin) fmin = sb->fog;
+        if (sc->fog < fmin) fmin = sc->fog;
+        if (sb->fog > fmax) fmax = sb->fog;
+        if (sc->fog > fmax) fmax = sc->fog;
+        if (fmax - fmin > FOG_SPREAD) {
+            F.on = 1;
+            F.X[0] = sa->X16 / 16.0; F.Y[0] = sa->Y16 / 16.0; F.O[0] = a->oow;
+            F.X[1] = sb->X16 / 16.0; F.Y[1] = sb->Y16 / 16.0; F.O[1] = b->oow;
+            F.X[2] = sc->X16 / 16.0; F.Y[2] = sc->Y16 / 16.0; F.O[2] = c->oow;
+        }
+    }
+    if (!need_lod && !F.on) {
+        draw_band(sa, sb, sc, ctx, plan, o, tmu0.large, 0, mg.mode.height, NULL);
+        return;
+    }
+    if (need_lod)
+        lod_setup(&L, a, b, c);
     cx = (a->x + b->x + c->x) / 3.0;
     run_start = r0;
     run_lod = (GrLOD_t)-1;
     for (row = r0; row < r1; row += BAND_ROWS) {
-        int mid = row + BAND_ROWS / 2;
+        int mid = row + BAND_ROWS / 2, end = row + BAND_ROWS > r1 ? r1 : row + BAND_ROWS;
         double gy;
-        GrLOD_t l;
+        GrLOD_t l = tmu0.large;
         if (mid >= r1) mid = (row + r1) / 2;
         gy = mg.st.origin == GR_ORIGIN_LOWER_LEFT ? mg.height - (mid + 0.5) : mid + 0.5;
-        l = level_for(lod_at(&L, cx, gy));
+        if (need_lod)
+            l = level_for(lod_at(&L, cx, gy));
+        if (F.on) {
+            /* Every band gets its own fog fit (and its own level). */
+            draw_band(sa, sb, sc, ctx, plan, o, l, row, end, &F);
+            continue;
+        }
         if (run_lod == (GrLOD_t)-1)
             run_lod = l;
         else if (l != run_lod) {
-            draw_band(sa, sb, sc, ctx, plan, o, run_lod, run_start, row);
+            draw_band(sa, sb, sc, ctx, plan, o, run_lod, run_start, row, NULL);
             run_start = row;
             run_lod = l;
         }
     }
-    draw_band(sa, sb, sc, ctx, plan, o, run_lod, run_start, r1);
+    if (!F.on)
+        draw_band(sa, sb, sc, ctx, plan, o, run_lod, run_start, r1, NULL);
 }
 
 static int atest_pass(int func, int a, int ref)
@@ -448,6 +536,21 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
         mg_census();
     if (ap.skip || (ap.color_off && !depth))
         return;
+    /* Fog: the G100 fogs only in textured trapezoids (white texture for
+     * untextured draws); MULT2 keeps only the fog term (f * fog colour),
+     * so the colour into the fog unit is forced to zero. */
+    mg.fog_on = mg_fog_source() != GR_FOG_DISABLE;
+    if (mg.fog_on) {
+        if (mg.st.fog_mode & GR_FOG_MULT2) {
+            plan.color_src = CS_ZERO;
+            plan.modulate = 1;
+        }
+        if (!plan.textured) {
+            plan.textured = 1;
+            plan.tex_white = 1;
+            plan.modulate = 1;
+        }
+    }
     vtx(&sa, a, wmode, plan.color_src);
     vtx(&sb, b, wmode, plan.color_src);
     vtx(&sc, c, wmode, plan.color_src);
@@ -457,6 +560,10 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
         return;
     mg_validate();
     ctx.flags = MGA_S_VOODOO_EDGES;
+    if (mg.fog_on) {
+        mg_fog_emit_color();
+        ctx.flags |= MGA_S_FOG;
+    }
     ctx.dwgctl = DWG_BOP_COPY;
     ctx.tex_tw = ctx.tex_th = 3;
     if (depth) {

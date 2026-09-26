@@ -112,10 +112,10 @@ guEndianSwapBytes | FxU16 | FxU16 value | 2 | gs | stub
 guEndianSwapWords | FxU32 | FxU32 value | 2 | gs | stub
 guFbReadRegion | FxBool | int src_x, int src_y, int w, int h, void *dst, int strideInBytes | 2 | g | partial
 guFbWriteRegion | FxBool | int dst_x, int dst_y, int w, int h, const void *src, int strideInBytes | 2 | g | partial
-guFogGenerateExp2 | void | GrFog_t fogtable[], float density | 2 | gs | stub
-guFogGenerateExp | void | GrFog_t fogtable[], float density | 2 | gs | stub
-guFogGenerateLinear | void | GrFog_t fogtable[], float nearZ, float farZ | 2 | gs | stub
-guFogTableIndexToW | float | int i | 2 | gs | stub
+guFogGenerateExp2 | void | GrFog_t fogtable[], float density | 2 | gs | partial
+guFogGenerateExp | void | GrFog_t fogtable[], float density | 2 | gs | partial
+guFogGenerateLinear | void | GrFog_t fogtable[], float nearZ, float farZ | 2 | gs | partial
+guFogTableIndexToW | float | int i | 2 | gs | partial
 guMovieSetName | void | const char *name | 3 | gs | stub
 guMovieStart | void | void | 3 | gs | stub
 guMovieStop | void | void | 3 | gs | stub
