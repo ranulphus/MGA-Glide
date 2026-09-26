@@ -17,6 +17,7 @@ static struct {
     int       shadow;
     GrLfbWriteMode_t mode;
     GrOriginLocation_t origin;
+    int       pipe;
     uint32_t  seed;
 } lk;
 
@@ -24,7 +25,7 @@ static uint8_t *shadow;
 static uint32_t shadow_size;
 static GrColorFormat_t lfb_color_format = GR_COLORFORMAT_ARGB;
 static uint16_t lfb_const_depth;
-static uint8_t  lfb_const_alpha;
+static uint8_t  lfb_const_alpha = 0xFF;
 
 static uint32_t sentinel(uint32_t x, uint32_t y)
 {
@@ -54,6 +55,16 @@ static uint32_t order_argb(uint32_t c)
     r = mg_color_to_argb(c);
     mg.color_format = saved;
     return r;
+}
+
+/* A 32-bit depth-buffer value as the Voodoo would hold it: the Z value's
+ * top half, or in W mode the W code of the stored 2^31 * (1/w). */
+static uint16_t aux_value32(uint32_t v)
+{
+    const mg_state *s = &mg.st;
+    if (s->depth_mode == GR_DEPTHBUFFER_WBUFFER || s->depth_mode == GR_DEPTHBUFFER_WBUFFER_COMPARE_TO_BIAS)
+        return (uint16_t)mg_wcode_from_oow((double)v / 2147483648.0);
+    return (uint16_t)(v >> 16);
 }
 
 static int need_shadow(GrLock_t type, GrBuffer_t buffer, GrLfbWriteMode_t mode, GrOriginLocation_t origin, FxBool pipe)
@@ -90,11 +101,10 @@ GR_ENTRY(FxBool, grLfbLock, (GrLock_t type, GrBuffer_t buffer, GrLfbWriteMode_t 
     lk.mode = writeMode;
     lk.origin = origin;
     lk.shadow = need_shadow(type, buffer, writeMode, origin, pixelPipeline);
+    lk.pipe = pixelPipeline && (type & 1) == GR_LFB_WRITE_ONLY && buffer != GR_BUFFER_AUXBUFFER;
     info->size = sizeof(GrLfbInfo_t);
     info->writeMode = writeMode;
     info->origin = origin;
-    if (pixelPipeline)
-        mg_log(MG_LOG_DEBUG, "lfb: pixel pipeline lock (approximated)");
     if (!lk.shadow) {
         info->lfbPtr = (void *)(mga_fb + off);
         info->strideInBytes = (FxU32)mg.pitch_px * 2u;
@@ -122,7 +132,7 @@ GR_ENTRY(FxBool, grLfbLock, (GrLock_t type, GrBuffer_t buffer, GrLfbWriteMode_t 
                 uint16_t *d = (uint16_t *)(shadow + y * SHADOW_STRIDE16);
                 for (x = 0; x < (uint32_t)mg.width; x++) {
                     if (buffer == GR_BUFFER_AUXBUFFER && mg.zbits == 32)
-                        d[x] = (uint16_t)(src32[x] >> 16);
+                        d[x] = aux_value32(src32[x]);
                     else
                         d[x] = src16[x];
                 }
@@ -148,6 +158,128 @@ GR_ENTRY(FxBool, grLfbLock, (GrLock_t type, GrBuffer_t buffer, GrLfbWriteMode_t 
     return FXTRUE;
 }
 
+/* ---- Pixel pipeline for LFB writes -------------------------------------
+ * The retail runtime sends pipeline writes through chroma key, alpha test,
+ * depth test and blending, but not through the colour combine (t18). The
+ * Matrox has no such path, so it is done here on the CPU, exactly. */
+
+static int cmp_pass(GrCmpFnc_t f, uint32_t a, uint32_t b)
+{
+    switch (f) {
+    case GR_CMP_NEVER: return 0;
+    case GR_CMP_LESS: return a < b;
+    case GR_CMP_EQUAL: return a == b;
+    case GR_CMP_LEQUAL: return a <= b;
+    case GR_CMP_GREATER: return a > b;
+    case GR_CMP_NOTEQUAL: return a != b;
+    case GR_CMP_GEQUAL: return a >= b;
+    default: return 1;
+    }
+}
+
+static GrCmpFnc_t reversed(GrCmpFnc_t f)
+{
+    switch (f) {
+    case GR_CMP_LESS: return GR_CMP_GREATER;
+    case GR_CMP_LEQUAL: return GR_CMP_GEQUAL;
+    case GR_CMP_GREATER: return GR_CMP_LESS;
+    case GR_CMP_GEQUAL: return GR_CMP_LEQUAL;
+    default: return f;
+    }
+}
+
+/* Blend factor for one channel (0..255). 'other' is the opposite colour
+ * (destination for a source factor and vice versa). */
+static int blend_factor(GrAlphaBlendFnc_t f, int is_src, int own, int other, int sa, int da)
+{
+    MGA_UNUSED(own);
+    switch (f) {
+    case GR_BLEND_ZERO: return 0;
+    case GR_BLEND_SRC_ALPHA: return sa;
+    case GR_BLEND_SRC_COLOR: return other;          /* DST_COLOR as a source factor, SRC_COLOR as a dest one */
+    case GR_BLEND_DST_ALPHA: return da;
+    case GR_BLEND_ONE: return 255;
+    case GR_BLEND_ONE_MINUS_SRC_ALPHA: return 255 - sa;
+    case GR_BLEND_ONE_MINUS_SRC_COLOR: return 255 - other;
+    case GR_BLEND_ONE_MINUS_DST_ALPHA: return 255 - da;
+    case GR_BLEND_ALPHA_SATURATE:
+        return is_src ? (sa < 255 - da ? sa : 255 - da) : other;  /* dest: PREFOG_COLOR ~ source colour */
+    default: return 255;
+    }
+}
+
+static uint32_t expand565(uint16_t c)
+{
+    uint32_t r = (c >> 11) & 31, g = (c >> 5) & 63, b = c & 31;
+    return ((r << 3 | r >> 2) << 16) | ((g << 2 | g >> 4) << 8) | (b << 3 | b >> 2);
+}
+
+/* One pipeline pixel: src is ARGB8888; depth is a Glide depth value. */
+static void pipe_pixel(uint32_t src, uint16_t depth, uint16_t *dst, uint16_t *z16, uint32_t *z32)
+{
+    const mg_state *s = &mg.st;
+    int sa = (int)(src >> 24), k;
+    uint32_t out = 0;
+    if (s->chroma_mode == GR_CHROMAKEY_ENABLE &&
+        (src & 0xFFFFFF) == (mg_color_to_argb(s->chroma_value) & 0xFFFFFF))
+        return;
+    if (s->alpha_test_func != GR_CMP_ALWAYS && !cmp_pass(s->alpha_test_func, (uint32_t)sa, s->alpha_test_ref))
+        return;
+    if (s->depth_mode != GR_DEPTHBUFFER_DISABLE && mg.has_aux) {
+        int wmode = s->depth_mode == GR_DEPTHBUFFER_WBUFFER || s->depth_mode == GR_DEPTHBUFFER_WBUFFER_COMPARE_TO_BIAS;
+        uint32_t dv = mg_depth_clear_value(depth), cur = mg.zbits == 32 ? *z32 : *z16;
+        if (!cmp_pass(wmode ? reversed(s->depth_func) : s->depth_func, dv, cur))
+            return;
+        if (s->depth_mask) {
+            if (mg.zbits == 32) *z32 = dv;
+            else *z16 = (uint16_t)dv;
+        }
+    }
+    if (!s->color_mask_rgb)
+        return;
+    if (s->blend_src == GR_BLEND_ONE && s->blend_dst == GR_BLEND_ZERO) {
+        out = src;
+    } else {
+        uint32_t d = expand565(*dst);
+        for (k = 0; k < 24; k += 8) {
+            int sc = (int)((src >> k) & 0xFF), dc = (int)((d >> k) & 0xFF), v;
+            int fs = blend_factor(s->blend_src, 1, sc, dc, sa, 255);
+            int fd = blend_factor(s->blend_dst, 0, dc, sc, sa, 255);
+            v = (sc * fs + dc * fd + 127) / 255;
+            out |= (uint32_t)(v > 255 ? 255 : v) << k;
+        }
+    }
+    *dst = argb_to_565(out);
+}
+
+/* Decode one written LFB value to ARGB8888 (+ depth). */
+static uint32_t decode_lfb(uint32_t v, uint16_t *depth)
+{
+    uint32_t r, g, b;
+    *depth = lfb_const_depth;
+    switch (lk.mode) {
+    case GR_LFBWRITEMODE_565:
+        return ((uint32_t)lfb_const_alpha << 24) | expand565((uint16_t)v);
+    case GR_LFBWRITEMODE_555:
+    case GR_LFBWRITEMODE_1555:
+    case GR_LFBWRITEMODE_555_DEPTH:
+    case GR_LFBWRITEMODE_1555_DEPTH:
+        r = (v >> 10) & 31; g = (v >> 5) & 31; b = v & 31;
+        if (lk.mode == GR_LFBWRITEMODE_555_DEPTH || lk.mode == GR_LFBWRITEMODE_1555_DEPTH)
+            *depth = (uint16_t)(v >> 16);
+        return ((lk.mode == GR_LFBWRITEMODE_1555 || lk.mode == GR_LFBWRITEMODE_1555_DEPTH)
+                    ? ((v & 0x8000) ? 0xFF000000u : 0) : ((uint32_t)lfb_const_alpha << 24)) |
+               ((r << 3 | r >> 2) << 16) | ((g << 3 | g >> 2) << 8) | (b << 3 | b >> 2);
+    case GR_LFBWRITEMODE_565_DEPTH:
+        *depth = (uint16_t)(v >> 16);
+        return ((uint32_t)lfb_const_alpha << 24) | expand565((uint16_t)v);
+    case GR_LFBWRITEMODE_888:
+        return ((uint32_t)lfb_const_alpha << 24) | (order_argb(v) & 0xFFFFFF);
+    default:                                            /* 8888 */
+        return order_argb(v);
+    }
+}
+
 static void write_back(void)
 {
     uint32_t off = mg_buffer_offset(lk.buffer), x, y, pitch = (uint32_t)mg.pitch_px;
@@ -158,6 +290,23 @@ static void write_back(void)
         uint32_t *dst32 = (uint32_t *)(mga_fb + off) + dy * pitch;
         uint16_t *z16 = (uint16_t *)(mga_fb + mg.aux_off) + dy * pitch;
         uint32_t *z32 = (uint32_t *)(mga_fb + mg.aux_off) + dy * pitch;
+        if (lk.pipe) {
+            const uint32_t *s32 = (const uint32_t *)(shadow + y * SHADOW_STRIDE32);
+            const uint16_t *s16 = (const uint16_t *)(shadow + y * SHADOW_STRIDE16);
+            for (x = 0; x < (uint32_t)mg.width; x++) {
+                uint32_t v, sv;
+                uint16_t d;
+                if (is32(lk.mode)) {
+                    v = s32[x]; sv = sentinel(x, y) | (lk.mode == GR_LFBWRITEMODE_888 ? 0xA5000000u : 0);
+                } else {
+                    v = s16[x]; sv = (uint16_t)(sentinel(x, y) | (lk.mode == GR_LFBWRITEMODE_555 ? 0x8000u : 0));
+                }
+                if (v == sv)
+                    continue;
+                pipe_pixel(decode_lfb(v, &d), d, &dst16[x], &z16[x], &z32[x]);
+            }
+            continue;
+        }
         if (is32(lk.mode)) {
             const uint32_t *s = (const uint32_t *)(shadow + y * SHADOW_STRIDE32);
             for (x = 0; x < (uint32_t)mg.width; x++) {
@@ -232,7 +381,7 @@ GR_ENTRY(FxBool, grLfbReadRegion, (GrBuffer_t src_buffer, FxU32 src_x, FxU32 src
             const uint32_t *s = (const uint32_t *)(mga_fb + off) + sy * pitch + src_x;
             uint32_t x;
             for (x = 0; x < src_width; x++)
-                d[x] = (uint16_t)(s[x] >> 16);
+                d[x] = aux_value32(s[x]);
         } else {
             memcpy(d, (const uint16_t *)(mga_fb + off) + sy * pitch + src_x, src_width * 2);
         }

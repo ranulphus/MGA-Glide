@@ -51,5 +51,36 @@
   "edge": false,
   "frac": 0.01
  },
- "t17": {}
+ "t17": {},
+ "t18": {
+  "why": "86Box's Voodoo LFB path ignores lfbMode Y-origin and RGBA lanes, so lower-left locks and ABGR writes are wrong in the reference; those regions are excluded",
+  "frames": {
+   "t18_0.png": {
+    "ignore": [
+     [
+      0,
+      120,
+      640,
+      180
+     ],
+     [
+      0,
+      240,
+      640,
+      360
+     ]
+    ]
+   },
+   "t18_2.png": {
+    "ignore": [
+     [
+      320,
+      150,
+      640,
+      214
+     ]
+    ]
+   }
+  }
+ }
 }

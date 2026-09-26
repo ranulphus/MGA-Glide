@@ -6,6 +6,8 @@ Both images are quantised to RGB565 first. Options:
   frac      fraction of pixels allowed beyond tol
   edge      ignore pixels on a colour edge of the reference (1-px border)
   box       compare 4x4 box-filtered images (stipple translucency on G100)
+  ignore    rectangles [x0, y0, x1, y1) excluded from the comparison: known
+            differences of the reference card, documented in the manifest
 Writes an optional diff image (red where beyond tol, grey reference).
 """
 import os
@@ -57,7 +59,7 @@ def edge_mask(w, h, rgb):
     return m
 
 
-def compare(ref_path, got_path, tol=24, frac=0.005, edge=True, box=False, diff_path=None):
+def compare(ref_path, got_path, tol=24, frac=0.005, edge=True, box=False, diff_path=None, ignore=()):
     rw, rh, ref = png.read_png(ref_path)
     gw, gh, got = png.read_png(got_path)
     if (rw, rh) != (gw, gh):
@@ -71,8 +73,19 @@ def compare(ref_path, got_path, tol=24, frac=0.005, edge=True, box=False, diff_p
     exact = 0
     counted = 0
     diff = bytearray(len(ref)) if diff_path else None
+    skip = None
+    if ignore:
+        skip = bytearray(rw * rh)
+        for x0, y0, x1, y1 in ignore:
+            for y in range(max(0, y0), min(rh, y1)):
+                for x in range(max(0, x0), min(rw, x1)):
+                    skip[y * rw + x] = 1
     for p in range(rw * rh):
         i = p * 3
+        if skip is not None and skip[p]:
+            if diff is not None:
+                diff[i] = diff[i + 1] = diff[i + 2] = 0
+            continue
         d = max(abs(ref[i] - got[i]), abs(ref[i + 1] - got[i + 1]), abs(ref[i + 2] - got[i + 2]))
         if mask is not None and mask[p]:
             if diff is not None:

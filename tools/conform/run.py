@@ -86,7 +86,7 @@ def cmd_check(tests):
                 fc = dict(cfg)
                 fc.update(cfg.get("frames", {}).get(fn, {}))
                 c = imgcmp.compare(os.path.join(refd, fn), got, fc["tol"], fc["frac"], fc["edge"],
-                                   fc["box"], os.path.join(out, fn[:-4] + ".diff.png"))
+                                   fc["box"], os.path.join(out, fn[:-4] + ".diff.png"), fc.get("ignore", ()))
                 c["gate"] = fc.get("gate", True)
                 frames[fn] = c
                 ok = ok and (c["ok"] or not c["gate"])
