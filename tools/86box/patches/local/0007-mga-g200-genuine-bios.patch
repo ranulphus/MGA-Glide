@@ -1,0 +1,47 @@
+diff --git a/src/video/vid_mga.c b/src/video/vid_mga.c
+index 446bb8c..c25a2d7 100644
+--- a/src/video/vid_mga.c
++++ b/src/video/vid_mga.c
+@@ -72,6 +72,9 @@ mystique_unsupported(const char *fmt, ...)
+ #define ROM_MYSTIQUE          "roms/video/matrox/MYSTIQUE.VBI"
+ #define ROM_MYSTIQUE_220      "roms/video/matrox/Myst220_66-99mhz.vbi"
+ #define ROM_G100              "roms/video/matrox/productiva8mbsdr.BIN"
++/* MGA-Glide local: Matrox's G200 AGP BIOS 900-33, unpacked from Matrox's
++ * public setup257.exe into the local ROM set by tools/86box/build.sh. */
++#define ROM_G200              "roms/video/matrox/mgaglide/900-33.bin"
+ 
+ #define FIFO_SIZE        65536
+ #define FIFO_MASK        (FIFO_SIZE - 1)
+@@ -7161,21 +7164,28 @@ mystique_init(const device_t *info)
+         romfn = mystique->is_agp ? ROM_MILLENNIUM_II_AGP : ROM_MILLENNIUM_II;
+     else if (mystique->type == MGA_1064SG)
+         romfn = ROM_MYSTIQUE;
++    else if (mystique->type == MGA_G200 && rom_present(ROM_G200) &&
++             !(getenv("MGAGLIDE_G200_BIOS") && !strcmp(getenv("MGAGLIDE_G200_BIOS"), "g100")))
++        romfn = ROM_G200;
+     else if (mystique->type >= MGA_G100)
+         romfn = ROM_G100;
+     else
+         romfn = ROM_MYSTIQUE_220;
+ 
++    /* G100+ decode a 64 KB ROM window; a 32 KB image (900-33) reads 0xFF above
++     * its end rather than mirroring, as on a card with a 64 KB part. */
+     if (mystique->type >= MGA_G100)
+         rom_init(&mystique->bios_rom, romfn, 0xc0000, 0x10000, 0xffff, 0, MEM_MAPPING_EXTERNAL);
+     else
+         rom_init(&mystique->bios_rom, romfn, 0xc0000, 0x8000, 0x7fff, 0, MEM_MAPPING_EXTERNAL);
+     mem_mapping_disable(&mystique->bios_rom.mapping);
++    pclog("MGA-Glide: video BIOS %s\n", romfn);
+ 
+-    if (mystique->type == MGA_G200 && mystique->bios_rom.rom) {
+-        /* MGA-Glide local patch (WP-3): no G200 BIOS in the ROM set; the G100
+-         * BIOS drives the shared VGA/VBE hardware. Its PCI data structure
+-         * names the G200 so the system BIOS runs it for this card. */
++    if (mystique->type == MGA_G200 && romfn == ROM_G100 && mystique->bios_rom.rom) {
++        /* MGA-Glide local patch (WP-3): fallback when the G200 BIOS is absent
++         * (or MGAGLIDE_G200_BIOS=g100); the G100 BIOS drives the shared
++         * VGA/VBE hardware. Its PCI data structure names the G200 so the
++         * system BIOS runs it for this card. */
+         uint8_t *r   = mystique->bios_rom.rom;
+         int      len = r[2] * 512, pcir = r[0x18] | (r[0x19] << 8), i;
+         uint8_t  sum = 0;

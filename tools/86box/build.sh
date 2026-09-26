@@ -8,7 +8,7 @@
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
-eval "$(sed -n 's/^\(BOX86_[A-Z]*\|ROMS_[A-Z]*\) *:= *\(.*\)$/\1=\2/p' "$root/tools/setup/versions.mk")"
+eval "$(sed -n 's/^\(BOX86_[A-Z]*\|ROMS_[A-Z]*\|MATROX_[A-Z0-9_]*\) *:= *\(.*\)$/\1=\2/p' "$root/tools/setup/versions.mk")"
 : "${BOX86_DIR:=${MGA_CACHE:-$HOME/.cache/mga-glide}/86box}"
 mkdir -p "$BOX86_DIR/bin"
 
@@ -57,7 +57,16 @@ if [ "$(cat "$roms/.commit" 2>/dev/null)" != "$ROMS_COMMIT" ]; then
   echo "$ROMS_COMMIT" > "$roms/.commit"
   echo "86box: roms at $ROMS_COMMIT"
 fi
-for f in machines/bf6/Beh_70.bin video/matrox/productiva8mbsdr.BIN; do
+# Genuine Matrox BIOSes for the emulated G200/G400/G450 (local patches 0004+).
+mbios=$roms/video/matrox/mgaglide
+if [ ! -s "$mbios/900-33.bin" ] || [ ! -s "$mbios/897-21.bin" ] || [ ! -s "$mbios/935-20.bin" ]; then
+  mkdir -p "$mbios"
+  "$root/tools/setup/fetch.sh" "$MATROX_BIOS_URL" "$MATROX_BIOS_SHA256" "$mbios/setup257.exe"
+  unzip -o -q "$mbios/setup257.exe" 900-33.bin 897-21.bin 935-20.bin -d "$mbios"
+  rm -f "$mbios/setup257.exe"
+  echo "86box: Matrox BIOSes in $mbios"
+fi
+for f in machines/bf6/Beh_70.bin video/matrox/productiva8mbsdr.BIN video/matrox/mgaglide/900-33.bin; do
   [ -s "$roms/$f" ] || { echo "86box: missing ROM $f" >&2; exit 1; }
 done
 echo "86box: ready ($BOX86_DIR/bin/86Box, key $key)"

@@ -16,3 +16,9 @@ ROMS_COMMIT   := c761288ecddccb36d5664d33c0199e9d0b4e8454
 # runs the HAL's DJGPP smoke test with it).
 CWSDPMI_URL    := http://www.delorie.com/pub/djgpp/current/v2misc/csdpmi7b.zip
 CWSDPMI_SHA256 := deacda0488e1cdd7c4a9f32fab45662b34c0ed6b2d7d4d13bc07041b62004a8c
+
+# Matrox's public BIOS package (2003): genuine G200 (900-33), G400 (897-21)
+# and G450 (935-20) video BIOSes for the emulated cards. Kept in the local
+# 86Box ROM cache only, never committed.
+MATROX_BIOS_URL    := https://ftp.matrox.com/pub/mga/archive/bios/2003/setup257.exe
+MATROX_BIOS_SHA256 := f7c5662f5c809e5987c895229314d584b16b84ae04bdd3e3e5dd2df01f518329

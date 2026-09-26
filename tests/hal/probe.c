@@ -9,6 +9,41 @@
 
 uint32_t mga_probe_vram(void);
 
+static uint8_t xreg(uint8_t i)
+{
+    MGA_WR8(MGAREG_PALWTADD, i);
+    return MGA_RD8(MGAREG_X_DATAREG);
+}
+
+static uint8_t crtc(uint16_t idx_reg, uint8_t i)
+{
+    MGA_WR8(idx_reg, i);
+    return MGA_RD8(idx_reg + 1);
+}
+
+/* Display state the video BIOS left after the mode set: the DAC's pixel
+ * format and LUT (direct-colour pixels index it), the CRTC pitch and start.
+ * Compared between BIOSes and against a physical card. */
+static void display_state(void)
+{
+    static const uint8_t lut_at[] = { 0, 8, 128, 248, 252, 255 };
+    char lut[80];
+    int i, n = 0;
+    MGA_WR8(MGAREG_PALRDADD, 0);
+    for (i = 0; i < (int)sizeof lut_at; i++) {
+        uint8_t r, g, b;
+        MGA_WR8(MGAREG_PALRDADD, lut_at[i]);
+        r = MGA_RD8(MGAREG_PALDATA); g = MGA_RD8(MGAREG_PALDATA); b = MGA_RD8(MGAREG_PALDATA);
+        n += sprintf(lut + n, " %d:%02x%02x%02x", lut_at[i], r, g, b);
+    }
+    hx_log("HX-STAT dac mulctrl=%02x miscctrl=%02x genctrl=%02x pixrdmsk=%02x lut%s",
+           xreg(0x19), xreg(0x1E), xreg(0x1D), MGA_RD8(MGAREG_PIXRDMSK), lut);
+    hx_log("HX-STAT crtc offset=%02x start=%02x%02x ext0=%02x ext1=%02x ext2=%02x ext3=%02x vde=%02x ovf=%02x",
+           crtc(MGAREG_CRTC_INDEX, 0x13), crtc(MGAREG_CRTC_INDEX, 0x0C), crtc(MGAREG_CRTC_INDEX, 0x0D),
+           crtc(MGAREG_CRTCEXT_INDEX, 0), crtc(MGAREG_CRTCEXT_INDEX, 1), crtc(MGAREG_CRTCEXT_INDEX, 2),
+           crtc(MGAREG_CRTCEXT_INDEX, 3), crtc(MGAREG_CRTC_INDEX, 0x12), crtc(MGAREG_CRTC_INDEX, 0x07));
+}
+
 static void mode_cb(const mga_vbe_mode *m, void *ctx)
 {
     MGA_UNUSED(ctx);
@@ -48,6 +83,7 @@ int main(int argc, char **argv)
         hx_done(HX_INIT_FAILED);
     ok = vbe_set_mode(&mode, 1024, &pitch) == 0;
     hx_test("vbe-set", ok, "pitch=%d px lfb=%08lx", pitch, (unsigned long)mode.lfb_phys);
+    display_state();
     mga.vram_bytes = mga_probe_vram();
     hx_log("HX-STAT vram=%lu", (unsigned long)mga.vram_bytes);
 
