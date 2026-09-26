@@ -14,7 +14,7 @@ DOS games written for 3dfx Voodoo boards run on a Matrox G100, G200 or G450.
 | Card | State |
 |---|---|
 | G100 | Complete in 86Box: all conformance tests match the Voodoo; Screamer Rally and GTA run and replay within tolerance. Physical-card verification pending (milestone S) |
-| G200 | Complete against a locally emulated G200 (native blending, alpha test, specular, mipmaps). Physical-card verification pending |
+| G200 | Complete against a locally emulated G200 (native blending, alpha test, specular, mipmaps), whose texturing and blending details were checked on a G200-family chip (a server G200eR2, `docs/loop-c-results.md`). Retail-card verification pending |
 | G450 | Capabilities defined; untested |
 
 Acceptance games: Screamer Rally (3dfx build) and Grand Theft Auto (1997,
@@ -59,7 +59,9 @@ emulated Matrox card next to an emulated Voodoo for reference images
 | `docs/abi-facts.md` | The interface facts the implementation relies on |
 | `docs/reference-gaps.md` | Where the emulated reference Voodoo differs from the real one |
 | `docs/emulated-g200.md` | The local 86Box G200 model |
-| `docs/trace.md` | Call traces, GLPLAY and the trace proxy |
+| `docs/trace.md` | Call traces, GLPLAY, the trace proxy and host replay |
+| `docs/loop-c-results.md` | Measurements on a G200eR2 |
+| `docs/dosgl-handoff.md` | What DOS-GL inherits |
 | `docs/loops.md`, `docs/toolchain.md`, `docs/bench.md`, `docs/loader.md` | Testing and building |
 
 ## Licence
