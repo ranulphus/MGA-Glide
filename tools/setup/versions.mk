@@ -11,3 +11,8 @@ BOX86_REPO    := https://github.com/86Box/86Box.git
 BOX86_COMMIT  := bcce80a8134108f44a86fbee0191955deea73e8d
 ROMS_REPO     := https://github.com/86Box/roms.git
 ROMS_COMMIT   := c761288ecddccb36d5664d33c0199e9d0b4e8454
+
+# CWSDPMI r7: the DPMI host DJGPP programs need under plain DOS (Loop A
+# runs the HAL's DJGPP smoke test with it).
+CWSDPMI_URL    := http://www.delorie.com/pub/djgpp/current/v2misc/csdpmi7b.zip
+CWSDPMI_SHA256 := deacda0488e1cdd7c4a9f32fab45662b34c0ed6b2d7d4d13bc07041b62004a8c

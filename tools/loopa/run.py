@@ -325,8 +325,8 @@ def run(a):
                 status = "GUEST-EXC"   # program died; RUN.BAT's fallback ended the run
             elif info["done"] is None:
                 status = "CRASH"
-            elif info["done"] == 0 and p.returncode == 0:
-                status = "PASS"
+            elif info["done"] == 0 and p.returncode in (0, 124):
+                status = "PASS"        # 124: reported HX-DONE 0 but left ending the run to RUN.BAT
             else:
                 status = "FAIL"
         elif status == "NO-EXIT":

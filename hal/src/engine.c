@@ -57,6 +57,17 @@ void engine_init(int pitch_px, int bpp)
         MGA_WR32(MGAREG_SRCORG, 0);
         MGA_WR32(MGAREG_DSTORG, 0);
     }
+    /* Chips that blend apply ALPHACTRL to every 3D trapezoid, and its reset
+     * value (zero x source + zero x destination) draws black: start opaque. */
+    if (mga.has_alpha_blend) {
+        fifo_reserve(1);
+        MGA_WR32(MGAREG_ALPHACTRL, ALPHACTRL_SRC(BLEND_ONE) | ALPHACTRL_DST(BLEND_ZERO) |
+                                   ALPHACTRL_ALPHASEL(ALPHASEL_DIFFUSE));
+    }
+    if (mga.has_texctl2) {
+        fifo_reserve(1);
+        MGA_WR32(MGAREG_TEXCTL2, 0);
+    }
     cur.pitch_px = pitch_px;
     cur.bpp = bpp;
     cur.zbits = 16;

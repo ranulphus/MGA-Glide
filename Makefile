@@ -7,7 +7,7 @@ include mk/host.mk
 include mk/djgpp.mk
 include mk/dos.mk
 
-export WATCOM DJGPP_PREFIX MGA_CACHE OW_URL OW_SHA256 DJGPP_URL DJGPP_SHA256
+export WATCOM DJGPP_PREFIX MGA_CACHE OW_URL OW_SHA256 DJGPP_URL DJGPP_SHA256 CWSDPMI_URL CWSDPMI_SHA256
 
 .DEFAULT_GOAL := runtime
 .PHONY: help runtime header check-header check-exports check-clib tests-host \
@@ -102,6 +102,13 @@ setup-ow:
 	tools/setup/setup-ow.sh
 setup-djgpp:
 	tools/setup/setup-djgpp.sh
+
+# The HAL's smoke test with DJGPP (as DOS-GL builds it) and with Open Watcom.
+build/djgpp/SMOKE.EXE: tests/hal/smoke.c build/djgpp/libmgahal.a
+	@mkdir -p $(dir $@)
+	$(Q)echo "  DJLD    $@"
+	$(Q)$(DJCC) $(DJ_CFLAGS) -o $@ $< build/djgpp/libmgahal.a
+smoke-djgpp: build/djgpp/SMOKE.EXE
 
 # ---- Host tests ----------------------------------------------------------
 include tests/unit/unit.mk

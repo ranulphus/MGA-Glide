@@ -25,3 +25,13 @@ if ! LD_LIBRARY_PATH="$DJGPP_PREFIX/hostlib" "$DJGPP_PREFIX/bin/i586-pc-msdosdjg
   rm -rf "$tmp2"
   echo "setup-djgpp: bundled libfl.so.2 in $DJGPP_PREFIX/hostlib"
 fi
+
+# CWSDPMI, so DJGPP programs can run in Loop A.
+if [ -n "${CWSDPMI_URL:-}" ] && [ ! -f "$DJGPP_PREFIX/dos/CWSDPMI.EXE" ]; then
+  tmp3=$(mktemp -d)
+  "$here/fetch.sh" "$CWSDPMI_URL" "$CWSDPMI_SHA256" "$tmp3/csdpmi.zip"
+  mkdir -p "$DJGPP_PREFIX/dos"
+  unzip -q -j -o "$tmp3/csdpmi.zip" bin/CWSDPMI.EXE -d "$DJGPP_PREFIX/dos"
+  rm -rf "$tmp3"
+  echo "setup-djgpp: CWSDPMI in $DJGPP_PREFIX/dos"
+fi
