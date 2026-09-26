@@ -319,6 +319,8 @@ def run(a):
         if status is None:
             if FATAL_RE.search(boxlog + stderr_text) and info["done"] is None:
                 status = "EMU-FATAL"
+            elif info["done"] is None and p.returncode == 0 and "MGL-EXIT frames=" in text:
+                status = "PASS"        # a game ended by MGAGLIDE exit_after (no HX-DONE from games)
             elif info["done"] is None and p.returncode == 124:
                 status = "GUEST-EXC"   # program died; RUN.BAT's fallback ended the run
             elif info["done"] is None:
