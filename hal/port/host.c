@@ -113,4 +113,5 @@ void *sys_real_ptr(uint16_t seg, uint16_t off)
 int  sys_hook_faults(sys_fault_fn fn) { (void)fn; return -1; }
 void sys_unhook_faults(void) { }
 int  sys_hook_exit(sys_exit_fn fn) { (void)fn; return -1; }
+void sys_terminate(int code) { exit(code); }
 void sys_unhook_exit(void) { }

@@ -52,7 +52,7 @@ int mga_find(mga_chip *c)
 {
     int bus, dev, fn;
     memset(c, 0, sizeof *c);
-    for (bus = 0; bus < 8; bus++) {
+    for (bus = 0; bus < 256; bus++) {    /* cards behind bridges sit on high buses */
         for (dev = 0; dev < 32; dev++) {
             for (fn = 0; fn < 8; fn++) {
                 uint32_t id = mga_pci_read32(bus, dev, fn, 0);

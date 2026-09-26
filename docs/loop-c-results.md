@@ -14,6 +14,11 @@ console; nothing appears on screen.
 | 1 | `dcffc000` | 16 KB | control registers (MMIO) |
 | 2 | `dc000000` | 8 MB | ILOAD aperture |
 
+`mgarig` finds these itself: the Linux port answers PCI configuration
+reads (mechanism #1) from the sysfs `config` file of `RIG_BDF` alone, so
+the HAL's `mga_find()` reads the identity and BARs as it does under DOS.
+Any other Matrox card under Linux works with `RIG_BDF=<domain:bus:dev.fn>`.
+
 ## Stages (2026-09-26)
 
 | Stage | Result |

@@ -1,8 +1,9 @@
 /* linux.c - HAL port for Loop C (PRD §4.4): a G200-family card driven from
  * Linux through its sysfs resource files. Only the device named by
  * RIG_BDF (default 0000:0a:00.0) is touched: its BARs are mapped from
- * /sys/bus/pci/devices/<bdf>/resourceN; there is no port I/O, no BIOS and
- * no interrupt handling. Needs root for the mappings. */
+ * /sys/bus/pci/devices/<bdf>/resourceN and its configuration space is read
+ * from .../config; there is no other port I/O, no BIOS and no interrupt
+ * handling. Needs root for the mappings. */
 #define _GNU_SOURCE
 #include "mga/sys.h"
 #include <fcntl.h>
@@ -19,12 +20,39 @@ static const char *bdf(void)
     return b && *b ? b : "0000:0a:00.0";
 }
 
+/* PCI configuration mechanism #1 (0xCF8/0xCFC) answered from the sysfs
+ * config file of RIG_BDF alone, so the shared mga_find()/mga_map() find the
+ * card, its revision and BARs as on DOS. Every other bus address reads as
+ * absent, and configuration writes are dropped: the kernel owns the device
+ * and has already enabled it. */
+static uint32_t cf8;
+
+static uint32_t cfg_read32(uint32_t addr)
+{
+    unsigned dom, bus, dev, fn;
+    char path[160];
+    uint32_t v = 0xFFFFFFFFu;
+    int fd;
+    if (!(addr & 0x80000000u) || sscanf(bdf(), "%x:%x:%x.%x", &dom, &bus, &dev, &fn) != 4)
+        return v;
+    if (((addr >> 16) & 0xFF) != bus || ((addr >> 11) & 0x1F) != dev || ((addr >> 8) & 7) != fn)
+        return v;
+    snprintf(path, sizeof path, "/sys/bus/pci/devices/%s/config", bdf());
+    fd = open(path, O_RDONLY);
+    if (fd < 0)
+        return v;
+    if (pread(fd, &v, 4, addr & 0xFC) != 4)
+        v = 0xFFFFFFFFu;
+    close(fd);
+    return v;
+}
+
 uint8_t  sys_inb(uint16_t p) { MGA_UNUSED(p); return 0xFF; }
 uint16_t sys_inw(uint16_t p) { MGA_UNUSED(p); return 0xFFFF; }
-uint32_t sys_inl(uint16_t p) { MGA_UNUSED(p); return 0xFFFFFFFFu; }
+uint32_t sys_inl(uint16_t p) { return p == 0xCFC ? cfg_read32(cf8) : p == 0xCF8 ? cf8 : 0xFFFFFFFFu; }
 void sys_outb(uint16_t p, uint8_t v) { MGA_UNUSED(p); MGA_UNUSED(v); }
 void sys_outw(uint16_t p, uint16_t v) { MGA_UNUSED(p); MGA_UNUSED(v); }
-void sys_outl(uint16_t p, uint32_t v) { MGA_UNUSED(p); MGA_UNUSED(v); }
+void sys_outl(uint16_t p, uint32_t v) { if (p == 0xCF8) cf8 = v; }
 
 /* Map [phys, phys+size) through the resource file of the BAR containing it. */
 volatile void *sys_map_phys(uint32_t phys, uint32_t size)
@@ -81,4 +109,5 @@ void sys_free(void *p) { free(p); }
 int  sys_hook_faults(sys_fault_fn fn) { (void)fn; return -1; }
 void sys_unhook_faults(void) { }
 int  sys_hook_exit(sys_exit_fn fn) { (void)fn; return -1; }
+void sys_terminate(int code) { exit(code); }
 void sys_unhook_exit(void) { }

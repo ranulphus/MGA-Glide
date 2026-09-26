@@ -1,4 +1,5 @@
-/* mgarig - Loop C stages on the cuda6 G200eR2 (PRD §4.4, plan §7).
+/* mgarig - Loop C stages on a Matrox card under Linux (PRD §4.4, plan §7):
+ * the cuda6 G200eR2 by default, any other card with RIG_BDF=<domain:bus:dev.fn>.
  *
  *   mgarig regs    read-only: identity and register values (no writes)
  *   mgarig sync    write DWGSYNC and read it back
@@ -17,25 +18,27 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define FB_PHYS   0xD2000000u
-#define MMIO_PHYS 0xDCFFC000u
 #define WORK      (4u << 20)        /* off-screen work area: safe even with 8 MB of VRAM */
 
+/* Identity and BARs come from the card's PCI configuration space (sysfs,
+ * through the Linux port), so the rig runs on any Matrox card at RIG_BDF. */
 static int map(void)
 {
-    mga.family = MGA_FAMILY_G200E;
-    mga.device_id = 0x0534;
-    mga.fb_phys = FB_PHYS;
+    if (mga_find(&mga)) {
+        printf("no Matrox card at RIG_BDF (default 0000:0a:00.0; root?)\n");
+        return -1;
+    }
     mga.fb_size = 16u << 20;
-    mga.mmio_phys = MMIO_PHYS;
-    mga_chip_caps(&mga);
-    mga_mmio = (volatile uint8_t *)sys_map_phys(MMIO_PHYS, 0x4000);
+    printf("card %s id=%04x rev=%02x family=%s fb=%08lx mmio=%08lx iload=%08lx\n", mga.name, mga.device_id,
+           mga.revision, mga_family_name(mga.family), (unsigned long)mga.fb_phys, (unsigned long)mga.mmio_phys,
+           (unsigned long)mga.iload_phys);
+    mga_mmio = (volatile uint8_t *)sys_map_phys(mga.mmio_phys, 0x4000);
     if (!mga_mmio) {
         printf("map mmio FAILED (root? RIG_BDF?)\n");
         return -1;
     }
     if (!getenv("RIG_NOFB")) {
-        mga_fb = (volatile uint8_t *)sys_map_phys(FB_PHYS, mga.fb_size);
+        mga_fb = (volatile uint8_t *)sys_map_phys(mga.fb_phys, mga.fb_size);
         if (!mga_fb) {
             printf("map fb FAILED\n");
             return -1;

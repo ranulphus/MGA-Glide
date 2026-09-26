@@ -8,3 +8,6 @@ __pycache__/
 *.ovl
 !/tests/**/.keep
 /fixtures/
+# Loop B: the published job queue and machine-specific bench settings.
+/dist/
+/tools/bench/bench.local.toml

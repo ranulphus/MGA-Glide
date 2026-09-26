@@ -332,6 +332,16 @@ void sys_unhook_faults(void)
     faults_on = 0;
 }
 
+void sys_terminate(int code)
+{
+    union REGS r;
+    memset(&r, 0, sizeof r);
+    r.w.ax = (uint16_t)(0x4C00 | (code & 0xFF));
+    int386(0x21, &r, &r);
+    for (;;)
+        ;
+}
+
 int sys_hook_exit(sys_exit_fn fn)
 {
     exit_fn = fn;

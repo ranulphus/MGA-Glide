@@ -2,6 +2,8 @@
 # Run a command inside the MGA-Glide dev container with the repo, the
 # toolchains and the cache mounted at identical paths.
 # Inside the container (or when MGA_NO_DOCKER=1) it just runs the command.
+# MGA_DOCKER_NETWORK=host shares the host's network (the Loop B dry run:
+# the emulated PC's SLiRP traffic must reach tools/bench/run.py on the host).
 set -euo pipefail
 if [ -f /.dockerenv ] || [ "${MGA_NO_DOCKER:-0}" = 1 ]; then exec "$@"; fi
 repo=$(cd "$(dirname "$0")/.." && pwd)
@@ -20,4 +22,5 @@ exec docker run --rm "${tty[@]}" --init \
   -u "$(id -u):$(id -g)" -e HOME="$HOME" -e MGA_CACHE="$cache" "${envs[@]}" \
   -v "$repo:$repo" -v "$opt:$opt" -v "$cache:$cache" \
   ${MGA_GAMES_DIR:+-v "$MGA_GAMES_DIR:$MGA_GAMES_DIR:ro"} \
+  ${MGA_DOCKER_NETWORK:+--network "$MGA_DOCKER_NETWORK"} \
   -w "$PWD" "$img" "$@"

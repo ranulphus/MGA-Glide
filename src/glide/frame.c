@@ -6,6 +6,7 @@
 
 mg_stats_t mg_stats;
 
+/* Returns only when there is no 86Box unit tester to end the run. */
 static void ut_exit(int code)
 {
     static const char magic[] = "86Box";
@@ -38,5 +39,8 @@ void mg_frame_end(void)
         trace_flush();
         vbe_set_text_mode();
         ut_exit(0);
+        /* A real PC (Loop B): end the game here. The exit hook restores the
+         * interrupt vectors and the display on the way out. */
+        sys_terminate(0);
     }
 }

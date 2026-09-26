@@ -197,12 +197,46 @@ int hx_save_ppm(const char *name, int w, int h, const uint8_t *rgb)
     return 0;
 }
 
+/* On a bench PC there is no unit tester: the host grabs the frame from its
+ * capture device when it sees HX-CAPTURE (tools/bench/run.py). HX_CAPWAIT
+ * (seconds, set by the bench job) holds the frame on screen meanwhile. */
+static int hx_bench_capture(const char *name)
+{
+    const char *e = getenv("HX_CAPWAIT");
+    long ticks = e ? atol(e) * 182L / 10 : 0;
+#if defined(__WATCOMC__) || defined(__DJGPP__)
+    volatile uint32_t *bios_ticks = (volatile uint32_t *)0x46C;
+    uint32_t t0;
+#endif
+    if (ticks <= 0)
+        return -1;
+    hx_log("HX-CAPTURE %s", name);
+#if defined(__WATCOMC__) || defined(__DJGPP__)
+    t0 = *bios_ticks;
+    while ((long)(*bios_ticks - t0) < ticks && (long)(*bios_ticks - t0) >= 0)
+        ;
+#endif
+    return 0;
+}
+
 int hx_snap_screen(const char *name)
 {
     uint16_t w, h;
     uint8_t *px, *rgb;
     long i, n;
-    int rc;
+    int rc, f;
+    long spin;
+    /* The emulator redraws its screen buffer scanline by scanline, so a
+     * capture straight after drawing can hold part of the previous frame.
+     * Let two full frames go by first (bounded, in case retrace is dead). */
+    for (f = 0; f < 3; f++) {
+        for (spin = 0; spin < 2000000L && (inp(0x3DA) & 8); spin++)
+            ;
+        for (spin = 0; spin < 2000000L && !(inp(0x3DA) & 8); spin++)
+            ;
+    }
+    if (!ut_base)
+        return hx_bench_capture(name);
     if (hx_ut_capture(&w, &h) < 0 || !w || !h)
         return -1;
     n = (long)w * h;

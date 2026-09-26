@@ -55,6 +55,10 @@ void sys_unhook_faults(void);
 int  sys_hook_exit(sys_exit_fn fn);
 void sys_unhook_exit(void);
 
+/* End the whole program now with this exit code (DOS: INT 21h, AH=4Ch, so
+ * an installed exit hook runs first). Does not return. */
+void sys_terminate(int code);
+
 /* Plain memory for HAL-owned tables (not VRAM). */
 void *sys_alloc(uint32_t bytes);
 void  sys_free(void *p);

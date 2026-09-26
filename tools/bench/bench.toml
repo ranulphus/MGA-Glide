@@ -1,0 +1,80 @@
+# Loop B bench PCs (tools/bench/run.py, docs/bench.md).
+#
+# Machine-specific values (serial devices, capture devices, relay commands,
+# the host address) go in tools/bench/bench.local.toml, which is not
+# committed and has the same layout; its keys override these per PC.
+
+[host]
+# The build host as the bench PCs reach it: HTTP job queue and FTP uploads.
+address = "192.168.1.21"
+http_port = 8000
+
+# Per PC:
+#   card          g100 | g200 | g400 | g450 (recorded in each result)
+#   address       the host as this PC sees it (default [host] address)
+#   serial        host serial device on the PC's COM1 null-modem cable,
+#                 or "file:PATH" to follow a log file (the virtual PC)
+#   ftp_port      host port the PC uploads C:\OUT to after each job
+#   capture       V4L2 device for the card's output ("" = none)
+#   capture_opts  extra ffmpeg input options for that device
+#   reset         shell command that hard-resets the PC after a hang
+#                 ("" = none; a person resets it)
+#   games         where the games are installed on the PC
+
+[pc.bench-g100]
+card = "g100"
+serial = "/dev/ttyS0"
+ftp_port = 2121
+capture = ""
+capture_opts = ""
+reset = ""
+games = 'C:\GAMES'
+
+[pc.bench-g200]
+card = "g200"
+serial = "/dev/ttyUSB0"
+ftp_port = 2122
+capture = ""
+capture_opts = ""
+reset = ""
+games = 'C:\GAMES'
+
+[pc.bench-g400]
+card = "g400"
+serial = "/dev/ttyUSB1"
+ftp_port = 2123
+capture = ""
+capture_opts = ""
+reset = ""
+games = 'C:\GAMES'
+
+[pc.bench-g450]
+card = "g450"
+serial = "/dev/ttyUSB2"
+ftp_port = 2124
+capture = ""
+capture_opts = ""
+reset = ""
+games = 'C:\GAMES'
+
+# The Loop B dry run: an 86Box PC on SLiRP networking (tools/bench/vpc.py)
+# running the same poller. SLiRP reaches the host's loopback as 10.0.2.2.
+[pc.vbench-g200]
+card = "g200"
+serial = "file:out/vbench/g200/serial.log"
+address = "10.0.2.2"
+ftp_port = 2131
+capture = ""
+capture_opts = ""
+reset = "tools/bench/vpc.py reset g200"
+games = 'D:'
+
+[pc.vbench-g100]
+card = "g100"
+serial = "file:out/vbench/g100/serial.log"
+address = "10.0.2.2"
+ftp_port = 2132
+capture = ""
+capture_opts = ""
+reset = "tools/bench/vpc.py reset g100"
+games = 'D:'
