@@ -191,6 +191,58 @@ static void test_z(void)
     CHECK(abs((int)zb[10 * PITCH + 50] - (int)(65535.0 * 50.5 / 256)) <= 1);
 }
 
+/* Voodoo-mode columns on each row equal the Voodoo's own evaluation. */
+static int64_t fl16(int64_t v) { return v >= 0 ? v >> 16 : -((-v + 65535) >> 16); }
+static void voodoo_span(const mga_svtx *v[3], int y, int *xl, int *xr)
+{
+    int32_t ry = 16 * y + 8;
+    int64_t dAC = (((int64_t)v[2]->X16 - v[0]->X16) << 16) / (v[2]->Y16 - v[0]->Y16);
+    int64_t x = ((int64_t)v[0]->X16 << 12) + ((dAC * (ry - v[0]->Y16)) >> 4), x2;
+    if (ry < v[1]->Y16) {
+        int64_t d = (((int64_t)v[1]->X16 - v[0]->X16) << 16) / (v[1]->Y16 - v[0]->Y16);
+        x2 = ((int64_t)v[0]->X16 << 12) + ((d * (ry - v[0]->Y16)) >> 4);
+    } else {
+        int64_t d = (((int64_t)v[2]->X16 - v[1]->X16) << 16) / (v[2]->Y16 - v[1]->Y16);
+        x2 = ((int64_t)v[1]->X16 << 12) + ((d * (ry - v[1]->Y16)) >> 4);
+    }
+    if (x > x2) { int64_t t = x; x = x2; x2 = t; }
+    *xl = (int)fl16(x + 0x7000);
+    *xr = (int)fl16(x2 + 0x7000);
+}
+
+static void test_voodoo_edges(void)
+{
+    int n, bad = 0;
+    mga_tri_ctx c = ctx_flat();
+    c.flags = MGA_S_VOODOO_EDGES;
+    for (n = 0; n < 300; n++) {
+        mga_svtx a, b, cc, *t;
+        const mga_svtx *v[3];
+        int x, y;
+        rnd_vtx(&a); rnd_vtx(&b); rnd_vtx(&cc);
+        /* sort by y for the reference formula */
+        if (b.Y16 < a.Y16) { mga_svtx tt = a; a = b; b = tt; }
+        if (cc.Y16 < b.Y16) { mga_svtx tt = b; b = cc; cc = tt; }
+        if (b.Y16 < a.Y16) { mga_svtx tt = a; a = b; b = tt; }
+        if (a.Y16 == b.Y16 || b.Y16 == cc.Y16) continue;
+        (void)t;
+        v[0] = &a; v[1] = &b; v[2] = &cc;
+        fill_bg();
+        setup_triangle(&a, &b, &cc, &c);
+        for (y = (a.Y16 + 7) >> 4; y < (cc.Y16 + 7) >> 4 && y < H; y++) {
+            int xl, xr;
+            voodoo_span(v, y, &xl, &xr);
+            for (x = 0; x < W; x++) {
+                int want = x >= xl && x < xr;
+                int got = refrast_px16(x, y, PITCH, 0) != 0;
+                if (want != got && bad++ < 5)
+                    fprintf(stderr, "voodoo tri %d: %d,%d want %d got %d\n", n, x, y, want, got);
+            }
+        }
+    }
+    CHECK_EQ(bad, 0);
+}
+
 int unit_main(void)
 {
     srand(1234);
@@ -200,6 +252,7 @@ int unit_main(void)
     test_watertight();
     test_gouraud();
     test_z();
+    test_voodoo_edges();
     printf("setup: tris=%u traps=%u empty=%u\n", setup_stats.tris, setup_stats.traps, setup_stats.culled_empty);
     return 0;
 }

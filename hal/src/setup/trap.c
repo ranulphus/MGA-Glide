@@ -25,18 +25,40 @@ static int64_t floordiv64(int64_t a, int64_t b)
 /* First covered row for an edge starting at Y (1/16 px): ceil((Y-8)/16). */
 static int32_t first_row(int32_t Y) { return (int32_t)floordiv64((int64_t)Y - 8 + 15, 16); }
 
+/* An edge whose first covered column on row k (k = 0 at the trapezoid's
+ * first row) is x_k = floor((N0 + S*k) / D), D > 0. The engine walks it
+ * with: while (AR1 < 0) { AR1 += AR0; x += dir; } AR1 += AR2. */
+static void edge_from_line(int64_t N0, int64_t S, int64_t D, mga_edge *e)
+{
+    int64_t x0 = floordiv64(N0, D);
+    int64_t r0 = N0 - x0 * D;                      /* 0 <= r0 < D */
+    e->x = (int32_t)x0;
+    e->neg = S < 0;
+    e->ar_step = (int32_t)D;
+    e->ar_dec = (int32_t)(S < 0 ? S : -S);
+    e->ar_err = (int32_t)((S < 0 ? r0 : (D - 1 - r0)) + e->ar_dec);
+}
+
+/* Exact mode: column covered when its centre is inside (top-left rule). */
 void setup_edge(int32_t Xa, int32_t Ya, int32_t Xb, int32_t Yb, int32_t ys, mga_edge *e)
 {
     int64_t dY = (int64_t)Yb - Ya, dX = (int64_t)Xb - Xa;
     int64_t P = (int64_t)Xa * dY + ((int64_t)16 * ys + 8 - Ya) * dX;    /* X(ys) * dY */
-    int64_t xs = floordiv64(P - 8 * dY + 16 * dY - 1, 16 * dY);         /* ceil(X/16 - 1/2) */
-    int64_t F = (16 * xs + 8) * dY - P;                                  /* 0 <= F < 16 dY */
-    int64_t adx = dX < 0 ? -dX : dX;
-    e->x = (int32_t)xs;
-    e->neg = dX < 0;
-    e->ar_step = (int32_t)(16 * dY);
-    e->ar_dec = (int32_t)(-16 * adx);
-    e->ar_err = (int32_t)((e->neg ? (16 * dY - 1 - F) : F) - 16 * adx);
+    /* ceil(X/16 - 1/2) = floor((P - 8dY + 16dY - 1) / 16dY) */
+    edge_from_line(P - 8 * dY + 16 * dY - 1, 16 * dX, 16 * dY, e);
+}
+
+/* Voodoo mode: the Voodoo evaluates each edge in 16.16 fixed point with a
+ * truncated slope and takes columns [floor(xl + 7/16), floor(xr + 7/16)),
+ * sampling at x + 9/16. Matching it keeps shared edges identical to the
+ * reference frames. */
+void setup_edge_voodoo(int32_t Xa, int32_t Ya, int32_t Xb, int32_t Yb, int32_t ys, mga_edge *e)
+{
+    int64_t d = (((int64_t)Xb - Xa) << 16) / ((int64_t)Yb - Ya);      /* truncates toward zero */
+    int64_t c0 = (int64_t)16 * ys + 8 - Ya;
+    int64_t prod = d * c0;
+    int64_t N0 = ((int64_t)Xa << 12) + (prod >= 0 ? prod >> 4 : -((-prod + 15) >> 4)) + 0x7000;
+    edge_from_line(N0, d, 65536, e);
 }
 
 /* Plane A(x, y) = A0 + dx*(x - x0) + dy*(y - y0) in pixel units. */
@@ -200,8 +222,13 @@ void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, con
         if (ye > ctx->clip_y1) ye = ctx->clip_y1;
         if (ye <= ys)
             continue;
-        setup_edge(v[0]->X16, v[0]->Y16, v[2]->X16, v[2]->Y16, ys, &lng);
-        setup_edge(sa->X16, sa->Y16, sb->X16, sb->Y16, ys, &sht);
+        if (flags & MGA_S_VOODOO_EDGES) {
+            setup_edge_voodoo(v[0]->X16, v[0]->Y16, v[2]->X16, v[2]->Y16, ys, &lng);
+            setup_edge_voodoo(sa->X16, sa->Y16, sb->X16, sb->Y16, ys, &sht);
+        } else {
+            setup_edge(v[0]->X16, v[0]->Y16, v[2]->X16, v[2]->Y16, ys, &lng);
+            setup_edge(sa->X16, sa->Y16, sb->X16, sb->Y16, ys, &sht);
+        }
         if (mid_right) { el = lng; er = sht; } else { el = sht; er = lng; }
         setup_stats.traps++;
         px = el.x + 0.5;

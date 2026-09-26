@@ -4,9 +4,11 @@
 #include "mga/regs_mga.h"
 #include "mga/fp.h"
 
+/* The Voodoo converts float vertices to 12.4 fixed point by truncation
+ * toward zero; games that follow 3dfx's advice pre-snap to 1/16 anyway. */
 static int32_t snap16(float v)
 {
-    return (int32_t)mga_floor((double)v * 16.0 + 0.5);
+    return (int32_t)(v * 16.0f);
 }
 
 static uint32_t zmode_for(GrCmpFnc_t f, int reversed)
@@ -112,7 +114,7 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
         return;
     mg_validate();
     ctx.dwgctl = DWG_OPCOD_TRAP | DWG_BOP_COPY;
-    ctx.flags = (src == SRC_ITERATED) ? MGA_S_COLOR : 0;
+    ctx.flags = MGA_S_VOODOO_EDGES | ((src == SRC_ITERATED) ? MGA_S_COLOR : 0);
     if (depth) {
         ctx.dwgctl |= (mg.st.depth_mask ? DWG_ATYPE_ZI : DWG_ATYPE_I) |
                       zmode_for(mg.st.depth_func, wmode);

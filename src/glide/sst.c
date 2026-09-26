@@ -173,7 +173,16 @@ GR_ENTRY(FxBool, grSstWinOpen, (FxU32 hWnd, GrScreenResolution_t screen_resoluti
     mg.pitch_px = pitch;
     mg.nbuffers = nColBuffers < 2 ? 2 : (nColBuffers > MG_MAX_BUFFERS ? MG_MAX_BUFFERS : nColBuffers);
     mg.has_aux = nAuxBuffers > 0;
-    mg.zbits = mg_config.force_z32 ? 32 : 16;
+    /* 32-bit depth keeps W-buffering precise; use it whenever the colour
+     * buffers, a 32-bit aux buffer and a 2 MB texture heap fit. */
+    {
+        uint32_t screen = (uint32_t)pitch * 2u * mg.mode.height;
+        uint32_t need32 = (screen + 0x1000) * (uint32_t)mg.nbuffers + screen * 2u + (2u << 20);
+        if (mg_config.force_z32 >= 0)
+            mg.zbits = mg_config.force_z32 ? 32 : 16;
+        else
+            mg.zbits = (mga.vram_bytes >= need32) ? 32 : 16;
+    }
     mg.color_format = color_format;
     mg.st.origin = origin_location == GR_ORIGIN_LOWER_LEFT ? GR_ORIGIN_LOWER_LEFT : GR_ORIGIN_UPPER_LEFT;
     /* Buffers are whole screens of the display mode so page flips land on

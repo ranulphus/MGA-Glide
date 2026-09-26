@@ -102,11 +102,11 @@ grTexTextureMemRequired | FxU32 | FxU32 evenOdd, GrTexInfo *info | 2 | gs | stub
 grTriStats | void | FxU32 *trisProcessed, FxU32 *trisDrawn | 2 | gs | stub
 gu3dfGetInfo | FxBool | const char *filename, Gu3dfInfo *info | 2 | gs | stub
 gu3dfLoad | FxBool | const char *filename, Gu3dfInfo *data | 2 | gs | stub
-guAADrawTriangleWithClip | void | const GrVertex *a, const GrVertex *b, const GrVertex *c | 3 | gs | stub
+guAADrawTriangleWithClip | void | const GrVertex *a, const GrVertex *b, const GrVertex *c | 3 | gs | partial
 guAlphaSource | void | GrAlphaSource_t mode | 2 | gs | stub
 guColorCombineFunction | void | GrColorCombineFnc_t fnc | 2 | gs | stub
 guDrawPolygonVertexListWithClip | void | int nverts, const GrVertex vlist[] | 2 | gs | stub
-guDrawTriangleWithClip | void | const GrVertex *a, const GrVertex *b, const GrVertex *c | 2 | gs | stub
+guDrawTriangleWithClip | void | const GrVertex *a, const GrVertex *b, const GrVertex *c | 2 | gs | partial
 guEncodeRLE16 | int | void *dst, void *src, FxU32 width, FxU32 height | 3 | gs | stub
 guEndianSwapBytes | FxU16 | FxU16 value | 2 | gs | stub
 guEndianSwapWords | FxU32 | FxU32 value | 2 | gs | stub

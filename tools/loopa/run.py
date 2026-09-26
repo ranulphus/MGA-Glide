@@ -91,6 +91,8 @@ def build_config(vm, a, serial, cimg, bootimg, extra_hdd):
     subst = {
         "@RENDERER@": "sdl_software",
         "@VOODOO@": "1" if a.voodoo else "0",
+        "@VOODOO_RECOMPILER@": str(a.voodoo_recompiler),
+        "@VOODOO_THREADS@": str(a.voodoo_threads),
         "@G100_MB@": str(a.g100_mb),
         "@SNDCARD@": a.sound or "none",
         "@SERIAL@": serial,
@@ -200,6 +202,9 @@ def run(a):
         box = os.path.join(BOX86_DIR, "bin", "86Box")
         roms = os.path.join(BOX86_DIR, "roms")
         cmd = [box, "-P", vm, "-C", cfg, "-R", roms, "-N", "-L", os.path.join(out, "86box.log")]
+        if os.environ.get("BOX86_GDB"):
+            cmd = ["gdb", "-q", "-batch", "-ex", "handle SIGUSR1 SIGUSR2 SIGPIPE nostop noprint",
+                   "-ex", "run", "-ex", "thread apply all bt 12", "--args"] + cmd
         nvr_cache = os.path.join(CACHE, "loopa", "nvr-bf6")
         if os.path.isdir(nvr_cache):
             shutil.copytree(nvr_cache, os.path.join(vm, "nvr"), dirs_exist_ok=True)
@@ -358,6 +363,8 @@ def main():
     ap.add_argument("--keys", default="", help="comma list of SECONDS:SCANCODE[:down|up] after HX-BOOT")
     ap.add_argument("--shots", default="", help="comma list of SECONDS after HX-BOOT to screenshot")
     ap.add_argument("--voodoo", type=int, default=1)
+    ap.add_argument("--voodoo-threads", type=int, default=int(os.environ.get("VOODOO_THREADS", "1")))
+    ap.add_argument("--voodoo-recompiler", type=int, default=int(os.environ.get("VOODOO_RECOMPILER", "0")))
     ap.add_argument("--g100-mb", type=int, default=8)
     ap.add_argument("--sound", default=None)
     ap.add_argument("--timeout", type=float, default=float(os.environ.get("LOOPA_TIMEOUT", 300)))

@@ -32,3 +32,4 @@ xauth
 xdotool
 dosfstools
 libfl2
+gdb

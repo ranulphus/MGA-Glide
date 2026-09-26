@@ -119,7 +119,12 @@ loopa-selftest: dostests
 	          else echo "  selftest $$1: got $$got, want $$2"; exit 1; fi; }; \
 	check pass PASS; check fail FAIL --fail; check hang HANG --hang; check crash GUEST-EXC --crash
 
-# Conformance programs run in CI (extended as the suite grows).
-.PHONY: conform-ci
-conform-ci: dostests
-	@echo "conform-ci: no conformance programs yet"
+# Conformance suite (tools/conform/run.py). References come from a retail
+# OVL on the emulated Voodoo and are committed; checks run MGA-Glide.
+.PHONY: conform conform-ref conform-ci
+conform: runtime dostests
+	$(DEV) $(PYTHON) tools/conform/run.py check $(TESTS)
+conform-ref: dostests
+	$(DEV) $(PYTHON) tools/conform/run.py ref $(TESTS)
+conform-ci: runtime dostests
+	$(PYTHON) tools/conform/run.py check

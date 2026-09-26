@@ -8,7 +8,7 @@ typedef struct {
     int  report_tmu_mb;        /* reported texture memory per TMU, MB */
     int  report_tmus;          /* reported TMU count */
     int  report_voodoo2;       /* report a Voodoo 2 board */
-    int  force_z32;            /* 32-bit depth buffer always */
+    int  force_z32;            /* -1 auto, 0 16-bit, 1 32-bit depth buffer */
     int  log_level;            /* 0 error .. 4 trace */
     int  exit_after;           /* end the run after N swaps (tests) */
     int  snap[8];              /* screenshot at these swap counts (86Box) */

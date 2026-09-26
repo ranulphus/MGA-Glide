@@ -81,6 +81,7 @@ void mg_config_load(void)
     mg_config.report_tmu_mb = 2;
     mg_config.report_tmus = 1;
     mg_config.log_level = MG_LOG_INFO;
+    mg_config.force_z32 = -1;           /* auto: 32-bit depth when VRAM allows */
     strcpy(mg_config.trace_path, "MGTRACE.BIN");
     mg_config.trace_to = 0x7FFFFFFF;
     if (mg_read_file("MGAGLIDE.CFG", buf, sizeof buf) > 0)

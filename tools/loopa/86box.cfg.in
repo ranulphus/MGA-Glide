@@ -25,8 +25,8 @@ memory = @G100_MB@
 type = voodoo
 framebuffer_memory = 2
 texture_memory = 2
-render_threads = 2
-recompiler = 1
+render_threads = @VOODOO_THREADS@
+recompiler = @VOODOO_RECOMPILER@
 bilinear = 1
 dithersub = 1
 

@@ -23,7 +23,8 @@ enum {
     MGA_S_ALPHA  = 1u << 3,    /* interpolate alpha (TEXTURE_TRAP only on G100) */
     MGA_S_FOG    = 1u << 4,    /* interpolate fog */
     MGA_S_TEX    = 1u << 5,    /* interpolate s, t, q */
-    MGA_S_AFFINE = 1u << 6     /* q constant: texture is affine (NPCEN) */
+    MGA_S_AFFINE = 1u << 6,    /* q constant: texture is affine (NPCEN) */
+    MGA_S_VOODOO_EDGES = 1u << 7   /* Voodoo column rule instead of exact centres */
 };
 
 typedef struct {
@@ -42,5 +43,6 @@ void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, con
 /* Exposed for unit tests: one edge at its first row. */
 typedef struct { int32_t x; int32_t ar_step, ar_err, ar_dec; int neg; } mga_edge;
 void setup_edge(int32_t Xa, int32_t Ya, int32_t Xb, int32_t Yb, int32_t ys, mga_edge *e);
+void setup_edge_voodoo(int32_t Xa, int32_t Ya, int32_t Xb, int32_t Yb, int32_t ys, mga_edge *e);
 
 #endif
