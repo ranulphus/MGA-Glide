@@ -1,6 +1,7 @@
 /* buffer.c - clears, swaps and render-buffer selection. */
 #include "glide/mg.h"
 #include "mga/sys.h"
+#include "tex/texmgr.h"
 
 GR_ENTRY(void, grRenderBuffer, (GrBuffer_t buffer))
 {
@@ -41,6 +42,7 @@ GR_ENTRY(void, grBufferSwap, (int swap_interval))
         mg.back = (mg.front + 1) % 3;
     mg.dirty |= MG_DIRTY_TARGET;
     mg.frame++;
+    tex_frame();
     mg_frame_end();
 }
 

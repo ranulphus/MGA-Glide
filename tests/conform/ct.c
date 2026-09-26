@@ -110,13 +110,18 @@ int main(int argc, char **argv)
         hx_test("load", 0, "%s: %s", path, err);
         hx_done(HX_INIT_FAILED);
     }
-    for (i = 0; ct_tests[i].name; i++) {
-        if (!strcmp(ct_tests[i].name, which)) {
-            ct_name = ct_tests[i].name;
-            hx_log("HX-STAT test=%s what=\"%s\"", ct_name, ct_tests[i].what);
-            ct_tests[i].fn();
-            hx_done(0);
-        }
+    {
+        static const ct_test *const suites[] = { ct_tests, ct_tex_tests, NULL };
+        int si;
+        for (si = 0; suites[si]; si++)
+            for (i = 0; suites[si][i].name; i++) {
+                if (!strcmp(suites[si][i].name, which)) {
+                    ct_name = suites[si][i].name;
+                    hx_log("HX-STAT test=%s what=\"%s\"", ct_name, suites[si][i].what);
+                    suites[si][i].fn();
+                    hx_done(0);
+                }
+            }
     }
     hx_log("unknown test %s", which);
     hx_done(HX_BAD_ARGS);

@@ -208,6 +208,8 @@ typedef struct {
     GuNccTable            ncc_table;
 } GrMipMapInfo;
 
+#define GR_NULL_MIPMAP_HANDLE ((GrMipMapId_t)-1)
+
 /* ---- Constants (abi/constants.tsv) --------------------------------- */
 #define GR_FOG_TABLE_SIZE                        0x40
 #define GR_ZDEPTHVALUE_NEAREST                   0xffff

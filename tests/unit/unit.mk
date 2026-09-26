@@ -5,6 +5,7 @@ UNIT_COMMON := tests/unit/unit.c
 UNIT_test_fmt := src/rt/fmt.c
 UNIT_test_leload := tests/shim/leload.c build/gen/glapi_names.c
 UNIT_test_trap := hal/src/setup/trap.c tests/unit/refrast.c
+UNIT_test_texfmt := src/tex/texfmt.c
 
 tests-host: $(UNIT_TESTS:%=build/host/tests/%) build/ow/GLIDE2X.OVL
 	@set -e; for t in $(UNIT_TESTS:%=build/host/tests/%); do echo "== $$t"; FIXTURES_DIR=$(FIXTURES_DIR) $$t; done; echo "tests-host: all passed"

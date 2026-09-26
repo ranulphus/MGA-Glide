@@ -98,29 +98,28 @@ void sys_dos_free(void *p)
     }
 }
 
-/* BIOS tick counter at 0040:006C (18.2 Hz) combined with the PIT for
- * sub-tick resolution. */
+/* Monotonic time from the BIOS tick counter at 0040:006C (18.2 Hz). The
+ * PIT cannot be used for sub-tick resolution: the BIOS runs channel 0 in
+ * mode 3, which counts through its range twice per tick, so derived time
+ * would run backwards. Timeouts only need tick resolution. */
 uint32_t sys_time_us(void)
 {
     volatile uint32_t *ticks = (volatile uint32_t *)0x46C;
-    uint32_t t0, t1;
-    uint16_t pit;
-    do {
-        t0 = *ticks;
-        outp(0x43, 0x00);
-        pit = (uint16_t)inp(0x40);
-        pit |= (uint16_t)(inp(0x40) << 8);
-        t1 = *ticks;
-    } while (t0 != t1);
-    /* PIT counts down from 65536 at 1.193182 MHz. */
-    return (uint32_t)((uint64_t)t0 * 54925u + ((uint32_t)(65536u - pit) * 838u) / 1000u);
+    return (uint32_t)((uint64_t)*ticks * 54925u);
 }
 
+/* Short delays: each read of port 0x80 takes about a microsecond on ISA
+ * timing; longer delays wait on the tick counter. */
 void sys_delay_us(uint32_t us)
 {
-    uint32_t start = sys_time_us();
-    while ((uint32_t)(sys_time_us() - start) < us)
-        ;
+    if (us >= 55000u) {
+        uint32_t start = sys_time_us();
+        while ((uint32_t)(sys_time_us() - start) < us)
+            ;
+        return;
+    }
+    while (us--)
+        (void)inp(0x80);
 }
 
 /* DPMI 0501h block allocator: simple bump arena with a free list is

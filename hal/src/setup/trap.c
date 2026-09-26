@@ -125,7 +125,9 @@ void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, con
     int64_t area2, cross;
     int mid_right;
     double inv;
-    plane pz, pr, pg, pb, pa, pf;
+    plane pz, pr, pg, pb, pa, pf, ps, pt, pq;
+    double K = 1.0;
+    int k = 0;
     int32_t y_top, y_mid, y_bot, part;
     uint32_t flags = ctx->flags;
 
@@ -167,6 +169,26 @@ void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, con
         make_plane(&pa, v, v[0]->a, v[1]->a, v[2]->a, inv);
     if (flags & MGA_S_FOG)
         make_plane(&pf, v, v[0]->fog, v[1]->fog, v[2]->fog, inv);
+    if (flags & MGA_S_TEX) {
+        /* Prescale K = 2^k keeps the most bits through the engine's
+         * truncation of s/w before the divide by q (TMR6 12.20 < 2048,
+         * TMR8 16.16 < 32768). */
+        double ms = 0, mq = 0;
+        int i;
+        for (i = 0; i < 3; i++) {
+            double as = v[i]->s < 0 ? -v[i]->s : v[i]->s, at = v[i]->t < 0 ? -v[i]->t : v[i]->t;
+            if (as > ms) ms = as;
+            if (at > ms) ms = at;
+            if (v[i]->q > mq) mq = v[i]->q;
+        }
+        k = 15;
+        while (k > -8 && ((ms * (double)(1 << (k + 8)) / 256.0) >= 2047.0 || (mq * (double)(1 << (k + 8)) / 256.0) >= 32767.0))
+            k--;
+        K = (double)(1 << (k + 8)) / 256.0;
+        make_plane(&ps, v, v[0]->s * K, v[1]->s * K, v[2]->s * K, inv);
+        make_plane(&pt, v, v[0]->t * K, v[1]->t * K, v[2]->t * K, inv);
+        make_plane(&pq, v, v[0]->q * K, v[1]->q * K, v[2]->q * K, inv);
+    }
 
     /* Per-triangle increments. */
     fifo_reserve(1);
@@ -207,6 +229,19 @@ void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, con
         fifo_reserve(2);
         MGA_WR32(MGAREG_FOGXINC, (uint32_t)fx(pf.dx, 32768.0) & 0xFFFFFF);
         MGA_WR32(MGAREG_FOGYINC, (uint32_t)fx(pf.dy, 32768.0) & 0xFFFFFF);
+    }
+
+    if (flags & MGA_S_TEX) {
+        int tw = ctx->tex_tw, th = ctx->tex_th;
+        fifo_reserve(8);
+        MGA_WR32(MGAREG_TEXWIDTH, TEXWH(tw, 8 - tw - k, (1u << tw) - 1));
+        MGA_WR32(MGAREG_TEXHEIGHT, TEXWH(th, 8 - th - k, (1u << th) - 1));
+        MGA_WR32(MGAREG_TMR(0), (uint32_t)fx(ps.dx, 1048576.0));
+        MGA_WR32(MGAREG_TMR(1), (uint32_t)fx(ps.dy, 1048576.0));
+        MGA_WR32(MGAREG_TMR(2), (uint32_t)fx(pt.dx, 1048576.0));
+        MGA_WR32(MGAREG_TMR(3), (uint32_t)fx(pt.dy, 1048576.0));
+        MGA_WR32(MGAREG_TMR(4), (uint32_t)fx(pq.dx, 65536.0));
+        MGA_WR32(MGAREG_TMR(5), (uint32_t)fx(pq.dy, 65536.0));
     }
 
     y_top = first_row(v[0]->Y16);
@@ -271,6 +306,12 @@ void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, con
         if (flags & MGA_S_FOG) {
             fifo_reserve(1);
             MGA_WR32(MGAREG_FOGSTART, col_start(eval(&pf, v[0], px, py)));
+        }
+        if (flags & MGA_S_TEX) {
+            fifo_reserve(3);
+            MGA_WR32(MGAREG_TMR(6), (uint32_t)fx(eval(&ps, v[0], px, py), 1048576.0));
+            MGA_WR32(MGAREG_TMR(7), (uint32_t)fx(eval(&pt, v[0], px, py), 1048576.0));
+            MGA_WR32(MGAREG_TMR(8), (uint32_t)fx(eval(&pq, v[0], px, py), 65536.0));
         }
         fifo_reserve(1);
         MGA_WR32(MGAREG_YDSTLEN + MGAREG_EXEC, ((uint32_t)(ys & 0xFFFF) << 16) | (uint32_t)(ye - ys));

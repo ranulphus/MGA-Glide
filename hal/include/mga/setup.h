@@ -31,7 +31,7 @@ typedef struct {
     uint32_t dwgctl;           /* DWGCTL for the trapezoids (opcode, atype, zmode, trans) */
     uint32_t flags;            /* MGA_S_* */
     int      clip_y0, clip_y1; /* rows [y0, y1) that may be drawn */
-    int      tex_k;            /* texture prescale exponent, set by the caller */
+    int      tex_tw, tex_th;   /* texture log2 width/height (hardware) */
 } mga_tri_ctx;
 
 /* Statistics for benchmarks and tests. */

@@ -2,6 +2,7 @@
 #include "glide/mg.h"
 #include "mga/sys.h"
 #include "mga/mmio.h"
+#include "tex/texmgr.h"
 #include <string.h>
 
 mg_ctx mg;
@@ -203,6 +204,8 @@ GR_ENTRY(FxBool, grSstWinOpen, (FxU32 hWnd, GrScreenResolution_t screen_resoluti
         mg_log(MG_LOG_ERROR, "not enough VRAM for %d buffers at %dx%d", mg.nbuffers, w, h);
         return FXFALSE;
     }
+    tex_heap_init(mg.heap_off, mg.heap_end);
+    tex_reset();
     mg.front = 0;
     mg.back = 1;
     mg.render_buffer = GR_BUFFER_BACKBUFFER;
@@ -236,7 +239,7 @@ GR_ENTRY(void, grSstWinClose, (void))
     engine_sync(200000);
     vbe_set_text_mode();
     mg.open = 0;
-    mg_line("MGL-WINCLOSE frames=%u", mg.frame);
+    mg_line("MGL-WINCLOSE frames=%u engine_resets=%u timeouts=%u", mg.frame, engine_resets, engine_timeouts);
 }
 
 GR_ENTRY(FxU32, grSstScreenWidth, (void)) { return (FxU32)(mg.open ? mg.width : 640); }

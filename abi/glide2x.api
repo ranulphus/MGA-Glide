@@ -79,32 +79,32 @@ grSstVidMode | void | FxU32 whichSst, void *vidTimings | 3 | gs | stub
 grSstVRetraceOn | FxBool | void | 3 | gs | partial
 grSstWinClose | void | void | 1 | gs | partial
 grSstWinOpen | FxBool | FxU32 hWnd, GrScreenResolution_t screen_resolution, GrScreenRefresh_t refresh_rate, GrColorFormat_t color_format, GrOriginLocation_t origin_location, int nColBuffers, int nAuxBuffers | 1 | gs | partial
-grTexCalcMemRequired | FxU32 | GrLOD_t lodmin, GrLOD_t lodmax, GrAspectRatio_t aspect, GrTextureFormat_t fmt | 2 | gs | stub
-grTexClampMode | void | GrChipID_t tmu, GrTextureClampMode_t s_clampmode, GrTextureClampMode_t t_clampmode | 2 | gs | stub
-grTexCombine | void | GrChipID_t tmu, GrCombineFunction_t rgb_function, GrCombineFactor_t rgb_factor, GrCombineFunction_t alpha_function, GrCombineFactor_t alpha_factor, FxBool rgb_invert, FxBool alpha_invert | 2 | gs | stub
-grTexCombineFunction | void | GrChipID_t tmu, GrTextureCombineFnc_t fnc | 3 | gs | stub
-grTexDetailControl | void | GrChipID_t tmu, int lod_bias, FxU8 detail_scale, float detail_max | 3 | gs | stub
-grTexDownloadMipMap | void | GrChipID_t tmu, FxU32 startAddress, FxU32 evenOdd, GrTexInfo *info | 2 | gs | stub
-grTexDownloadMipMapLevel | void | GrChipID_t tmu, FxU32 startAddress, GrLOD_t thisLod, GrLOD_t largeLod, GrAspectRatio_t aspectRatio, GrTextureFormat_t format, FxU32 evenOdd, void *data | 2 | gs | stub
-grTexDownloadMipMapLevelPartial | void | GrChipID_t tmu, FxU32 startAddress, GrLOD_t thisLod, GrLOD_t largeLod, GrAspectRatio_t aspectRatio, GrTextureFormat_t format, FxU32 evenOdd, void *data, int start, int end | 2 | gs | stub
-grTexDownloadTable | void | GrChipID_t tmu, GrTexTable_t type, void *data | 2 | gs | stub
-grTexDownloadTablePartial | void | GrChipID_t tmu, GrTexTable_t type, void *data, int start, int end | 2 | gs | stub
-grTexFilterMode | void | GrChipID_t tmu, GrTextureFilterMode_t minfilter_mode, GrTextureFilterMode_t magfilter_mode | 2 | gs | stub
-grTexLodBiasValue | void | GrChipID_t tmu, float bias | 2 | gs | stub
-grTexMaxAddress | FxU32 | GrChipID_t tmu | 2 | gs | stub
-grTexMinAddress | FxU32 | GrChipID_t tmu | 2 | gs | stub
-grTexMipMapMode | void | GrChipID_t tmu, GrMipMapMode_t mode, FxBool lodBlend | 2 | gs | stub
-grTexMultibase | void | GrChipID_t tmu, FxBool enable | 3 | gs | stub
+grTexCalcMemRequired | FxU32 | GrLOD_t lodmin, GrLOD_t lodmax, GrAspectRatio_t aspect, GrTextureFormat_t fmt | 2 | gs | partial
+grTexClampMode | void | GrChipID_t tmu, GrTextureClampMode_t s_clampmode, GrTextureClampMode_t t_clampmode | 2 | gs | partial
+grTexCombine | void | GrChipID_t tmu, GrCombineFunction_t rgb_function, GrCombineFactor_t rgb_factor, GrCombineFunction_t alpha_function, GrCombineFactor_t alpha_factor, FxBool rgb_invert, FxBool alpha_invert | 2 | gs | partial
+grTexCombineFunction | void | GrChipID_t tmu, GrTextureCombineFnc_t fnc | 3 | gs | partial
+grTexDetailControl | void | GrChipID_t tmu, int lod_bias, FxU8 detail_scale, float detail_max | 3 | gs | partial
+grTexDownloadMipMap | void | GrChipID_t tmu, FxU32 startAddress, FxU32 evenOdd, GrTexInfo *info | 2 | gs | partial
+grTexDownloadMipMapLevel | void | GrChipID_t tmu, FxU32 startAddress, GrLOD_t thisLod, GrLOD_t largeLod, GrAspectRatio_t aspectRatio, GrTextureFormat_t format, FxU32 evenOdd, void *data | 2 | gs | partial
+grTexDownloadMipMapLevelPartial | void | GrChipID_t tmu, FxU32 startAddress, GrLOD_t thisLod, GrLOD_t largeLod, GrAspectRatio_t aspectRatio, GrTextureFormat_t format, FxU32 evenOdd, void *data, int start, int end | 2 | gs | partial
+grTexDownloadTable | void | GrChipID_t tmu, GrTexTable_t type, void *data | 2 | gs | partial
+grTexDownloadTablePartial | void | GrChipID_t tmu, GrTexTable_t type, void *data, int start, int end | 2 | gs | partial
+grTexFilterMode | void | GrChipID_t tmu, GrTextureFilterMode_t minfilter_mode, GrTextureFilterMode_t magfilter_mode | 2 | gs | partial
+grTexLodBiasValue | void | GrChipID_t tmu, float bias | 2 | gs | partial
+grTexMaxAddress | FxU32 | GrChipID_t tmu | 2 | gs | partial
+grTexMinAddress | FxU32 | GrChipID_t tmu | 2 | gs | partial
+grTexMipMapMode | void | GrChipID_t tmu, GrMipMapMode_t mode, FxBool lodBlend | 2 | gs | partial
+grTexMultibase | void | GrChipID_t tmu, FxBool enable | 3 | gs | partial
 grTexMultibaseAddress | void | GrChipID_t tmu, GrTexBaseRange_t range, FxU32 startAddress, FxU32 evenOdd, GrTexInfo *info | 3 | gs | stub
-grTexNCCTable | void | GrChipID_t tmu, GrNCCTable_t table | 2 | gs | stub
-grTexSource | void | GrChipID_t tmu, FxU32 startAddress, FxU32 evenOdd, GrTexInfo *info | 2 | gs | stub
-grTexTextureMemRequired | FxU32 | FxU32 evenOdd, GrTexInfo *info | 2 | gs | stub
+grTexNCCTable | void | GrChipID_t tmu, GrNCCTable_t table | 2 | gs | partial
+grTexSource | void | GrChipID_t tmu, FxU32 startAddress, FxU32 evenOdd, GrTexInfo *info | 2 | gs | partial
+grTexTextureMemRequired | FxU32 | FxU32 evenOdd, GrTexInfo *info | 2 | gs | partial
 grTriStats | void | FxU32 *trisProcessed, FxU32 *trisDrawn | 2 | gs | stub
 gu3dfGetInfo | FxBool | const char *filename, Gu3dfInfo *info | 2 | gs | stub
 gu3dfLoad | FxBool | const char *filename, Gu3dfInfo *data | 2 | gs | stub
 guAADrawTriangleWithClip | void | const GrVertex *a, const GrVertex *b, const GrVertex *c | 3 | gs | partial
-guAlphaSource | void | GrAlphaSource_t mode | 2 | gs | stub
-guColorCombineFunction | void | GrColorCombineFnc_t fnc | 2 | gs | stub
+guAlphaSource | void | GrAlphaSource_t mode | 2 | gs | partial
+guColorCombineFunction | void | GrColorCombineFnc_t fnc | 2 | gs | partial
 guDrawPolygonVertexListWithClip | void | int nverts, const GrVertex vlist[] | 2 | gs | stub
 guDrawTriangleWithClip | void | const GrVertex *a, const GrVertex *b, const GrVertex *c | 2 | gs | partial
 guEncodeRLE16 | int | void *dst, void *src, FxU32 width, FxU32 height | 3 | gs | stub
@@ -123,14 +123,14 @@ guMPDrawTriangle | void | const GrVertex *a, const GrVertex *b, const GrVertex *
 guMPInit | void | void | 3 | gs | stub
 guMPTexCombineFunction | void | GrMPTextureCombineFnc_t tc | 3 | gs | stub
 guMPTexSource | void | GrChipID_t virtual_tmu, GrMipMapId_t mmid | 3 | gs | stub
-guTexAllocateMemory | GrMipMapId_t | GrChipID_t tmu, FxU8 odd_even_mask, int width, int height, GrTextureFormat_t fmt, GrMipMapMode_t mm_mode, GrLOD_t smallest_lod, GrLOD_t largest_lod, GrAspectRatio_t aspect, GrTextureClampMode_t s_clamp_mode, GrTextureClampMode_t t_clamp_mode, GrTextureFilterMode_t minfilter_mode, GrTextureFilterMode_t magfilter_mode, float lod_bias, FxBool trilinear | 2 | gs | stub
-guTexChangeAttributes | FxBool | GrMipMapId_t mmid, int width, int height, GrTextureFormat_t fmt, GrMipMapMode_t mm_mode, GrLOD_t smallest_lod, GrLOD_t largest_lod, GrAspectRatio_t aspect, GrTextureClampMode_t s_clamp_mode, GrTextureClampMode_t t_clamp_mode, GrTextureFilterMode_t minFilterMode, GrTextureFilterMode_t magFilterMode | 2 | gs | stub
-guTexCombineFunction | void | GrChipID_t tmu, GrTextureCombineFnc_t fnc | 3 | gs | stub
-guTexCreateColorMipMap | FxU16 * | void | 2 | gs | stub
-guTexDownloadMipMap | void | GrMipMapId_t mmid, const void *src, const GuNccTable *table | 2 | gs | stub
-guTexDownloadMipMapLevel | void | GrMipMapId_t mmid, GrLOD_t lod, const void **src | 2 | gs | stub
-guTexGetCurrentMipMap | GrMipMapId_t | GrChipID_t tmu | 2 | gs | stub
-guTexGetMipMapInfo | GrMipMapInfo * | GrMipMapId_t mmid | 2 | gs | stub
-guTexMemQueryAvail | FxU32 | GrChipID_t tmu | 2 | gs | stub
-guTexMemReset | void | void | 2 | gs | stub
-guTexSource | void | GrMipMapId_t id | 2 | gs | stub
+guTexAllocateMemory | GrMipMapId_t | GrChipID_t tmu, FxU8 odd_even_mask, int width, int height, GrTextureFormat_t fmt, GrMipMapMode_t mm_mode, GrLOD_t smallest_lod, GrLOD_t largest_lod, GrAspectRatio_t aspect, GrTextureClampMode_t s_clamp_mode, GrTextureClampMode_t t_clamp_mode, GrTextureFilterMode_t minfilter_mode, GrTextureFilterMode_t magfilter_mode, float lod_bias, FxBool trilinear | 2 | gs | partial
+guTexChangeAttributes | FxBool | GrMipMapId_t mmid, int width, int height, GrTextureFormat_t fmt, GrMipMapMode_t mm_mode, GrLOD_t smallest_lod, GrLOD_t largest_lod, GrAspectRatio_t aspect, GrTextureClampMode_t s_clamp_mode, GrTextureClampMode_t t_clamp_mode, GrTextureFilterMode_t minFilterMode, GrTextureFilterMode_t magFilterMode | 2 | gs | partial
+guTexCombineFunction | void | GrChipID_t tmu, GrTextureCombineFnc_t fnc | 3 | gs | partial
+guTexCreateColorMipMap | FxU16 * | void | 2 | gs | partial
+guTexDownloadMipMap | void | GrMipMapId_t mmid, const void *src, const GuNccTable *table | 2 | gs | partial
+guTexDownloadMipMapLevel | void | GrMipMapId_t mmid, GrLOD_t lod, const void **src | 2 | gs | partial
+guTexGetCurrentMipMap | GrMipMapId_t | GrChipID_t tmu | 2 | gs | partial
+guTexGetMipMapInfo | GrMipMapInfo * | GrMipMapId_t mmid | 2 | gs | partial
+guTexMemQueryAvail | FxU32 | GrChipID_t tmu | 2 | gs | partial
+guTexMemReset | void | void | 2 | gs | partial
+guTexSource | void | GrMipMapId_t id | 2 | gs | partial

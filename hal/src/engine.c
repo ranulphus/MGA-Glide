@@ -6,6 +6,7 @@
 #include "mga/sys.h"
 
 static mga_target cur;
+uint32_t engine_resets, engine_timeouts;
 const mga_target *engine_target = &cur;
 static uint32_t cur_maccess;
 static int cur_ydstorg_px;
@@ -62,9 +63,15 @@ void engine_init(int pitch_px, int bpp)
 
 int engine_sync(uint32_t timeout_us)
 {
+    if (timeout_us < 120000u)
+        timeout_us = 120000u;          /* at least two BIOS ticks */
     uint32_t start = sys_time_us(), polls = 0;
-    while (MGA_RD32(MGAREG_STATUS) & STATUS_DWGENGSTS) {
+    /* Idle means the bus FIFO is empty (FIFOSTATUS.bempty, bit 9) and the
+     * drawing engine is not busy; commands can still be queued while the
+     * engine reports idle. */
+    while (!(MGA_RD32(MGAREG_FIFOSTATUS) & (1u << 9)) || (MGA_RD32(MGAREG_STATUS) & STATUS_DWGENGSTS)) {
         if ((++polls & 1023) == 0 && (uint32_t)(sys_time_us() - start) > timeout_us) {
+            engine_timeouts++;
             engine_reset();
             return -1;
         }
@@ -78,6 +85,7 @@ int engine_sync(uint32_t timeout_us)
 
 void engine_reset(void)
 {
+    engine_resets++;
     MGA_WR32(MGAREG_RST, 1);
     sys_delay_us(20);
     MGA_WR32(MGAREG_RST, 0);
@@ -171,6 +179,8 @@ uint32_t engine_vcount(void)
 
 int engine_vsync_wait(uint32_t timeout_us)
 {
+    if (timeout_us < 120000u)
+        timeout_us = 120000u;
     uint32_t start = sys_time_us();
     while (engine_in_vblank())
         if ((uint32_t)(sys_time_us() - start) > timeout_us)

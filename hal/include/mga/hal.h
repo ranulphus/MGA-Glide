@@ -83,6 +83,7 @@ int      engine_vsync_wait(uint32_t timeout_us);
 int      engine_in_vblank(void);
 uint32_t engine_vcount(void);
 extern const mga_target *engine_target;
+extern uint32_t engine_resets, engine_timeouts;
 
 /* fifo.c: the single choke point for register writes (PRD §10). */
 void fifo_reserve(int n);

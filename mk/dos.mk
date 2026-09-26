@@ -28,6 +28,7 @@ endef
 $(eval $(call dos_exe,HELLO,build/ow/exe/tests/shim/hello.obj))
 $(eval $(call dos_exe,LESPIKE,build/ow/exe/tests/spike/lespike.obj))
 $(eval $(call dos_exe,PROBE,build/ow/exe/tests/hal/probe.obj))
+$(eval $(call dos_exe,TEXPROBE,build/ow/exe/tests/spike/texprobe.obj))
 CONFORM_OBJS := $(patsubst %.c,build/ow/exe/%.obj,$(wildcard tests/conform/*.c))
 $(eval $(call dos_exe,CONFORM,$(CONFORM_OBJS)))
 

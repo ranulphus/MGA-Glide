@@ -96,6 +96,8 @@ double   mg_oow_from_wcode(unsigned code);
 unsigned mg_wcode_from_oow(double oow);
 uint32_t mg_wdepth_from_code(FxU16 code, int zbits);
 uint32_t mg_depth_clear_value(FxU16 depth);
+/* combine.c */
+void mg_note_approx(void);
 /* frame.c */
 typedef struct { uint32_t tris; } mg_stats_t;
 extern mg_stats_t mg_stats;

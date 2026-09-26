@@ -196,7 +196,7 @@ void mga_host_wr32(uint32_t off, uint32_t v)
 
 uint32_t mga_host_rd32(uint32_t off)
 {
-    if (off == MGAREG_FIFOSTATUS) return 64;
+    if (off == MGAREG_FIFOSTATUS) return 64 | (1u << 9);
     if (off == MGAREG_STATUS) return 0;
     return rr ? rr->reg[(off & 0x3FFF) >> 2] : 0;
 }

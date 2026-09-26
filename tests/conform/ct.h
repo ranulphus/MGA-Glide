@@ -20,5 +20,6 @@ extern const char *ct_name;
 typedef void (*ct_fn)(void);
 typedef struct { const char *name; ct_fn fn; const char *what; } ct_test;
 extern const ct_test ct_tests[];
+extern const ct_test ct_tex_tests[];
 
 #endif

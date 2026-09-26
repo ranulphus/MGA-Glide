@@ -189,3 +189,5 @@ typedef struct {
     FxBool                trilinear;
     GuNccTable            ncc_table;
 } GrMipMapInfo;
+
+#define GR_NULL_MIPMAP_HANDLE ((GrMipMapId_t)-1)
