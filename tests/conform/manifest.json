@@ -82,5 +82,13 @@
     ]
    }
   }
- }
+ },
+ "t19": {},
+ "t20": {
+  "why": "50% blend is G100 stipple: compared box-filtered",
+  "box": true,
+  "tol": 40,
+  "frac": 0.02
+ },
+ "t24": {}
 }

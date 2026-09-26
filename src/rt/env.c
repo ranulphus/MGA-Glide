@@ -69,7 +69,7 @@ int mg_read_file(const char *path, char *buf, int size)
     r.x.ecx = (uint32_t)(size - 1);
     r.x.edx = (uint32_t)buf;
     int386(0x21, &r, &r);
-    got = r.x.cflag ? -1 : (int)r.w.ax;
+    got = r.x.cflag ? -1 : (int)r.x.eax;      /* 32-bit count: files may exceed 64 KB */
     memset(&r, 0, sizeof r);
     r.h.ah = 0x3E;
     r.w.bx = (uint16_t)handle;
@@ -77,6 +77,37 @@ int mg_read_file(const char *path, char *buf, int size)
     if (got >= 0)
         buf[got] = 0;
     return got;
+}
+
+int mg_file_open(const char *path)
+{
+    union REGS r;
+    memset(&r, 0, sizeof r);
+    r.w.ax = 0x3D00;
+    r.x.edx = (uint32_t)path;
+    int386(0x21, &r, &r);
+    return r.x.cflag ? -1 : (int)r.w.ax;
+}
+
+int mg_file_read(int handle, void *buf, int size)
+{
+    union REGS r;
+    memset(&r, 0, sizeof r);
+    r.h.ah = 0x3F;
+    r.w.bx = (uint16_t)handle;
+    r.x.ecx = (uint32_t)size;
+    r.x.edx = (uint32_t)buf;
+    int386(0x21, &r, &r);
+    return r.x.cflag ? -1 : (int)r.x.eax;
+}
+
+void mg_file_close(int handle)
+{
+    union REGS r;
+    memset(&r, 0, sizeof r);
+    r.h.ah = 0x3E;
+    r.w.bx = (uint16_t)handle;
+    int386(0x21, &r, &r);
 }
 
 int mg_write_file(const char *path, const void *data, int size, int append)
@@ -132,6 +163,19 @@ int mg_read_file(const char *path, char *buf, int size)
     buf[n] = 0;
     return n;
 }
+static FILE *host_files[8];
+int mg_file_open(const char *path)
+{
+    int i;
+    for (i = 0; i < 8; i++)
+        if (!host_files[i]) {
+            host_files[i] = fopen(path, "rb");
+            return host_files[i] ? i : -1;
+        }
+    return -1;
+}
+int mg_file_read(int h, void *buf, int size) { return (int)fread(buf, 1, (size_t)size, host_files[h]); }
+void mg_file_close(int h) { fclose(host_files[h]); host_files[h] = NULL; }
 int mg_write_file(const char *path, const void *data, int size, int append)
 {
     FILE *f = fopen(path, append ? "ab" : "wb");

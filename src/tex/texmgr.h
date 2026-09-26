@@ -21,6 +21,8 @@ typedef struct {
     GrAspectRatio_t aspect;
     GrTextureFormat_t fmt;
     FxU32       evenOdd;
+    FxU32       addr;           /* grTexSource start address */
+    int         has_source;
     /* Sampling state. */
     GrTextureFilterMode_t minf, magf;
     GrTextureClampMode_t  clamp_s, clamp_t;
@@ -37,6 +39,18 @@ typedef struct {
 } tex_unit;
 
 extern tex_unit tmu0;
+
+/* TMU0 settings saved in GrState (grGlideGetState / grGlideSetState). */
+typedef struct {
+    FxU32 addr, evenOdd;
+    int   has_source, large, small, aspect, fmt;
+    int   minf, magf, clamp_s, clamp_t, mipmap, lod_blend;
+    float lod_bias;
+    int   rgb_func, alpha_func, rgb_factor, alpha_factor, rgb_invert, alpha_invert, combine_set;
+} tex_saved;
+
+void tex_save(tex_saved *t);
+void tex_restore(const tex_saved *t);
 
 void tex_reset(void);                              /* at grSstWinOpen */
 void tex_heap_init(uint32_t start, uint32_t end);

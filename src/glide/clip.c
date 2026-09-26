@@ -48,3 +48,27 @@ GR_ENTRY(void, guAADrawTriangleWithClip, (const GrVertex *a, const GrVertex *b, 
     mg_stub_hit(MGA_API_guAADrawTriangleWithClip);
     guDrawTriangleWithClip(a, b, c);
 }
+
+GR_ENTRY(void, guDrawPolygonVertexListWithClip, (int nverts, const GrVertex vlist[]))
+{
+    static GrVertex p[72], q[72];
+    int n, i;
+    if (nverts < 3)
+        return;
+    FPU_ENTER();
+    if (nverts > 64) {                   /* beyond the work arrays: unclipped fan */
+        for (i = 2; i < nverts; i++)
+            mg_draw_tri(&vlist[0], &vlist[i - 1], &vlist[i]);
+        FPU_LEAVE();
+        return;
+    }
+    for (i = 0; i < nverts; i++)
+        p[i] = vlist[i];
+    n = clip_axis(q, p, nverts, 0, (float)mg.st.clip_x0, 1);
+    n = clip_axis(p, q, n, 0, (float)mg.st.clip_x1, 0);
+    n = clip_axis(q, p, n, 1, (float)mg.st.clip_y0, 1);
+    n = clip_axis(p, q, n, 1, (float)mg.st.clip_y1, 0);
+    for (i = 2; i < n; i++)
+        mg_draw_tri(&p[0], &p[i - 1], &p[i]);
+    FPU_LEAVE();
+}

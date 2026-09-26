@@ -166,9 +166,9 @@ static int bilinear_on(void)
 
 /* Coordinates here are normalised (1.0 = one texture width) and multiplied
  * by q. Two adjustments keep the engine on well-behaved inputs:
- *  - in wrap mode, shift each axis by whole texture periods so every vertex
- *    has a non-negative coordinate (identical result, no negative-coordinate
- *    handling needed in hardware);
+ *  - in wrap mode, shift each axis by whole texture periods so the smallest
+ *    coordinate lies in [0, 1) (identical result; no negative coordinates,
+ *    and no large ones that would force the prescale down);
  *  - with bilinear filtering, move the sample point by half a texel so the
  *    filter centres on texels as the Voodoo's does. */
 static void tex_adjust(mga_svtx *a, mga_svtx *b, mga_svtx *c, const tex_level_hw *hw)
@@ -191,8 +191,8 @@ static void tex_adjust(mga_svtx *a, mga_svtx *b, mga_svtx *c, const tex_level_hw
             double shift = 0;
             if (bilinear_on())
                 shift -= half;
-            if (wrap && mn < 0)
-                shift += mga_floor(-mn) + 1.0;
+            if (wrap)
+                shift -= mga_floor(mn);     /* minimum into [0, 1): whole periods only */
             *p += (float)(shift * v[i]->q);
         }
     }
@@ -512,6 +512,7 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
     int64_t area;
     if (!mg.open)
         return;
+    mg_stats.tri_processed++;
     if (depth && mg.st.depth_func == GR_CMP_NEVER)
         return;
     /* Culling uses the game's orientation (before any origin flip). */
@@ -589,6 +590,7 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
         draw_textured(a, b, c, &sa, &sb, &sc, &ctx, &plan, &opts);
     }
     mg_stats.tris++;
+    mg_stats.tri_drawn++;
 }
 
 GR_ENTRY(void, grDrawTriangle, (const GrVertex *a, const GrVertex *b, const GrVertex *c))

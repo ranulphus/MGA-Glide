@@ -316,6 +316,8 @@ GR_ENTRY(void, grTexSource, (GrChipID_t tmu, FxU32 startAddress, FxU32 evenOdd, 
     tmu0.aspect = info->aspectRatio;
     tmu0.fmt = info->format;
     tmu0.evenOdd = evenOdd;
+    tmu0.addr = startAddress;
+    tmu0.has_source = 1;
     i = rec_find(startAddress, info->largeLod, info->aspectRatio, info->format, evenOdd);
     if (i < 0) {
         /* A view of a longer chain that starts at one of its levels. */
@@ -467,4 +469,37 @@ int tex_bind_level(GrLOD_t lod, const tex_variant *var, tex_level_hw *hw)
     hw->logical_maxdim = w > h ? w : h;
     last_hwfmt = hw->hwfmt;
     return 0;
+}
+
+void tex_save(tex_saved *t)
+{
+    t->addr = tmu0.addr; t->evenOdd = tmu0.evenOdd; t->has_source = tmu0.has_source;
+    t->large = tmu0.large; t->small = tmu0.small; t->aspect = tmu0.aspect; t->fmt = tmu0.fmt;
+    t->minf = tmu0.minf; t->magf = tmu0.magf; t->clamp_s = tmu0.clamp_s; t->clamp_t = tmu0.clamp_t;
+    t->mipmap = tmu0.mipmap; t->lod_blend = tmu0.lod_blend; t->lod_bias = tmu0.lod_bias;
+    t->rgb_func = tmu0.rgb_func; t->alpha_func = tmu0.alpha_func;
+    t->rgb_factor = tmu0.rgb_factor; t->alpha_factor = tmu0.alpha_factor;
+    t->rgb_invert = tmu0.rgb_invert; t->alpha_invert = tmu0.alpha_invert;
+    t->combine_set = tmu0.combine_set;
+}
+
+void tex_restore(const tex_saved *t)
+{
+    tmu0.minf = (GrTextureFilterMode_t)t->minf; tmu0.magf = (GrTextureFilterMode_t)t->magf;
+    tmu0.clamp_s = (GrTextureClampMode_t)t->clamp_s; tmu0.clamp_t = (GrTextureClampMode_t)t->clamp_t;
+    tmu0.mipmap = (GrMipMapMode_t)t->mipmap; tmu0.lod_blend = t->lod_blend; tmu0.lod_bias = t->lod_bias;
+    tmu0.rgb_func = (GrCombineFunction_t)t->rgb_func; tmu0.alpha_func = (GrCombineFunction_t)t->alpha_func;
+    tmu0.rgb_factor = (GrCombineFactor_t)t->rgb_factor; tmu0.alpha_factor = (GrCombineFactor_t)t->alpha_factor;
+    tmu0.rgb_invert = t->rgb_invert; tmu0.alpha_invert = t->alpha_invert;
+    tmu0.combine_set = t->combine_set;
+    if (t->has_source) {
+        GrTexInfo info;
+        info.largeLod = (GrLOD_t)t->large; info.smallLod = (GrLOD_t)t->small;
+        info.aspectRatio = (GrAspectRatio_t)t->aspect; info.format = (GrTextureFormat_t)t->fmt;
+        info.data = NULL;
+        grTexSource(GR_TMU0, t->addr, t->evenOdd, &info);
+    } else {
+        tmu0.has_source = 0;
+        tmu0.rec = -1;
+    }
 }

@@ -1,5 +1,6 @@
 /* state.c - the Glide state mirror and its translation to MGA registers. */
 #include "glide/mg.h"
+#include "tex/texmgr.h"
 #include "mga/mmio.h"
 #include "mga/regs_mga.h"
 #include <string.h>
@@ -13,8 +14,6 @@ void mg_state_defaults(void)
     s->cc_local = GR_COMBINE_LOCAL_ITERATED; s->cc_other = GR_COMBINE_OTHER_ITERATED;
     s->ac_func = GR_COMBINE_FUNCTION_SCALE_OTHER; s->ac_factor = GR_COMBINE_FACTOR_ONE;
     s->ac_local = GR_COMBINE_LOCAL_ITERATED; s->ac_other = GR_COMBINE_OTHER_ITERATED;
-    s->tc_rgb_func = GR_COMBINE_FUNCTION_LOCAL; s->tc_rgb_factor = GR_COMBINE_FACTOR_NONE;
-    s->tc_alpha_func = GR_COMBINE_FUNCTION_LOCAL; s->tc_alpha_factor = GR_COMBINE_FACTOR_NONE;
     s->constant_color = 0xFFFFFFFFu;
     s->blend_src = GR_BLEND_ONE; s->blend_dst = GR_BLEND_ZERO;
     s->blend_asrc = GR_BLEND_ONE; s->blend_adst = GR_BLEND_ZERO;
@@ -42,6 +41,22 @@ uint32_t mg_color_to_argb(GrColor_t c)
         return (c & 0xFF00FF00u) | ((c >> 16) & 0xFF) | ((c & 0xFF) << 16);
     case GR_COLORFORMAT_RGBA:
         return (c >> 8) | (c << 24);
+    case GR_COLORFORMAT_BGRA:
+        return ((c & 0xFF) << 24) | ((c >> 24) & 0xFF) | ((c >> 8) & 0xFF00) | ((c << 8) & 0xFF0000);
+    default:
+        return c;
+    }
+}
+
+/* Inverse of mg_color_to_argb (each mapping is its own inverse except
+ * RGBA, a rotation). */
+GrColor_t mg_argb_to_color(uint32_t c)
+{
+    switch (mg.color_format) {
+    case GR_COLORFORMAT_ABGR:
+        return (c & 0xFF00FF00u) | ((c >> 16) & 0xFF) | ((c & 0xFF) << 16);
+    case GR_COLORFORMAT_RGBA:
+        return (c << 8) | (c >> 24);
     case GR_COLORFORMAT_BGRA:
         return ((c & 0xFF) << 24) | ((c >> 24) & 0xFF) | ((c >> 8) & 0xFF00) | ((c << 8) & 0xFF0000);
     default:
@@ -165,14 +180,27 @@ GR_ENTRY(void, grHints, (GrHint_t hintType, FxU32 hintMask))
         mg.st.stw_hint = hintMask;
 }
 
+/* GrState is opaque to games: it holds the core state and TMU0's source,
+ * sampling and combine settings. */
+typedef struct {
+    mg_state  st;
+    tex_saved tex;
+} mg_saved_state;
+
+typedef char mg_saved_state_fits[sizeof(mg_saved_state) <= sizeof(GrState) ? 1 : -1];
+
 GR_ENTRY(void, grGlideGetState, (GrState *state))
 {
+    mg_saved_state *sv = (mg_saved_state *)state;
     memset(state, 0, sizeof *state);
-    memcpy(state, &mg.st, sizeof mg.st < sizeof *state ? sizeof mg.st : sizeof *state);
+    sv->st = mg.st;
+    tex_save(&sv->tex);
 }
 
 GR_ENTRY(void, grGlideSetState, (const GrState *state))
 {
-    memcpy(&mg.st, state, sizeof mg.st < sizeof *state ? sizeof mg.st : sizeof *state);
+    const mg_saved_state *sv = (const mg_saved_state *)state;
+    mg.st = sv->st;
+    tex_restore(&sv->tex);
     mg.dirty = ~0u;
 }

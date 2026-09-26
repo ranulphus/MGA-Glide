@@ -8,12 +8,12 @@ SHIM_OBJS := $(SHIM_SRCS:%.c=build/ow/exe/%.obj)
 build/ow/exe/build/gen/%.obj: build/gen/%.c | build/gen/stamp
 	@mkdir -p $(dir $@)
 	$(Q)echo "  WCC     $<"
-	$(Q)$(WCC) $(OW_EXEFLAGS) -ad=$(@:.obj=.d) -fo=$@ $<
+	$(Q)$(WCC) $(OW_EXEFLAGS) -ad=$(@:.obj=.d) -adt=$@ -add=$< -adfs -fo=$@ $<
 
 build/ow/exe/%.obj: %.c | build/gen/stamp
 	@mkdir -p $(dir $@)
 	$(Q)echo "  WCC     $<"
-	$(Q)$(WCC) $(OW_EXEFLAGS) -ad=$(@:.obj=.d) -fo=$@ $<
+	$(Q)$(WCC) $(OW_EXEFLAGS) -ad=$(@:.obj=.d) -adt=$@ -add=$< -adfs -fo=$@ $<
 
 # build/ow/dos/<NAME>.EXE from a list of objects.
 define dos_exe

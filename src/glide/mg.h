@@ -20,10 +20,6 @@ typedef struct {
     GrCombineFunction_t ac_func;  GrCombineFactor_t ac_factor;
     GrCombineLocal_t    ac_local; GrCombineOther_t  ac_other; FxBool ac_invert;
     GrColor_t           constant_color;
-    /* Texture combine (TMU0). */
-    GrCombineFunction_t tc_rgb_func, tc_alpha_func;
-    GrCombineFactor_t   tc_rgb_factor, tc_alpha_factor;
-    FxBool              tc_rgb_invert, tc_alpha_invert;
     /* Blending and alpha test. */
     GrAlphaBlendFnc_t   blend_src, blend_dst, blend_asrc, blend_adst;
     GrCmpFnc_t          alpha_test_func;
@@ -45,6 +41,7 @@ typedef struct {
     GrFog_t             fog_table[GR_FOG_TABLE_SIZE];
     /* Chroma key. */
     GrChromakeyMode_t   chroma_mode;
+    FxBool              alpha_itrgb;    /* grAlphaControlsITRGBLighting */
     GrColor_t           chroma_value;
     /* Hints. */
     FxU32               stw_hint;
@@ -86,6 +83,7 @@ void mg_fatal(const char *msg);
 void mg_state_defaults(void);
 void mg_validate(void);
 uint32_t mg_color_to_argb(GrColor_t c);
+GrColor_t mg_argb_to_color(uint32_t argb);
 uint32_t mg_argb_to_565(uint32_t argb);
 /* buffer.c */
 void mg_target_for(GrBuffer_t b);
@@ -109,7 +107,7 @@ uint32_t mg_depth_clear_value(FxU16 depth);
 void mg_note_approx(void);
 void mg_census(void);
 /* frame.c */
-typedef struct { uint32_t tris; } mg_stats_t;
+typedef struct { uint32_t tris; uint32_t tri_processed, tri_drawn; } mg_stats_t;
 extern mg_stats_t mg_stats;
 void mg_frame_end(void);
 

@@ -10,7 +10,7 @@ grAADrawPolygonVertexList | void | const int nverts, const GrVertex vlist[] | 3 
 grAADrawTriangle | void | const GrVertex *a, const GrVertex *b, const GrVertex *c, FxBool ab_antialias, FxBool bc_antialias, FxBool ca_antialias | 3 | gs | partial
 grAlphaBlendFunction | void | GrAlphaBlendFnc_t rgb_sf, GrAlphaBlendFnc_t rgb_df, GrAlphaBlendFnc_t alpha_sf, GrAlphaBlendFnc_t alpha_df | 2 | gs | partial
 grAlphaCombine | void | GrCombineFunction_t function, GrCombineFactor_t factor, GrCombineLocal_t local, GrCombineOther_t other, FxBool invert | 2 | gs | partial
-grAlphaControlsITRGBLighting | void | FxBool enable | 2 | gs | stub
+grAlphaControlsITRGBLighting | void | FxBool enable | 2 | gs | partial
 grAlphaTestFunction | void | GrCmpFnc_t function | 2 | gs | partial
 grAlphaTestReferenceValue | void | GrAlpha_t value | 2 | gs | partial
 grBufferClear | void | GrColor_t color, GrAlpha_t alpha, FxU16 depth | 1 | gs | partial
@@ -22,14 +22,14 @@ grChromakeyValue | void | GrColor_t value | 3 | gs | partial
 grClipWindow | void | FxU32 minx, FxU32 miny, FxU32 maxx, FxU32 maxy | 1 | gs | partial
 grColorCombine | void | GrCombineFunction_t function, GrCombineFactor_t factor, GrCombineLocal_t local, GrCombineOther_t other, FxBool invert | 2 | gs | partial
 grColorMask | void | FxBool rgb, FxBool a | 2 | gs | partial
-grConstantColorValue4 | void | float a, float r, float g, float b | 2 | gs | stub
+grConstantColorValue4 | void | float a, float r, float g, float b | 2 | gs | partial
 grConstantColorValue | void | GrColor_t value | 2 | gs | partial
 grCullMode | void | GrCullMode_t mode | 2 | gs | partial
 grDepthBiasLevel | void | FxI16 level | 2 | gs | partial
 grDepthBufferFunction | void | GrCmpFnc_t function | 2 | gs | partial
 grDepthBufferMode | void | GrDepthBufferMode_t mode | 2 | gs | partial
 grDepthMask | void | FxBool mask | 2 | gs | partial
-grDisableAllEffects | void | void | 2 | gs | stub
+grDisableAllEffects | void | void | 2 | gs | partial
 grDitherMode | void | GrDitherMode_t mode | 2 | gs | partial
 grDrawLine | void | const GrVertex *v1, const GrVertex *v2 | 2 | gs | partial
 grDrawPlanarPolygon | void | int nverts, const int ilist[], const GrVertex vlist[] | 3 | gs | partial
@@ -59,8 +59,8 @@ grLfbWriteColorFormat | void | GrColorFormat_t colorFormat | 2 | gs | partial
 grLfbWriteColorSwizzle | void | FxBool swizzleBytes, FxBool swapWords | 2 | gs | partial
 grLfbWriteRegion | FxBool | GrBuffer_t dst_buffer, FxU32 dst_x, FxU32 dst_y, GrLfbSrcFmt_t src_format, FxU32 src_width, FxU32 src_height, FxI32 src_stride, void *src_data | 2 | gs | partial
 grRenderBuffer | void | GrBuffer_t buffer | 1 | gs | partial
-grResetTriStats | void |  | 2 | gs | stub
-grSplash | void | float x, float y, float width, float height, FxU32 frame | 2 | gs | stub
+grResetTriStats | void |  | 2 | gs | partial
+grSplash | void | float x, float y, float width, float height, FxU32 frame | 2 | gs | partial
 grSstConfigPipeline | void | GrChipID_t chip, FxU32 reg, FxU32 value | 3 | gs | stub
 grSstControl | FxBool | FxU32 code | 3 | gs | stub
 grSstIdle | void | void | 1 | gs | partial
@@ -99,17 +99,17 @@ grTexMultibaseAddress | void | GrChipID_t tmu, GrTexBaseRange_t range, FxU32 sta
 grTexNCCTable | void | GrChipID_t tmu, GrNCCTable_t table | 2 | gs | partial
 grTexSource | void | GrChipID_t tmu, FxU32 startAddress, FxU32 evenOdd, GrTexInfo *info | 2 | gs | partial
 grTexTextureMemRequired | FxU32 | FxU32 evenOdd, GrTexInfo *info | 2 | gs | partial
-grTriStats | void | FxU32 *trisProcessed, FxU32 *trisDrawn | 2 | gs | stub
-gu3dfGetInfo | FxBool | const char *filename, Gu3dfInfo *info | 2 | gs | stub
-gu3dfLoad | FxBool | const char *filename, Gu3dfInfo *data | 2 | gs | stub
+grTriStats | void | FxU32 *trisProcessed, FxU32 *trisDrawn | 2 | gs | partial
+gu3dfGetInfo | FxBool | const char *filename, Gu3dfInfo *info | 2 | gs | partial
+gu3dfLoad | FxBool | const char *filename, Gu3dfInfo *data | 2 | gs | partial
 guAADrawTriangleWithClip | void | const GrVertex *a, const GrVertex *b, const GrVertex *c | 3 | gs | partial
 guAlphaSource | void | GrAlphaSource_t mode | 2 | gs | partial
 guColorCombineFunction | void | GrColorCombineFnc_t fnc | 2 | gs | partial
-guDrawPolygonVertexListWithClip | void | int nverts, const GrVertex vlist[] | 2 | gs | stub
+guDrawPolygonVertexListWithClip | void | int nverts, const GrVertex vlist[] | 2 | gs | partial
 guDrawTriangleWithClip | void | const GrVertex *a, const GrVertex *b, const GrVertex *c | 2 | gs | partial
 guEncodeRLE16 | int | void *dst, void *src, FxU32 width, FxU32 height | 3 | gs | stub
-guEndianSwapBytes | FxU16 | FxU16 value | 2 | gs | stub
-guEndianSwapWords | FxU32 | FxU32 value | 2 | gs | stub
+guEndianSwapBytes | FxU16 | FxU16 value | 2 | gs | partial
+guEndianSwapWords | FxU32 | FxU32 value | 2 | gs | partial
 guFbReadRegion | FxBool | int src_x, int src_y, int w, int h, void *dst, int strideInBytes | 2 | g | partial
 guFbWriteRegion | FxBool | int dst_x, int dst_y, int w, int h, const void *src, int strideInBytes | 2 | g | partial
 guFogGenerateExp2 | void | GrFog_t fogtable[], float density | 2 | gs | partial

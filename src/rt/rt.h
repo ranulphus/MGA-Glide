@@ -21,6 +21,11 @@ void mg_log(int level, const char *fmt, ...);
 /* Raw protocol line for the harness, e.g. "MGL-INIT ..." (always emitted). */
 void mg_line(const char *fmt, ...);
 
+/* env.c: whole-file and streamed reads (DOS handles; -1 on error) */
+int  mg_file_open(const char *path);
+int  mg_file_read(int handle, void *buf, int size);
+void mg_file_close(int handle);
+
 /* math.c */
 double mg_exp(double x);
 double mg_ln(double v);

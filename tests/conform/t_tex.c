@@ -307,7 +307,243 @@ static void t25(void)
     ct_close();
 }
 
+/* Tinted 64x64 565 texture (tint chooses a colour transform). */
+static void tinted64(int tint)
+{
+    int x, y;
+    uint16_t *d = (uint16_t *)texbuf;
+    for (y = 0; y < 64; y++)
+        for (x = 0; x < 64; x++) {
+            uint32_t c = pattern(x, y, 64, 64);
+            int r = (int)((c >> 16) & 0xFF), g = (int)((c >> 8) & 0xFF), b = (int)(c & 0xFF);
+            r = (r + tint * 37) & 0xFF; g = (g ^ (tint * 53)) & 0xFF; b = (b + tint * 91) & 0xFF;
+            if ((x >> 4) == (tint & 3) && (y >> 4) == ((tint >> 2) & 3))
+                r = g = b = 255;                 /* a position marker per texture */
+            d[y * 64 + x] = (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+        }
+}
+
+static void info64(GrTexInfo *ti)
+{
+    ti->smallLod = GR_LOD_64; ti->largeLod = GR_LOD_64; ti->aspectRatio = GR_ASPECT_1x1;
+    ti->format = GR_TEXFMT_RGB_565; ti->data = texbuf;
+}
+
+#define T19_N 96
+#define T19_SIZE 8192u                    /* 64x64 565 */
+
+static void t19_grid(void)
+{
+    GrTexInfo ti;
+    int i;
+    info64(&ti);
+    for (i = 0; i < T19_N; i++) {
+        float x = 4.0f + (i % 12) * 53, y = 4.0f + (i / 12) * 59;
+        gl.grTexSource(GR_TMU0, (FxU32)i * T19_SIZE, GR_MIPMAPLEVELMASK_BOTH, &ti);
+        tquad(x, y, x + 50, y + 56, 0, 0, 256, 256);
+    }
+}
+
+/* t19: TMU address stress: many textures, re-downloads at the same
+ * addresses, an overlapping download, partial level downloads, palette
+ * changes between draws, a source that starts inside a mip chain. */
+static void t19(void)
+{
+    GrTexInfo ti;
+    int i, x, y;
+    if (ct_open(2, 1) < 0) return;
+    tex_setup_combine(0);
+    info64(&ti);
+    for (i = 0; i < T19_N; i++) {
+        tinted64(i);
+        gl.grTexDownloadMipMap(GR_TMU0, (FxU32)i * T19_SIZE, GR_MIPMAPLEVELMASK_BOTH, &ti);
+    }
+    gl.grBufferClear(0x00101010, 0, 0);
+    t19_grid();
+    ct_capture(GR_BUFFER_BACKBUFFER);
+
+    /* Frame 1: every third texture replaced in place, then drawn again. */
+    for (i = 0; i < T19_N; i += 3) {
+        tinted64(i + 200);
+        gl.grTexDownloadMipMap(GR_TMU0, (FxU32)i * T19_SIZE, GR_MIPMAPLEVELMASK_BOTH, &ti);
+    }
+    /* Rows 16..31 of texture 7 replaced by a partial download. */
+    tinted64(99);
+    gl.grTexDownloadMipMapLevelPartial(GR_TMU0, 7 * T19_SIZE, GR_LOD_64, GR_LOD_64, GR_ASPECT_1x1,
+                                       GR_TEXFMT_RGB_565, GR_MIPMAPLEVELMASK_BOTH,
+                                       (uint16_t *)texbuf + 16 * 64, 16, 31);
+    gl.grBufferClear(0x00101010, 0, 0);
+    t19_grid();
+    ct_capture(GR_BUFFER_BACKBUFFER);
+
+    /* Frame 2: a 128x128 565 texture overlapping textures 0..3; texture 5
+     * (untouched) still drawable; a palette change between two draws of
+     * one P8 texture; a source starting at the 32x32 level of a chain. */
+    gl.grBufferClear(0x00101010, 0, 0);
+    encode(GR_TEXFMT_RGB_565, texbuf, 128, 128);
+    ti.smallLod = GR_LOD_128; ti.largeLod = GR_LOD_128; ti.aspectRatio = GR_ASPECT_1x1;
+    ti.format = GR_TEXFMT_RGB_565; ti.data = texbuf;
+    gl.grTexDownloadMipMap(GR_TMU0, 0, GR_MIPMAPLEVELMASK_BOTH, &ti);
+    gl.grTexSource(GR_TMU0, 0, GR_MIPMAPLEVELMASK_BOTH, &ti);
+    tquad(10, 10, 210, 210, 0, 0, 256, 256);
+    info64(&ti);
+    gl.grTexSource(GR_TMU0, 5 * T19_SIZE, GR_MIPMAPLEVELMASK_BOTH, &ti);
+    tquad(220, 10, 420, 210, 0, 0, 256, 256);
+
+    make_tables();
+    encode(GR_TEXFMT_P_8, texbuf, 64, 64);
+    ti.format = GR_TEXFMT_P_8;
+    gl.grTexDownloadMipMap(GR_TMU0, 1024u * 1024u, GR_MIPMAPLEVELMASK_BOTH, &ti);
+    gl.grTexSource(GR_TMU0, 1024u * 1024u, GR_MIPMAPLEVELMASK_BOTH, &ti);
+    gl.grTexDownloadTable(GR_TMU0, GR_TEXTABLE_PALETTE, &pal);
+    tquad(430, 10, 630, 105, 0, 0, 256, 128);
+    {
+        /* Not a per-channel permutation of 0..255: 86Box's Voodoo keys its
+         * texture cache on the XOR of the palette entries, which is 0 for
+         * any such palette, so two of them look identical to it. */
+        static GuTexPalette pal2;
+        for (i = 0; i < 256; i++)
+            pal2.data[i] = ((uint32_t)(255 - i) << 16) | ((uint32_t)((i * 5) & 0xFF) << 8) | (uint32_t)(i < 255 ? i : 0);   /* XOR of blues = 255 */
+        gl.grTexDownloadTable(GR_TMU0, GR_TEXTABLE_PALETTE, &pal2);
+    }
+    tquad(430, 115, 630, 210, 0, 128, 256, 256);
+
+    /* Mip chain 128..8 at 1.5 MB; source its 32x32 level onwards. */
+    {
+        uint16_t *d = (uint16_t *)texbuf;
+        int w, off = 0, lod;
+        for (lod = GR_LOD_128, w = 128; lod <= GR_LOD_8; lod++, w >>= 1) {
+            for (y = 0; y < w; y++)
+                for (x = 0; x < w; x++)
+                    d[off + y * w + x] = (uint16_t)((lod * 5 & 31) << 11 | ((x * 63 / w) << 5) | ((y * 31) / w));
+            off += w * w;
+        }
+        ti.smallLod = GR_LOD_8; ti.largeLod = GR_LOD_128; ti.format = GR_TEXFMT_RGB_565; ti.data = texbuf;
+        gl.grTexDownloadMipMap(GR_TMU0, 1536u * 1024u, GR_MIPMAPLEVELMASK_BOTH, &ti);
+        ti.largeLod = GR_LOD_32;
+        gl.grTexSource(GR_TMU0, 1536u * 1024u + (128 * 128 + 64 * 64) * 2, GR_MIPMAPLEVELMASK_BOTH, &ti);
+        tquad(10, 230, 210, 430, 0, 0, 256, 256);
+    }
+    ct_capture(GR_BUFFER_BACKBUFFER);
+    ct_close();
+}
+
+/* Perspective quad: vertex oow and TMU oow may differ (STW hint). */
+static void pquad(float x0, float y0, float x1, float y1, float wl, float wr, int tmu_w)
+{
+    GrVertex v[4];
+    int i;
+    for (i = 0; i < 4; i++) {
+        float w = (i == 0 || i == 3) ? wl : wr, s = (i == 1 || i == 2) ? 256.0f : 0.0f, t = (i >= 2) ? 256.0f : 0.0f;
+        ct_vtx(&v[i], (i == 1 || i == 2) ? x1 : x0, (i >= 2) ? y1 : y0, 255, 255, 255, 255);
+        v[i].oow = tmu_w ? 1.0f : 1.0f / w;
+        v[i].tmuvtx[0].oow = 1.0f / w;
+        v[i].tmuvtx[0].sow = s / w;
+        v[i].tmuvtx[0].tow = t / w;
+    }
+    gl.grDrawTriangle(&v[0], &v[1], &v[2]);
+    gl.grDrawTriangle(&v[0], &v[2], &v[3]);
+}
+
+/* t20: grGlideGetState / grGlideSetState round trips, and the STW hint. */
+static void t20(void)
+{
+    static GrState sa, sb;
+    GrTexInfo t1, t2;
+    FxU32 a1, a2;
+    GrVertex v[3];
+    if (ct_open(2, 1) < 0) return;
+    next_addr = 0;
+    download(&t1, GR_TEXFMT_RGB_565, GR_LOD_64, GR_ASPECT_1x1, &a1);
+    download(&t2, GR_TEXFMT_ARGB_4444, GR_LOD_32, GR_ASPECT_2x1, &a2);
+    gl.grBufferClear(0x00203040, 0, 0);
+    /* State A: modulated bilinear clamped texture, translucent. */
+    gl.grTexSource(GR_TMU0, a1, GR_MIPMAPLEVELMASK_BOTH, &t1);
+    gl.grTexFilterMode(GR_TMU0, GR_TEXTUREFILTER_BILINEAR, GR_TEXTUREFILTER_BILINEAR);
+    gl.grTexClampMode(GR_TMU0, GR_TEXTURECLAMP_CLAMP, GR_TEXTURECLAMP_CLAMP);
+    tex_setup_combine(1);
+    gl.grAlphaCombine(GR_COMBINE_FUNCTION_LOCAL, GR_COMBINE_FACTOR_NONE, GR_COMBINE_LOCAL_CONSTANT,
+                      GR_COMBINE_OTHER_NONE, FXFALSE);
+    gl.grConstantColorValue(0x80FFFFFFu);
+    gl.grAlphaBlendFunction(GR_BLEND_SRC_ALPHA, GR_BLEND_ONE_MINUS_SRC_ALPHA, GR_BLEND_ONE, GR_BLEND_ZERO);
+    tquad(10, 10, 210, 150, -64, -64, 320, 320);
+    gl.grGlideGetState(&sa);
+    /* State B: something else entirely. */
+    gl.grTexSource(GR_TMU0, a2, GR_MIPMAPLEVELMASK_BOTH, &t2);
+    gl.grTexFilterMode(GR_TMU0, GR_TEXTUREFILTER_POINT_SAMPLED, GR_TEXTUREFILTER_POINT_SAMPLED);
+    gl.grTexClampMode(GR_TMU0, GR_TEXTURECLAMP_WRAP, GR_TEXTURECLAMP_WRAP);
+    tex_setup_combine(0);
+    gl.grAlphaBlendFunction(GR_BLEND_ONE, GR_BLEND_ZERO, GR_BLEND_ONE, GR_BLEND_ZERO);
+    gl.grChromakeyValue(0);
+    gl.grChromakeyMode(GR_CHROMAKEY_ENABLE);
+    gl.grCullMode(GR_CULL_NEGATIVE);
+    tquad(220, 10, 420, 150, -64, -64, 320, 320);
+    /* Back to A. */
+    gl.grGlideSetState(&sa);
+    tquad(430, 10, 630, 150, -64, -64, 320, 320);
+    gl.grGlideGetState(&sb);
+    hx_test("state-roundtrip", memcmp(&sa, &sb, sizeof sa) == 0, "GetState after SetState differs");
+    /* Culling restored too: this clockwise/counter-clockwise pair draws
+     * both halves only if culling is off again. */
+    ct_vtx(&v[0], 10, 170, 255, 0, 0, 255); ct_vtx(&v[1], 110, 170, 0, 255, 0, 255);
+    ct_vtx(&v[2], 10, 250, 0, 0, 255, 255);
+    gl.grColorCombine(GR_COMBINE_FUNCTION_LOCAL, GR_COMBINE_FACTOR_NONE, GR_COMBINE_LOCAL_ITERATED,
+                      GR_COMBINE_OTHER_NONE, FXFALSE);
+    gl.grAlphaBlendFunction(GR_BLEND_ONE, GR_BLEND_ZERO, GR_BLEND_ONE, GR_BLEND_ZERO);
+    gl.grDrawTriangle(&v[0], &v[1], &v[2]);
+    gl.grDrawTriangle(&v[0], &v[2], &v[1]);
+    /* STW hint: TMU oow differs from vertex oow. */
+    gl.grTexSource(GR_TMU0, a1, GR_MIPMAPLEVELMASK_BOTH, &t1);
+    tex_setup_combine(0);
+    gl.grTexClampMode(GR_TMU0, GR_TEXTURECLAMP_WRAP, GR_TEXTURECLAMP_WRAP);
+    gl.grTexFilterMode(GR_TMU0, GR_TEXTUREFILTER_POINT_SAMPLED, GR_TEXTUREFILTER_POINT_SAMPLED);
+    pquad(10, 270, 310, 470, 1.0f, 8.0f, 0);
+    gl.grHints(GR_HINT_STWHINT, GR_STWHINT_W_DIFF_TMU0);
+    pquad(330, 270, 630, 470, 1.0f, 8.0f, 1);
+    gl.grHints(GR_HINT_STWHINT, 0);
+    ct_capture(GR_BUFFER_BACKBUFFER);
+    ct_close();
+}
+
+/* t24: texture-coordinate magnitude sweep: large s,t offsets (wrapped)
+ * and a range of q, exercising the per-triangle prescale. */
+static void t24(void)
+{
+    GrTexInfo ti;
+    FxU32 addr;
+    int i, j;
+    if (ct_open(2, 1) < 0) return;
+    next_addr = 0;
+    download(&ti, GR_TEXFMT_RGB_565, GR_LOD_64, GR_ASPECT_1x1, &addr);
+    gl.grTexSource(GR_TMU0, addr, GR_MIPMAPLEVELMASK_BOTH, &ti);
+    gl.grTexClampMode(GR_TMU0, GR_TEXTURECLAMP_WRAP, GR_TEXTURECLAMP_WRAP);
+    gl.grTexFilterMode(GR_TMU0, GR_TEXTUREFILTER_POINT_SAMPLED, GR_TEXTUREFILTER_POINT_SAMPLED);
+    tex_setup_combine(0);
+    gl.grBufferClear(0x00101010, 0, 0);
+    for (j = 0; j < 4; j++) {                 /* q scale 1, 1/16, 1/256, 1/4096 */
+        float q = 1.0f / (float)(1 << (4 * j));
+        for (i = 0; i < 8; i++) {             /* s,t offset 0, 256*2^(2i-2)... */
+            GrVertex v[4];
+            float off = i ? 256.0f * (float)(1 << (2 * i - 1)) : 0.0f, x = 5.0f + i * 79, y = 5.0f + j * 118;
+            int k;
+            for (k = 0; k < 4; k++) {
+                float s = off + ((k == 1 || k == 2) ? 512.0f : 0.0f), t = off + ((k >= 2) ? 512.0f : 0.0f);
+                ct_vtx(&v[k], (k == 1 || k == 2) ? x + 75 : x, (k >= 2) ? y + 112 : y, 255, 255, 255, 255);
+                v[k].oow = q; v[k].tmuvtx[0].oow = q;
+                v[k].tmuvtx[0].sow = s * q; v[k].tmuvtx[0].tow = t * q;
+            }
+            gl.grDrawTriangle(&v[0], &v[1], &v[2]);
+            gl.grDrawTriangle(&v[0], &v[2], &v[3]);
+        }
+    }
+    ct_capture(GR_BUFFER_BACKBUFFER);
+    ct_close();
+}
+
 const ct_test ct_tex_tests[] = {
+    { "t19", t19, "TMU address stress" },
+    { "t20", t20, "Get/SetState, hints" },
+    { "t24", t24, "texture coordinate magnitude sweep" },
     { "t25", t25, "texture state defaults" },
     { "t10", t10, "texture formats, aspects, small LODs" },
     { "t11", t11, "filtering, clamping, perspective" },

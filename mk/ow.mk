@@ -22,9 +22,9 @@ OW_DLLFLAGS := -bd -s -zl
 build/ow/%.obj: %.c | build/gen/stamp
 	@mkdir -p $(dir $@)
 	$(Q)echo "  WCC     $<"
-	$(Q)$(WCC) $(OW_CFLAGS) $(if $(filter src/% hal/%,$<),$(OW_DLLFLAGS)) -ad=$(@:.obj=.d) -fo=$@ $<
+	$(Q)$(WCC) $(OW_CFLAGS) $(if $(filter src/% hal/%,$<),$(OW_DLLFLAGS)) -ad=$(@:.obj=.d) -adt=$@ -add=$< -adfs -fo=$@ $<
 
 build/ow/gen/%.obj: build/gen/%.c | build/gen/stamp
 	@mkdir -p $(dir $@)
 	$(Q)echo "  WCC     $<"
-	$(Q)$(WCC) $(OW_CFLAGS) $(OW_DLLFLAGS) -ad=$(@:.obj=.d) -fo=$@ $<
+	$(Q)$(WCC) $(OW_CFLAGS) $(OW_DLLFLAGS) -ad=$(@:.obj=.d) -adt=$@ -add=$< -adfs -fo=$@ $<

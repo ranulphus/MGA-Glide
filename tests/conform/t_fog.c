@@ -111,8 +111,8 @@ static void t17(void)
     gl.grFogMode(GR_FOG_WITH_ITERATED_ALPHA);
     combine(0); quad(20, 20, 620, 110, 0, 255, 0, 0, 1, 1, 1);
     combine(1); quad(20, 130, 620, 220, 0, 255, 0, 0, 1, 1, 4);
-    /* Z is only iterated with depth buffering on (retail sets up the Z
-     * gradients only then), so enable it with an always-pass compare. */
+    /* Iterated-Z fog, with a depth buffer (always-pass compare) so Z is
+     * certainly iterated; Voodoo Graphics draws it unfogged. */
     gl.grDepthBufferMode(GR_DEPTHBUFFER_ZBUFFER);
     gl.grDepthBufferFunction(GR_CMP_ALWAYS);
     /* A half-strength table shows whether Z fog falls back to table fog. */
