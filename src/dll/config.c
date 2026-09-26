@@ -93,9 +93,9 @@ void mg_config_load(void)
     mg_config.report_tmus = 1;
     mg_config.log_level = MG_LOG_INFO;
     mg_config.force_z32 = -1;           /* auto: 32-bit depth when VRAM allows */
-    mg_config.gamma_enable = 1;
+    mg_config.gamma_enable = 1;         /* 0: keep a linear ramp whatever the game asks */
     mg_config.hooks = 1;
-    mg_config.bpp = 16;         /* 0: keep a linear ramp whatever the game asks */
+    mg_config.bpp = 16;
     strcpy(mg_config.trace_path, "MGTRACE.BIN");
     strcpy(mg_config.retail_path, "GLIDE2X.3DF");
     mg_config.trace_to = 0x7FFFFFFF;

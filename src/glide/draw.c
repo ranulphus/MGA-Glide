@@ -719,8 +719,11 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
             return;
         }
     }
-    if (plan.approx || ap.approx)
+    if (plan.approx || ap.approx) {
         mg_note_approx();
+        if (mg_config.combine_strict)
+            return;             /* strict=1: approximated states are not drawn, to find them */
+    }
     if (mg_config.census)
         mg_census();
     if (ap.skip || (ap.color_off && !depth))
