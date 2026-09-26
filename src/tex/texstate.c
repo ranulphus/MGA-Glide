@@ -122,12 +122,15 @@ GR_ENTRY(void, guColorCombineFunction, (GrColorCombineFnc_t fnc))
     case GR_COLORCOMBINE_TEXTURE_SUB_ITRGB: CC(SCALE_OTHER_MINUS_LOCAL, ONE, ITERATED, TEXTURE, FXFALSE); break;
     case GR_COLORCOMBINE_CCRGB_BLEND_ITRGB_ON_TEXALPHA:
         CC(SCALE_OTHER_MINUS_LOCAL_ADD_LOCAL, TEXTURE_ALPHA, ITERATED, CONSTANT, FXFALSE); break;
-    case GR_COLORCOMBINE_DIFF_SPEC_A:
-    case GR_COLORCOMBINE_DIFF_SPEC_B:
-        CC(SCALE_OTHER_ADD_LOCAL, LOCAL, ITERATED, TEXTURE, FXFALSE); break;
+    /* Measured from the retail runtime (t13): A = texel x alpha + iterated,
+     * B = texel x iterated + alpha. */
+    case GR_COLORCOMBINE_DIFF_SPEC_A: CC(SCALE_OTHER_ADD_LOCAL, LOCAL_ALPHA, ITERATED, TEXTURE, FXFALSE); break;
+    case GR_COLORCOMBINE_DIFF_SPEC_B: CC(SCALE_OTHER_ADD_LOCAL_ALPHA, LOCAL, ITERATED, TEXTURE, FXFALSE); break;
     case GR_COLORCOMBINE_ONE: CC(ZERO, NONE, ITERATED, ITERATED, FXTRUE); break;
     default: break;
     }
+    /* DELTA0: the iterated colour is flat, taken from grConstantColorValue4. */
+    mg.st.delta0 = fnc == GR_COLORCOMBINE_ITRGB_DELTA0 || fnc == GR_COLORCOMBINE_TEXTURE_TIMES_ITRGB_DELTA0;
 #undef CC
 }
 

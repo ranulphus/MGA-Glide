@@ -7,10 +7,12 @@ static uint32_t chan(float v)
     return v <= 0.0f ? 0u : (v >= 255.0f ? 255u : (uint32_t)(v + 0.5f));
 }
 
+/* The colour the DELTA0 combine presets use as a flat "iterated" colour
+ * (black until set, as the retail runtime shows in t13). */
 GR_ENTRY(void, grConstantColorValue4, (float a, float r, float g, float b))
 {
     FPU_ENTER();
-    mg.st.constant_color = mg_argb_to_color((chan(a) << 24) | (chan(r) << 16) | (chan(g) << 8) | chan(b));
+    mg.st.delta0_argb = (chan(a) << 24) | (chan(r) << 16) | (chan(g) << 8) | chan(b);
     FPU_LEAVE();
 }
 

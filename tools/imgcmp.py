@@ -8,6 +8,9 @@ Both images are quantised to RGB565 first. Options:
   box       compare 4x4 box-filtered images (stipple translucency on G100)
   ignore    rectangles [x0, y0, x1, y1) excluded from the comparison: known
             differences of the reference card, documented in the manifest
+  cells     a grid {x0, y0, w, h, dx, dy, cols, n, approx: [...]}: each cell
+            is judged on its own; cells listed in approx are reported but do
+            not gate (G100 approximations, i.e. the combine-coverage table)
 Writes an optional diff image (red where beyond tol, grey reference).
 """
 import os
@@ -59,7 +62,7 @@ def edge_mask(w, h, rgb):
     return m
 
 
-def compare(ref_path, got_path, tol=24, frac=0.005, edge=True, box=False, diff_path=None, ignore=()):
+def compare(ref_path, got_path, tol=24, frac=0.005, edge=True, box=False, diff_path=None, ignore=(), cells=None):
     rw, rh, ref = png.read_png(ref_path)
     gw, gh, got = png.read_png(got_path)
     if (rw, rh) != (gw, gh):
@@ -105,8 +108,37 @@ def compare(ref_path, got_path, tol=24, frac=0.005, edge=True, box=False, diff_p
     if diff_path:
         png.write_png(diff_path, rw, rh, bytes(diff))
     f = bad / max(counted, 1)
-    return dict(ok=f <= frac, bad=bad, frac=round(f, 6), worst=worst,
-                exact=round(exact / max(counted, 1), 4), counted=counted)
+    res = dict(ok=f <= frac, bad=bad, frac=round(f, 6), worst=worst,
+               exact=round(exact / max(counted, 1), 4), counted=counted)
+    if cells:
+        res.update(cell_report(rw, ref, got, tol, frac, mask, skip, cells))
+    return res
+
+
+def cell_report(w, ref, got, tol, frac, mask, skip, c):
+    out, ok, unexpected = {}, True, []
+    approx = set(c.get("approx", []))
+    for i in range(c["n"]):
+        x0 = c["x0"] + (i % c["cols"]) * c["dx"]
+        y0 = c["y0"] + (i // c["cols"]) * c["dy"]
+        bad = n = 0
+        for y in range(y0, y0 + c["h"]):
+            for x in range(x0, x0 + c["w"]):
+                p = y * w + x
+                if (mask is not None and mask[p]) or (skip is not None and skip[p]):
+                    continue
+                j = p * 3
+                n += 1
+                if max(abs(ref[j] - got[j]), abs(ref[j + 1] - got[j + 1]), abs(ref[j + 2] - got[j + 2])) > tol:
+                    bad += 1
+        cf = bad / max(n, 1)
+        good = cf <= frac
+        out[str(i)] = dict(frac=round(cf, 4), ok=good, approx=i in approx)
+        if not good and i not in approx:
+            ok = False
+        if good and i in approx:
+            unexpected.append(i)
+    return dict(ok=ok, cells=out, approx_but_passing=unexpected)
 
 
 if __name__ == "__main__":

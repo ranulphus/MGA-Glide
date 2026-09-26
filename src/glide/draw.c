@@ -38,7 +38,7 @@ uint32_t mg_depth_clear_value(FxU16 depth)
 
 static uint32_t argb_const(void) { return mg_color_to_argb(mg.st.constant_color); }
 
-static void vtx(mga_svtx *o, const GrVertex *v, int wmode, int csrc)
+static void vtx(mga_svtx *o, const GrVertex *v, int wmode, int csrc, int asrc)
 {
     uint32_t c;
     o->X16 = snap16(v->x);
@@ -70,13 +70,22 @@ static void vtx(mga_svtx *o, const GrVertex *v, int wmode, int csrc)
     case CS_ONE:
         o->r = o->g = o->b = 255;
         break;
+    case CS_SOFT:
+    case CS_SOFT_FACTOR: {
+        float rgb[3];
+        mg_combine_vertex(v, csrc, rgb);
+        o->r = rgb[0]; o->g = rgb[1]; o->b = rgb[2];
+        break; }
     default:
         o->r = v->r < 0 ? 0 : (v->r > 255 ? 255 : v->r);
         o->g = v->g < 0 ? 0 : (v->g > 255 ? 255 : v->g);
         o->b = v->b < 0 ? 0 : (v->b > 255 ? 255 : v->b);
         break;
     }
-    o->a = v->a < 0 ? 0 : (v->a > 255 ? 255 : v->a);
+    if (asrc == AS_SOFT || asrc == AS_MODULATED_SOFT)
+        o->a = mg_combine_vertex_alpha(v, asrc);
+    else
+        o->a = v->a < 0 ? 0 : (v->a > 255 ? 255 : v->a);
     o->fog = mg.fog_on ? (float)(255.0 - mg_fog_vertex(v)) : 255.0f;
     o->q = (mg.st.stw_hint & GR_STWHINT_W_DIFF_TMU0) ? v->tmuvtx[0].oow : v->oow;
     o->s = v->tmuvtx[0].sow;          /* scaled to the bound level below */
@@ -415,7 +424,7 @@ static int alpha_setup(mg_plan *plan, const mg_aplan *ap, draw_opts *o, mga_svtx
     const mg_state *s = &mg.st;
     mga_svtx *v[3];
     int i, tex_alpha = ap->alpha_src == AS_TEXTURE || ap->alpha_src == AS_MODULATED_ITER ||
-                       ap->alpha_src == AS_MODULATED_CONST;
+                       ap->alpha_src == AS_MODULATED_CONST || ap->alpha_src == AS_MODULATED_SOFT;
     int const_a = (int)(mg_color_to_argb(s->constant_color) >> 24);
     int binary = tmu0.fmt == GR_TEXFMT_ARGB_1555;
     v[0] = sa; v[1] = sb; v[2] = sc;
@@ -450,8 +459,16 @@ static int alpha_setup(mg_plan *plan, const mg_aplan *ap, draw_opts *o, mga_svtx
         if (plan->textured && !plan->tex_white) {
             o->var.kind |= TV_CHROMA;
             o->var.chroma = key;
-        } else if (plan->color_src == CS_CONSTANT && (mg_color_to_argb(s->constant_color) & 0xFFFFFF) == key) {
-            return 0;
+        } else if (!plan->textured) {
+            /* Untextured: keyed out only when the whole triangle is the key colour. */
+            int hit = 0;
+            for (i = 0; i < 3; i++) {
+                uint32_t c = ((uint32_t)(v[i]->r + 0.5f) << 16) | ((uint32_t)(v[i]->g + 0.5f) << 8) |
+                             (uint32_t)(v[i]->b + 0.5f);
+                hit += c == key;
+            }
+            if (hit == 3)
+                return 0;
         }
     }
     /* Blending. */
@@ -494,10 +511,74 @@ static int alpha_setup(mg_plan *plan, const mg_aplan *ap, draw_opts *o, mga_svtx
         }
         o->alphactrl = ALPHACTRL_G100_FIXED | ALPHACTRL_ASTIPPLE |
                        ALPHACTRL_ALPHASEL(ap->alpha_src == AS_TEXTURE && ap->fixed_alpha < 0 ? ALPHASEL_TEXTURE :
-                                          (ap->alpha_src == AS_MODULATED_ITER || ap->alpha_src == AS_MODULATED_CONST) &&
+                                          (ap->alpha_src == AS_MODULATED_ITER || ap->alpha_src == AS_MODULATED_CONST ||
+                                           ap->alpha_src == AS_MODULATED_SOFT) &&
                                           ap->fixed_alpha < 0 ? ALPHASEL_MODULATED : ALPHASEL_DIFFUSE);
     }
     return 1;
+}
+
+/* ---- Subdivision -----------------------------------------------------------
+ * A combine that multiplies two iterated terms is not linear across the
+ * triangle, so per-vertex evaluation drifts in the interior. Large such
+ * triangles are split into SUBDIV x SUBDIV pieces (error falls with the
+ * square of the size). Attributes are interpolated linearly in screen
+ * space, as the hardware iterates them; points on an original edge are
+ * computed from the edge's endpoints in a canonical order, so a
+ * neighbour sharing the edge gets bit-identical vertices. */
+#define SUBDIV 4
+#define SUBDIV_MIN_AREA 256.0f          /* pixels^2 */
+
+static int subdividing;
+
+static void vlerp(GrVertex *o, const GrVertex *p, const GrVertex *q, float t)
+{
+    const float *fp = (const float *)p, *fq = (const float *)q;
+    float *fo = (float *)o;
+    unsigned i;
+    for (i = 0; i < sizeof(GrVertex) / sizeof(float); i++)
+        fo[i] = fp[i] + (fq[i] - fp[i]) * t;
+}
+
+static void edge_point(GrVertex *o, const GrVertex *p, const GrVertex *q, int k, int n)
+{
+    if (p->x < q->x || (p->x == q->x && p->y < q->y))
+        vlerp(o, p, q, (float)k / n);
+    else
+        vlerp(o, q, p, (float)(n - k) / n);
+}
+
+static void subdivide(const GrVertex *a, const GrVertex *b, const GrVertex *c)
+{
+    static GrVertex P[(SUBDIV + 1) * (SUBDIV + 1)];
+    int i, j;
+#define PT(i, j) P[(j) * (SUBDIV + 1) + (i)]
+    for (j = 0; j <= SUBDIV; j++)
+        for (i = 0; i + j <= SUBDIV; i++) {
+            GrVertex *o = &PT(i, j);
+            if (j == 0) edge_point(o, a, b, i, SUBDIV);
+            else if (i == 0) edge_point(o, a, c, j, SUBDIV);
+            else if (i + j == SUBDIV) edge_point(o, b, c, j, SUBDIV);
+            else {
+                GrVertex ab, ac;
+                vlerp(&ab, a, b, (float)i / SUBDIV);
+                vlerp(&ac, a, c, (float)j / SUBDIV);
+                {   /* o = a + (b - a) i/n + (c - a) j/n */
+                    const float *fa = (const float *)a, *fb = (const float *)&ab, *fc = (const float *)&ac;
+                    float *fo = (float *)o;
+                    unsigned k;
+                    for (k = 0; k < sizeof(GrVertex) / sizeof(float); k++)
+                        fo[k] = fb[k] + fc[k] - fa[k];
+                }
+            }
+        }
+    for (j = 0; j < SUBDIV; j++)
+        for (i = 0; i + j < SUBDIV; i++) {
+            mg_draw_tri(&PT(i, j), &PT(i + 1, j), &PT(i, j + 1));
+            if (i + j < SUBDIV - 1)
+                mg_draw_tri(&PT(i + 1, j), &PT(i + 1, j + 1), &PT(i, j + 1));
+        }
+#undef PT
 }
 
 void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
@@ -529,8 +610,29 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
     }
     if (!mg.st.color_mask_rgb && !(depth && mg.st.depth_mask))
         return;
+    if (mg.st.delta0) {
+        /* DELTA0: every vertex carries the grConstantColorValue4 colour. */
+        static GrVertex d[3];
+        uint32_t k = mg.st.delta0_argb;
+        int n;
+        d[0] = *a; d[1] = *b; d[2] = *c;
+        for (n = 0; n < 3; n++) {
+            d[n].r = (float)((k >> 16) & 0xFF); d[n].g = (float)((k >> 8) & 0xFF); d[n].b = (float)(k & 0xFF);
+        }
+        a = &d[0]; b = &d[1]; c = &d[2];
+    }
     mg_combine_plan(&plan);
     mg_alpha_plan(&ap);
+    if ((plan.quadratic || ap.quadratic) && !subdividing) {
+        float ar = ((b->x - a->x) * (c->y - a->y) - (c->x - a->x) * (b->y - a->y)) * 0.5f;
+        if (ar < 0) ar = -ar;
+        if (ar > SUBDIV_MIN_AREA) {
+            subdividing = 1;
+            subdivide(a, b, c);
+            subdividing = 0;
+            return;
+        }
+    }
     if (plan.approx || ap.approx)
         mg_note_approx();
     if (mg_config.census)
@@ -552,9 +654,9 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
             plan.modulate = 1;
         }
     }
-    vtx(&sa, a, wmode, plan.color_src);
-    vtx(&sb, b, wmode, plan.color_src);
-    vtx(&sc, c, wmode, plan.color_src);
+    vtx(&sa, a, wmode, plan.color_src, ap.alpha_src);
+    vtx(&sb, b, wmode, plan.color_src, ap.alpha_src);
+    vtx(&sc, c, wmode, plan.color_src, ap.alpha_src);
     memset(&opts, 0, sizeof opts);
     opts.alphactrl = ALPHACTRL_G100_FIXED | ALPHACTRL_ALPHASEL(ALPHASEL_DIFFUSE);
     if (!alpha_setup(&plan, &ap, &opts, &sa, &sb, &sc))
@@ -577,13 +679,14 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
     ctx.clip_y1 = mg.mode.height;
     if (!plan.textured) {
         ctx.dwgctl |= DWG_OPCOD_TRAP;
-        if (plan.color_src == CS_ITERATED || plan.color_src == CS_ITER_ALPHA)
+        if (plan.color_src == CS_ITERATED || plan.color_src == CS_ITER_ALPHA || plan.color_src == CS_SOFT)
             ctx.flags |= MGA_S_COLOR;
         setup_triangle(&sa, &sb, &sc, &ctx);
     } else {
         ctx.dwgctl |= DWG_OPCOD_TEXTURE_TRAP;
         ctx.flags |= MGA_S_TEX;
-        if (plan.modulate && (plan.color_src == CS_ITERATED || plan.color_src == CS_ITER_ALPHA))
+        if (plan.modulate && (plan.color_src == CS_ITERATED || plan.color_src == CS_ITER_ALPHA ||
+                              plan.color_src == CS_SOFT || plan.color_src == CS_SOFT_FACTOR))
             ctx.flags |= MGA_S_COLOR;
         if (ap.stipple && ap.alpha_src != AS_TEXTURE)
             ctx.flags |= MGA_S_ALPHA;

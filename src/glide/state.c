@@ -113,6 +113,7 @@ void mg_validate(void)
 GR_ENTRY(void, grColorCombine, (GrCombineFunction_t function, GrCombineFactor_t factor,
                                 GrCombineLocal_t local, GrCombineOther_t other, FxBool invert))
 {
+    mg.st.delta0 = FXFALSE;         /* the gu DELTA0 presets set it again afterwards */
     mg.st.cc_func = function; mg.st.cc_factor = factor; mg.st.cc_local = local;
     mg.st.cc_other = other; mg.st.cc_invert = invert;
 }

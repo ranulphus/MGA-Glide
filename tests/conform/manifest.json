@@ -90,5 +90,83 @@
   "tol": 40,
   "frac": 0.02
  },
- "t24": {}
+ "t24": {},
+ "t13": {
+  "frames": {
+   "t13_0.png": {
+    "cells": {
+     "x0": 10,
+     "y0": 10,
+     "w": 100,
+     "h": 110,
+     "dx": 105,
+     "dy": 117,
+     "cols": 6,
+     "n": 24,
+     "approx": [
+      8,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15
+     ],
+     "names": [
+      "ZERO",
+      "CCRGB",
+      "ITRGB",
+      "ITRGB_DELTA0",
+      "DECAL_TEXTURE",
+      "TEXTURE_TIMES_CCRGB",
+      "TEXTURE_TIMES_ITRGB",
+      "TEXTURE_TIMES_ITRGB_DELTA0",
+      "TEXTURE_TIMES_ITRGB_ADD_ALPHA",
+      "TEXTURE_TIMES_ALPHA",
+      "TEXTURE_TIMES_ALPHA_ADD_ITRGB",
+      "TEXTURE_ADD_ITRGB",
+      "TEXTURE_SUB_ITRGB",
+      "CCRGB_BLEND_ITRGB_ON_TEXALPHA",
+      "DIFF_SPEC_A",
+      "DIFF_SPEC_B",
+      "ONE",
+      "iterated x constant alpha",
+      "lerp(constant, iterated) by iterated alpha",
+      "iterated x iterated alpha",
+      "1 - iterated",
+      "texel x (1 - constant)",
+      "texel x constant alpha",
+      "iterated alpha as grey"
+     ]
+    }
+   },
+   "t13_1.png": {
+    "box": true,
+    "tol": 40,
+    "frac": 0.02,
+    "cells": {
+     "x0": 10,
+     "y0": 10,
+     "w": 100,
+     "h": 110,
+     "dx": 105,
+     "dy": 117,
+     "cols": 6,
+     "n": 8,
+     "approx": [],
+     "names": [
+      "alpha source CC_ALPHA",
+      "alpha source ITERATED_ALPHA",
+      "alpha source TEXTURE_ALPHA",
+      "alpha source TEXTURE_ALPHA_TIMES_ITERATED_ALPHA",
+      "texture alpha x constant alpha",
+      "texture alpha x (1 - iterated alpha)",
+      "1 - iterated alpha",
+      "iterated alpha x constant alpha"
+     ]
+    }
+   }
+  },
+  "why": "cells in 'approx' need an add, a subtract or a texture-alpha factor, which the G100 lacks (G200: specular add); docs/combine-coverage.md"
+ }
 }

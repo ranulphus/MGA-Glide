@@ -9,7 +9,9 @@ enum {
     CS_ITER_ALPHA,      /* per-vertex a replicated to r,g,b */
     CS_CONST_ALPHA,     /* constant alpha replicated */
     CS_ZERO,
-    CS_ONE
+    CS_ONE,
+    CS_SOFT,            /* the whole colour combine evaluated per vertex (no texture term) */
+    CS_SOFT_FACTOR      /* textured modulate: the combine factor evaluated per vertex */
 };
 
 typedef struct {
@@ -18,11 +20,14 @@ typedef struct {
     int color_src;      /* CS_*: untextured colour, or the modulation factor */
     int tex_white;      /* texture combine yields 1 (use the white texture) */
     int approx;         /* the result is an approximation (logged once per state) */
+    int quadratic;      /* product of two iterated terms: subdivide to keep it close */
 } mg_plan;
 
 void mg_combine_plan(mg_plan *p);
 
-enum { AS_ONE, AS_ITERATED, AS_CONSTANT, AS_TEXTURE, AS_MODULATED_ITER, AS_MODULATED_CONST };
+enum { AS_ONE, AS_ITERATED, AS_CONSTANT, AS_TEXTURE, AS_MODULATED_ITER, AS_MODULATED_CONST,
+       AS_SOFT,             /* alpha combine evaluated per vertex (no texture term) */
+       AS_MODULATED_SOFT }; /* texture alpha x the alpha factor evaluated per vertex */
 
 typedef struct {
     int alpha_src;      /* AS_*: where the fragment's alpha comes from */
@@ -35,8 +40,13 @@ typedef struct {
     int skip;           /* nothing to draw */
     int atest;          /* alpha test to apply (GR_CMP_*), GR_CMP_ALWAYS = none */
     int approx;
+    int quadratic;      /* as in mg_plan */
 } mg_aplan;
 
 void mg_alpha_plan(mg_aplan *a);
+
+/* Per-vertex evaluation of the Voodoo colour / alpha combine units. */
+void  mg_combine_vertex(const GrVertex *v, int csrc, float rgb[3]);
+float mg_combine_vertex_alpha(const GrVertex *v, int asrc);
 
 #endif

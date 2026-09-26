@@ -42,6 +42,8 @@ typedef struct {
     /* Chroma key. */
     GrChromakeyMode_t   chroma_mode;
     FxBool              alpha_itrgb;    /* grAlphaControlsITRGBLighting */
+    FxBool              delta0;         /* ITRGB_DELTA0 presets: flat iterated colour */
+    uint32_t            delta0_argb;    /* grConstantColorValue4 */
     GrColor_t           chroma_value;
     /* Hints. */
     FxU32               stw_hint;
