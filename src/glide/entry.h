@@ -14,7 +14,12 @@
 #  define GR_EXPORT
 #endif
 
-#define GR_ENTRY(ret, name, args) ret GR_EXPORT GLIDE_API name args
+/* GR_ENTRY defines the implementation, impl_<name>; the exported <name> is
+ * a generated thunk (build/gen/thunks.c) that records the call when
+ * tracing and then calls it. Internal calls use the public name, so they
+ * go through the thunk too (and are not recorded: only the outermost
+ * call is). */
+#define GR_ENTRY(ret, name, args) ret GLIDE_API impl_##name args
 
 /* First-call bookkeeping for stubs and the call tracer. */
 void mg_stub_hit(int id);

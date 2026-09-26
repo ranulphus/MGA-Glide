@@ -62,3 +62,37 @@ GR_ENTRY(FxU32, guEndianSwapWords, (FxU32 value))
 {
     return (value >> 16) | (value << 16);
 }
+
+/* ---- Tier 3: hardware controls with nothing to do on the Matrox --------- */
+
+/* Pass-through control (activate / deactivate the 3D card's output). The
+ * Matrox is the only display, so there is nothing to switch; report
+ * success so games carry on. */
+GR_ENTRY(FxBool, grSstControl, (FxU32 code))
+{
+    mg_log(MG_LOG_DEBUG, "grSstControl(%u): single display, ignored", code);
+    return FXTRUE;
+}
+
+/* Pixel counters are not available: report zeros rather than garbage. */
+GR_ENTRY(void, grSstPerfStats, (GrSstPerfStats_t *pStats))
+{
+    if (pStats)
+        pStats->pixelsIn = pStats->chromaFail = pStats->zFuncFail = pStats->aFuncFail = pStats->pixelsOut = 0;
+}
+
+GR_ENTRY(void, grSstResetPerfStats, (void)) { }
+GR_ENTRY(void, grCheckForRoom, (FxI32 n)) { MGA_UNUSED(n); }
+GR_ENTRY(void, grGlideShamelessPlug, (const FxBool on)) { MGA_UNUSED(on); }
+
+GR_ENTRY(void, grSstConfigPipeline, (GrChipID_t chip, FxU32 reg, FxU32 value))
+{
+    mg_log(MG_LOG_WARN, "grSstConfigPipeline(%d, %x, %x): Voodoo register write ignored", (int)chip, reg, value);
+}
+
+GR_ENTRY(void, grSstVidMode, (FxU32 whichSst, void *vidTimings))
+{
+    MGA_UNUSED(whichSst);
+    if (vidTimings)
+        mg_log(MG_LOG_WARN, "grSstVidMode: custom video timings ignored");
+}

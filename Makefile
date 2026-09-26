@@ -14,10 +14,11 @@ export WATCOM DJGPP_PREFIX MGA_CACHE OW_URL OW_SHA256 DJGPP_URL DJGPP_SHA256
         setup-ow setup-djgpp hal-ow hal-djgpp hal-host clean
 
 # ---- Generated glue ------------------------------------------------------
-API_SRCS := abi/glide2x.api tools/abi/api.py tools/abi/gen_exports.py
+API_SRCS := abi/glide2x.api tools/abi/api.py tools/abi/gen_exports.py tools/abi/gen_trace.py
 build/gen/stamp: $(API_SRCS)
 	@mkdir -p build/gen
 	$(PYTHON) tools/abi/gen_exports.py . build/gen
+	$(PYTHON) tools/abi/gen_trace.py build/gen
 	@touch $@
 
 header: include/glide/glide2.h
@@ -54,11 +55,11 @@ build/host/libmgahal.a: $(HAL_HOST:%.c=build/host/%.o)
 	ar rcs $@ $^
 hal-host: build/host/libmgahal.a
 
-build/gen/stubs.c build/gen/api_names.c build/gen/api_ids.h build/gen/api_names.h: build/gen/stamp
+build/gen/stubs.c build/gen/api_names.c build/gen/api_ids.h build/gen/api_names.h build/gen/thunks.c build/gen/replay_gen.c: build/gen/stamp
 
 # ---- Runtime DLL ---------------------------------------------------------
 RT_SRCS := $(wildcard src/rt/*.c src/dll/*.c src/glide/*.c src/lfb/*.c src/tex/*.c src/combine/*.c src/trace/*.c)
-RT_OBJS := $(RT_SRCS:%.c=build/ow/%.obj) build/ow/gen/stubs.obj build/ow/gen/api_names.obj
+RT_OBJS := $(RT_SRCS:%.c=build/ow/%.obj) build/ow/gen/stubs.obj build/ow/gen/api_names.obj build/ow/gen/thunks.obj
 
 build/ow/glide2x.lnk: mk/glide2x.lnk.in Makefile
 	@mkdir -p $(dir $@)

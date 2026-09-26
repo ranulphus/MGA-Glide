@@ -101,6 +101,29 @@ int mg_file_read(int handle, void *buf, int size)
     return r.x.cflag ? -1 : (int)r.x.eax;
 }
 
+int mg_file_create(const char *path)
+{
+    union REGS r;
+    memset(&r, 0, sizeof r);
+    r.h.ah = 0x3C;
+    r.w.cx = 0;
+    r.x.edx = (uint32_t)path;
+    int386(0x21, &r, &r);
+    return r.x.cflag ? -1 : (int)r.w.ax;
+}
+
+int mg_file_write(int handle, const void *buf, int size)
+{
+    union REGS r;
+    memset(&r, 0, sizeof r);
+    r.h.ah = 0x40;
+    r.w.bx = (uint16_t)handle;
+    r.x.ecx = (uint32_t)size;
+    r.x.edx = (uint32_t)buf;
+    int386(0x21, &r, &r);
+    return r.x.cflag ? -1 : (int)r.x.eax;
+}
+
 void mg_file_close(int handle)
 {
     union REGS r;
@@ -175,6 +198,17 @@ int mg_file_open(const char *path)
     return -1;
 }
 int mg_file_read(int h, void *buf, int size) { return (int)fread(buf, 1, (size_t)size, host_files[h]); }
+int mg_file_create(const char *path)
+{
+    int i;
+    for (i = 0; i < 8; i++)
+        if (!host_files[i]) {
+            host_files[i] = fopen(path, "wb");
+            return host_files[i] ? i : -1;
+        }
+    return -1;
+}
+int mg_file_write(int h, const void *buf, int size) { return (int)fwrite(buf, 1, (size_t)size, host_files[h]); }
 void mg_file_close(int h) { fclose(host_files[h]); host_files[h] = NULL; }
 int mg_write_file(const char *path, const void *data, int size, int append)
 {

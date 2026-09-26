@@ -24,6 +24,8 @@ void mg_line(const char *fmt, ...);
 /* env.c: whole-file and streamed reads (DOS handles; -1 on error) */
 int  mg_file_open(const char *path);
 int  mg_file_read(int handle, void *buf, int size);
+int  mg_file_create(const char *path);            /* create / truncate for writing */
+int  mg_file_write(int handle, const void *buf, int size);
 void mg_file_close(int handle);
 
 /* math.c */

@@ -2,6 +2,7 @@
  * gu* texture allocator (bump allocation over the reported TMU memory,
  * matching the retail runtime). */
 #include "glide/mg.h"
+#include "trace/trace.h"
 #include "tex/texmgr.h"
 #include "tex/texfmt.h"
 #include <string.h>
@@ -289,4 +290,25 @@ GR_ENTRY(FxU16 *, guTexCreateColorMipMap, (void))
 {
     mg_stub_hit(MGA_API_guTexCreateColorMipMap);
     return NULL;
+}
+
+/* Source sizes of gu mipmap downloads, for the call tracer. */
+uint32_t tr_gu_src_bytes(GrMipMapId_t mmid)
+{
+    const GrMipMapInfo *m;
+    uint32_t n = 0;
+    int l;
+    if ((int)mmid < 0 || (int)mmid >= gu_count)
+        return 0;
+    m = &gu_info[mmid];
+    for (l = m->lod_max; l <= m->lod_min; l++)
+        n += tex_level_data_bytes((GrLOD_t)l, m->aspect_ratio, m->format);
+    return n;
+}
+
+uint32_t tr_gu_level_bytes(GrMipMapId_t mmid, GrLOD_t lod)
+{
+    if ((int)mmid < 0 || (int)mmid >= gu_count)
+        return 0;
+    return tex_level_data_bytes(lod, gu_info[mmid].aspect_ratio, gu_info[mmid].format);
 }

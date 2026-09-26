@@ -5,6 +5,7 @@
  * pre-filled with a per-lock sentinel so that unlock writes back only the
  * pixels the game touched, converted to 565. */
 #include "glide/mg.h"
+#include "trace/trace.h"
 #include "mga/sys.h"
 #include <string.h>
 
@@ -21,19 +22,47 @@ static struct {
     uint32_t  seed;
 } lk;
 
+
 static uint8_t *shadow;
 static uint32_t shadow_size;
 static GrColorFormat_t lfb_color_format = GR_COLORFORMAT_ARGB;
 static uint16_t lfb_const_depth;
 static uint8_t  lfb_const_alpha = 0xFF;
 
-static uint32_t sentinel(uint32_t x, uint32_t y)
+/* Sentinel rows: random patterns, a different row offset per lock and per
+ * line. Rows are filled with memcpy and untouched rows found with memcmp,
+ * which is what makes shadowed locks (and tracing) affordable. For 555 the
+ * top bit is set and for 888 the top byte is 0xA5: values the game cannot
+ * write in those modes. */
+#define PAT_N 3072
+static uint16_t pat16[PAT_N], pat16_555[PAT_N];
+static uint32_t pat32[PAT_N], pat32_888[PAT_N];
+static int pat_ready;
+
+static void pat_init(void)
 {
-    uint32_t h = (x * 0x9E3779B1u) ^ (y * 0x85EBCA77u) ^ lk.seed;
-    h ^= h >> 15;
-    h *= 0x2C1B3C6Du;
-    h ^= h >> 12;
-    return h;
+    uint32_t r = 0x2545F491u;
+    int i;
+    for (i = 0; i < PAT_N; i++) {
+        r = r * 1664525u + 1013904223u;
+        pat32[i] = r ^ (r >> 13);
+        pat16[i] = (uint16_t)(pat32[i] >> 7);
+        pat16_555[i] = (uint16_t)(pat16[i] | 0x8000u);
+        pat32_888[i] = (pat32[i] & 0xFFFFFFu) | 0xA5000000u;
+    }
+    pat_ready = 1;
+}
+
+static uint32_t row_off(uint32_t y) { return (y * 37u + lk.seed) & 1023u; }
+
+static const uint16_t *srow16(uint32_t y)
+{
+    return (lk.mode == GR_LFBWRITEMODE_555 ? pat16_555 : pat16) + row_off(y);
+}
+
+static const uint32_t *srow32(uint32_t y)
+{
+    return (lk.mode == GR_LFBWRITEMODE_888 ? pat32_888 : pat32) + row_off(y);
 }
 
 static int is32(GrLfbWriteMode_t m)
@@ -74,8 +103,8 @@ static int need_shadow(GrLock_t type, GrBuffer_t buffer, GrLfbWriteMode_t mode, 
             return 1;
         return origin == GR_ORIGIN_LOWER_LEFT;
     }
-    if (pipe)
-        return 1;
+    if (pipe || mg_trace_on)
+        return 1;                /* tracing: the shadow shows which pixels were written */
     if (buffer == GR_BUFFER_AUXBUFFER)
         return mode != GR_LFBWRITEMODE_ZA16 || mg.zbits != 16 ||
                mg.st.depth_mode == GR_DEPTHBUFFER_WBUFFER;
@@ -141,17 +170,15 @@ GR_ENTRY(FxBool, grLfbLock, (GrLock_t type, GrBuffer_t buffer, GrLfbWriteMode_t 
             info->strideInBytes = SHADOW_STRIDE16;
             return FXTRUE;
         }
+        if (!pat_ready)
+            pat_init();
         for (y = 0; y < (uint32_t)mg.height; y++) {
-            if (stride == SHADOW_STRIDE32) {
-                uint32_t *d = (uint32_t *)(shadow + y * stride);
-                for (x = 0; x < (uint32_t)mg.width; x++)
-                    d[x] = sentinel(x, y) | (writeMode == GR_LFBWRITEMODE_888 ? 0xA5000000u : 0);
-            } else {
-                uint16_t *d = (uint16_t *)(shadow + y * stride);
-                for (x = 0; x < (uint32_t)mg.width; x++)
-                    d[x] = (uint16_t)(sentinel(x, y) | (writeMode == GR_LFBWRITEMODE_555 ? 0x8000u : 0));
-            }
+            if (stride == SHADOW_STRIDE32)
+                memcpy(shadow + y * stride, srow32(y), (uint32_t)mg.width * 4u);
+            else
+                memcpy(shadow + y * stride, srow16(y), (uint32_t)mg.width * 2u);
         }
+        MGA_UNUSED(x);
         info->lfbPtr = shadow;
         info->strideInBytes = stride;
     }
@@ -293,13 +320,15 @@ static void write_back(void)
         if (lk.pipe) {
             const uint32_t *s32 = (const uint32_t *)(shadow + y * SHADOW_STRIDE32);
             const uint16_t *s16 = (const uint16_t *)(shadow + y * SHADOW_STRIDE16);
+            const uint32_t *p32 = srow32(y);
+            const uint16_t *p16 = srow16(y);
             for (x = 0; x < (uint32_t)mg.width; x++) {
                 uint32_t v, sv;
                 uint16_t d;
                 if (is32(lk.mode)) {
-                    v = s32[x]; sv = sentinel(x, y) | (lk.mode == GR_LFBWRITEMODE_888 ? 0xA5000000u : 0);
+                    v = s32[x]; sv = p32[x];
                 } else {
-                    v = s16[x]; sv = (uint16_t)(sentinel(x, y) | (lk.mode == GR_LFBWRITEMODE_555 ? 0x8000u : 0));
+                    v = s16[x]; sv = p16[x];
                 }
                 if (v == sv)
                     continue;
@@ -308,9 +337,11 @@ static void write_back(void)
             continue;
         }
         if (is32(lk.mode)) {
-            const uint32_t *s = (const uint32_t *)(shadow + y * SHADOW_STRIDE32);
+            const uint32_t *s = (const uint32_t *)(shadow + y * SHADOW_STRIDE32), *pr = srow32(y);
+            if (!memcmp(s, pr, (uint32_t)mg.width * 4u))
+                continue;                                   /* untouched row */
             for (x = 0; x < (uint32_t)mg.width; x++) {
-                uint32_t v = s[x], sv = sentinel(x, y) | (lk.mode == GR_LFBWRITEMODE_888 ? 0xA5000000u : 0);
+                uint32_t v = s[x], sv = pr[x];
                 uint16_t c;
                 if (v == sv)
                     continue;
@@ -332,9 +363,11 @@ static void write_back(void)
                 }
             }
         } else {
-            const uint16_t *s = (const uint16_t *)(shadow + y * SHADOW_STRIDE16);
+            const uint16_t *s = (const uint16_t *)(shadow + y * SHADOW_STRIDE16), *pr = srow16(y);
+            if (!memcmp(s, pr, (uint32_t)mg.width * 2u))
+                continue;                                   /* untouched row */
             for (x = 0; x < (uint32_t)mg.width; x++) {
-                uint16_t v = s[x], sv = (uint16_t)(sentinel(x, y) | (lk.mode == GR_LFBWRITEMODE_555 ? 0x8000u : 0));
+                uint16_t v = s[x], sv = pr[x];
                 if (v == sv)
                     continue;
                 if (depth_buf) {
@@ -348,6 +381,70 @@ static void write_back(void)
             }
         }
     }
+}
+
+/* Tracing: the pixels written through the current lock, as spans
+ * {u16 y, u16 x, u16 n, u16 0, n values (padded to 4)} in lock space. */
+void tr_lfb_unlock_spans(GrLock_t type, GrBuffer_t buffer)
+{
+    static uint8_t *sp;
+    static uint32_t sp_cap;
+    uint32_t args[3], n = 0, x, y;
+    int bpp = is32(lk.mode) ? 4 : 2;
+    MGA_UNUSED(buffer);
+    if (!lk.active || (type & 1) != GR_LFB_WRITE_ONLY || !lk.shadow)
+        return;
+    for (y = 0; y < (uint32_t)mg.height; y++) {
+        const uint32_t *p32 = srow32(y);
+        const uint16_t *p16 = srow16(y);
+        if (bpp == 4 ? !memcmp(shadow + y * SHADOW_STRIDE32, p32, (uint32_t)mg.width * 4u)
+                     : !memcmp(shadow + y * SHADOW_STRIDE16, p16, (uint32_t)mg.width * 2u))
+            continue;
+        for (x = 0; x < (uint32_t)mg.width;) {
+            uint32_t x0 = x, cnt, need;
+            while (x < (uint32_t)mg.width) {
+                uint32_t v, sv;
+                if (bpp == 4) {
+                    v = ((const uint32_t *)(shadow + y * SHADOW_STRIDE32))[x];
+                    sv = p32[x];
+                } else {
+                    v = ((const uint16_t *)(shadow + y * SHADOW_STRIDE16))[x];
+                    sv = p16[x];
+                }
+                if (v == sv)
+                    break;
+                x++;
+            }
+            cnt = x - x0;
+            if (!cnt) {
+                x++;
+                continue;
+            }
+            need = n + 8 + ((cnt * (uint32_t)bpp + 3) & ~3u);
+            if (need > sp_cap) {
+                uint8_t *nb = (uint8_t *)sys_alloc(need * 2);
+                if (!nb)
+                    return;
+                if (sp) {
+                    memcpy(nb, sp, n);
+                    sys_free(sp);
+                }
+                sp = nb;
+                sp_cap = need * 2;
+            }
+            ((uint16_t *)(sp + n))[0] = (uint16_t)y;
+            ((uint16_t *)(sp + n))[1] = (uint16_t)x0;
+            ((uint16_t *)(sp + n))[2] = (uint16_t)cnt;
+            ((uint16_t *)(sp + n))[3] = 0;
+            memcpy(sp + n + 8, shadow + y * (bpp == 4 ? SHADOW_STRIDE32 : SHADOW_STRIDE16) + x0 * (uint32_t)bpp,
+                   cnt * (uint32_t)bpp);
+            n = need;
+        }
+    }
+    args[0] = (uint32_t)lk.buffer; args[1] = (uint32_t)lk.mode; args[2] = (uint32_t)bpp;
+    tr_begin(TR_OP_LFBSPANS, args, 3, 1);
+    tr_blob(sp ? sp : (const void *)args, n);
+    tr_end();
 }
 
 GR_ENTRY(FxBool, grLfbUnlock, (GrLock_t type, GrBuffer_t buffer))

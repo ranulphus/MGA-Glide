@@ -1,6 +1,7 @@
 /* frame.c - per-frame bookkeeping: statistics lines, snapshot markers for
  * the harness, and the test exit (MGAGLIDE exit_after=N). */
 #include "glide/mg.h"
+#include "trace/trace.h"
 #include "mga/sys.h"
 
 mg_stats_t mg_stats;
@@ -31,8 +32,10 @@ void mg_frame_end(void)
         mg_line("MGL-STAT frame=%u tris=%u", mg.frame, mg_stats.tris);
         mg_stats.tris = 0;
     }
+    trace_frame(mg.frame);
     if (mg_config.exit_after && (int)mg.frame >= mg_config.exit_after) {
         mg_line("MGL-EXIT frames=%u", mg.frame);
+        trace_flush();
         vbe_set_text_mode();
         ut_exit(0);
     }

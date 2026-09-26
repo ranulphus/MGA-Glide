@@ -1,5 +1,6 @@
 /* sst.c - initialisation, hardware query and window open/close. */
 #include "glide/mg.h"
+#include "trace/trace.h"
 #include "mga/sys.h"
 #include "mga/mmio.h"
 #include "tex/texmgr.h"
@@ -48,6 +49,7 @@ GR_ENTRY(void, grGlideInit, (void))
     mg.error_cb = cb;
     mg_line("MGL-INIT MGA-Glide %s", MGA_GLIDE_VERSION);
     mg_config_load();
+    trace_init_hook();
     mg.gamma = 1.7f;            /* retail Voodoo Graphics default, measured by t22_d */
     strcpy(mg.version, mg_config.report_version);
     mg_state_defaults();
@@ -59,6 +61,7 @@ GR_ENTRY(void, grGlideShutdown, (void))
 {
     if (mg.open)
         grSstWinClose();
+    trace_flush();
     mg_line("MGL-SHUTDOWN frames=%u", mg.frame);
     mg.initialised = 0;
 }
@@ -240,6 +243,7 @@ GR_ENTRY(FxBool, grSstWinOpen, (FxU32 hWnd, GrScreenResolution_t screen_resoluti
 static void on_fault(int exc, uint32_t err, uint32_t eip)
 {
     mg_line("MGL-EXC %02x err=%x eip=%x", exc, err, eip);
+    trace_flush();
     if (mg.open) {
         engine_reset();
         vbe_set_text_mode();
@@ -252,6 +256,7 @@ static void on_fault(int exc, uint32_t err, uint32_t eip)
 /* The game exits to DOS without grGlideShutdown. */
 static void on_exit(void)
 {
+    trace_flush();
     if (mg.open) {
         mg_line("MGL-EXIT-HOOK video restored");
         engine_sync(200000);

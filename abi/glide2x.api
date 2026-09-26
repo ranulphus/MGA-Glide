@@ -16,7 +16,7 @@ grAlphaTestReferenceValue | void | GrAlpha_t value | 2 | gs | partial
 grBufferClear | void | GrColor_t color, GrAlpha_t alpha, FxU16 depth | 1 | gs | partial
 grBufferNumPending | int | void | 2 | gs | partial
 grBufferSwap | void | int swap_interval | 1 | gs | partial
-grCheckForRoom | void | FxI32 n | 3 | gs | stub
+grCheckForRoom | void | FxI32 n | 3 | gs | partial
 grChromakeyMode | void | GrChromakeyMode_t mode | 3 | gs | partial
 grChromakeyValue | void | GrColor_t value | 3 | gs | partial
 grClipWindow | void | FxU32 minx, FxU32 miny, FxU32 maxx, FxU32 maxy | 1 | gs | partial
@@ -47,7 +47,7 @@ grGlideGetState | void | GrState *state | 3 | gs | partial
 grGlideGetVersion | void | char version[80] | 1 | gs | partial
 grGlideInit | void | void | 1 | gs | partial
 grGlideSetState | void | const GrState *state | 3 | gs | partial
-grGlideShamelessPlug | void | const FxBool on | 3 | gs | stub
+grGlideShamelessPlug | void | const FxBool on | 3 | gs | partial
 grGlideShutdown | void | void | 1 | gs | partial
 grHints | void | GrHint_t hintType, FxU32 hintMask | 3 | gs | partial
 grLfbConstantAlpha | void | GrAlpha_t alpha | 3 | gs | partial
@@ -61,21 +61,21 @@ grLfbWriteRegion | FxBool | GrBuffer_t dst_buffer, FxU32 dst_x, FxU32 dst_y, GrL
 grRenderBuffer | void | GrBuffer_t buffer | 1 | gs | partial
 grResetTriStats | void |  | 2 | gs | partial
 grSplash | void | float x, float y, float width, float height, FxU32 frame | 2 | gs | partial
-grSstConfigPipeline | void | GrChipID_t chip, FxU32 reg, FxU32 value | 3 | gs | stub
-grSstControl | FxBool | FxU32 code | 3 | gs | stub
+grSstConfigPipeline | void | GrChipID_t chip, FxU32 reg, FxU32 value | 3 | gs | partial
+grSstControl | FxBool | FxU32 code | 3 | gs | partial
 grSstIdle | void | void | 1 | gs | partial
 grSstIsBusy | FxBool | void | 3 | gs | partial
 grSstOrigin | void | GrOriginLocation_t origin | 2 | gs | partial
-grSstPerfStats | void | GrSstPerfStats_t *pStats | 3 | gs | stub
+grSstPerfStats | void | GrSstPerfStats_t *pStats | 3 | gs | partial
 grSstQueryBoards | FxBool | GrHwConfiguration *hwconfig | 1 | gs | partial
 grSstQueryHardware | FxBool | GrHwConfiguration *hwconfig | 1 | gs | partial
-grSstResetPerfStats | void | void | 3 | gs | stub
+grSstResetPerfStats | void | void | 3 | gs | partial
 grSstScreenHeight | FxU32 | void | 2 | gs | partial
 grSstScreenWidth | FxU32 | void | 2 | gs | partial
 grSstSelect | void | int which_sst | 1 | gs | partial
 grSstStatus | FxU32 | void | 3 | gs | partial
 grSstVideoLine | FxU32 | void | 3 | gs | partial
-grSstVidMode | void | FxU32 whichSst, void *vidTimings | 3 | gs | stub
+grSstVidMode | void | FxU32 whichSst, void *vidTimings | 3 | gs | partial
 grSstVRetraceOn | FxBool | void | 3 | gs | partial
 grSstWinClose | void | void | 1 | gs | partial
 grSstWinOpen | FxBool | FxU32 hWnd, GrScreenResolution_t screen_resolution, GrScreenRefresh_t refresh_rate, GrColorFormat_t color_format, GrOriginLocation_t origin_location, int nColBuffers, int nAuxBuffers | 1 | gs | partial
