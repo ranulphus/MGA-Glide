@@ -49,6 +49,8 @@ int      mga_map(mga_chip *c);       /* maps MMIO + framebuffer */
 void     mga_unmap(void);
 const char *mga_family_name(mga_family f);
 int      mga_detect_emulator(void);
+void     mga_chip_caps(mga_chip *c);   /* fill capabilities from c->family */
+uint32_t mga_probe_vram(void);
 
 /* vbe.c: modes via the card BIOS (VBE 2.0+). */
 typedef struct {
