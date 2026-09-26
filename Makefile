@@ -29,7 +29,7 @@ check-header:
 	  || { echo "include/glide/glide2.h is stale: run make header"; exit 1; }
 
 # ---- HAL -----------------------------------------------------------------
-HAL_COMMON := hal/src/debug/serial.c hal/src/pci.c hal/src/chip.c hal/src/vbe.c hal/src/fifo.c hal/src/engine.c
+HAL_COMMON := hal/src/debug/serial.c hal/src/pci.c hal/src/chip.c hal/src/vbe.c hal/src/fifo.c hal/src/engine.c hal/src/setup/trap.c
 HAL_OW     := $(HAL_COMMON) hal/port/ow_dos4g.c
 HAL_DJGPP  := $(HAL_COMMON) hal/port/djgpp.c
 HAL_HOST   := $(HAL_COMMON) hal/port/host.c
@@ -57,7 +57,7 @@ hal-host: build/host/libmgahal.a
 build/gen/stubs.c build/gen/api_names.c build/gen/api_ids.h build/gen/api_names.h: build/gen/stamp
 
 # ---- Runtime DLL ---------------------------------------------------------
-RT_SRCS := $(wildcard src/rt/*.c src/dll/*.c src/glide/*.c)
+RT_SRCS := $(wildcard src/rt/*.c src/dll/*.c src/glide/*.c src/lfb/*.c src/tex/*.c src/combine/*.c src/trace/*.c)
 RT_OBJS := $(RT_SRCS:%.c=build/ow/%.obj) build/ow/gen/stubs.obj build/ow/gen/api_names.obj
 
 build/ow/glide2x.lnk: mk/glide2x.lnk.in Makefile

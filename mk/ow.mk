@@ -8,8 +8,9 @@ WLINK   := $(OWENV) $(OWBIN)/wlink
 WLIB    := $(OWENV) $(OWBIN)/wlib
 WDUMP   := $(OWENV) $(OWBIN)/wdump
 
+MGA_VERSION := $(shell git describe --always --dirty 2>/dev/null || echo unknown)
 OW_CFLAGS := -bt=dos -mf -3s -fp5 -fpi87 -zri -ei -j -zastd=c99 -zq -we -wx \
-             -i=include -i=hal/include -i=src -i=build/gen -dMGA_OW=1
+             -i=include -i=hal/include -i=src -i=build/gen -dMGA_OW=1 -dMGA_GLIDE_VERSION="\"$(MGA_VERSION)\""
 ifeq ($(DEBUG),1)
 OW_CFLAGS += -od -d1 -dMG_DEBUG=1
 else

@@ -10,7 +10,7 @@
 #include "mga/hal.h"
 #include "mga/mmio.h"
 #include "mga/regs_mga.h"
-#include <math.h>
+#include "mga/fp.h"
 
 mga_setup_stats setup_stats;
 
@@ -60,7 +60,7 @@ static double eval(const plane *p, const mga_svtx *v0, double px, double py)
 
 static int32_t fx(double v, double scale)
 {
-    double r = floor(v * scale + 0.5);
+    double r = mga_floor(v * scale + 0.5);
     if (r > 2147483647.0) r = 2147483647.0;
     if (r < -2147483648.0) r = -2147483648.0;
     return (int32_t)r;
@@ -70,7 +70,7 @@ static int32_t fx(double v, double scale)
  * half an LSB of the 8-bit result is not applied (matches Voodoo floor). */
 static uint32_t col_start(double v)
 {
-    double r = floor(v * 32768.0);
+    double r = mga_floor(v * 32768.0);
     if (r < 0) r = 0;
     if (r > 255.999 * 32768.0) r = 255.999 * 32768.0;
     return (uint32_t)r;
@@ -78,7 +78,7 @@ static uint32_t col_start(double v)
 
 static uint32_t z16_start(double z)
 {
-    double r = floor(z * 32768.0);
+    double r = mga_floor(z * 32768.0);
     if (r < 0) r = 0;
     if (r > 65535.999 * 32768.0) r = 65535.999 * 32768.0;
     return (uint32_t)r;
@@ -86,7 +86,7 @@ static uint32_t z16_start(double z)
 
 static uint64_t z32_start(double z)
 {
-    double r = floor(z * 32768.0);
+    double r = mga_floor(z * 32768.0);
     if (r < 0) r = 0;
     if (r > 4294967295.999 * 32768.0) r = 4294967295.999 * 32768.0;
     return (uint64_t)r;
@@ -94,7 +94,7 @@ static uint64_t z32_start(double z)
 
 static int64_t z32_inc(double d)
 {
-    return (int64_t)floor(d * 32768.0 + 0.5);
+    return (int64_t)mga_floor(d * 32768.0 + 0.5);
 }
 
 void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri_ctx *ctx)
