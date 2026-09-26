@@ -101,7 +101,7 @@ void mg_validate(void)
             y0 = mg.height - mg.st.clip_y1;
             y1 = mg.height - mg.st.clip_y0;
         }
-        engine_set_clip(mg.st.clip_x0, y0, mg.st.clip_x1, y1);
+        engine_set_clip(mg_hx(mg.st.clip_x0), mg_hy(y0), mg_hx(mg.st.clip_x1), mg_hy(y1));
     }
     engine_set_maccess_flags((mg.st.dither == GR_DITHER_DISABLE ? MACCESS_NODITHER : 0) |
                              (mg.fog_on ? MACCESS_FOGEN : 0));

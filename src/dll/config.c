@@ -41,6 +41,12 @@ static void set_opt(const char *key, const char *val)
     else if (!strcmp(key, "hooks")) mg_config.hooks = to_int(val);
     else if (!strcmp(key, "bpp")) mg_config.bpp = to_int(val);
     else if (!strcmp(key, "trilinear")) mg_config.trilinear = to_int(val);
+    else if (!strcmp(key, "res")) {
+        const char *xp = val;
+        mg_config.res_w = to_int(val);
+        while (*xp && *xp != 'x' && *xp != 'X') xp++;
+        mg_config.res_h = *xp ? to_int(xp + 1) : 0;
+    }
     else if (!strcmp(key, "snap")) {
         const char *p = val;
         mg_config.nsnap = 0;

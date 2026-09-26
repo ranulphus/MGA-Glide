@@ -163,13 +163,29 @@ GR_ENTRY(FxBool, grSstWinOpen, (FxU32 hWnd, GrScreenResolution_t screen_resoluti
             h = resolutions[r].h;
         }
     mg.bpp = mg_config.bpp == 32 ? 32 : 16;
-    if (pick_mode(w, h, mg.bpp, &mg.mode) < 0 && mg.bpp == 32) {
-        mg_log(MG_LOG_WARN, "no 32-bit VBE mode for %dx%d: using 16-bit", w, h);
-        mg.bpp = 16;
-    }
-    if (mg.bpp == 16 && pick_mode(w, h, 16, &mg.mode) < 0) {
-        mg_log(MG_LOG_ERROR, "no VBE mode for %dx%d", w, h);
-        return FXFALSE;
+    {
+        /* Resolution override: the game keeps its size, the card renders
+         * at res_w x res_h and everything in between is scaled. */
+        int hw = w, hh = h;
+        mg.scaled = 0;
+        mg.sx = mg.sy = 1.0;
+        if (mg_config.res_w > 0 && mg_config.res_h > 0 && (mg_config.res_w != w || mg_config.res_h != h)) {
+            hw = mg_config.res_w;
+            hh = mg_config.res_h;
+        }
+        if (pick_mode(hw, hh, mg.bpp, &mg.mode) < 0 && mg.bpp == 32) {
+            mg_log(MG_LOG_WARN, "no 32-bit VBE mode for %dx%d: using 16-bit", hw, hh);
+            mg.bpp = 16;
+        }
+        if (mg.bpp == 16 && pick_mode(hw, hh, 16, &mg.mode) < 0) {
+            mg_log(MG_LOG_ERROR, "no VBE mode for %dx%d", hw, hh);
+            return FXFALSE;
+        }
+        if (hw != w || hh != h) {
+            mg.scaled = 1;
+            mg.sx = (double)hw / w;
+            mg.sy = (double)hh / h;
+        }
     }
     if (vbe_set_mode(&mg.mode, 1024, &pitch) < 0) {
         mg_log(MG_LOG_ERROR, "VBE mode %03x failed", mg.mode.mode);
@@ -238,8 +254,8 @@ GR_ENTRY(FxBool, grSstWinOpen, (FxU32 hWnd, GrScreenResolution_t screen_resoluti
     mg_gamma_apply();
     mg.fogcol_valid = 0;
     mg_hooks_install();
-    mg_line("MGL-WINOPEN %dx%d mode=%03x bpp=%d pitch=%d buffers=%d aux=%d z%d vram=%u heap=%u",
-            w, h, mg.mode.mode, mg.bpp, pitch, mg.nbuffers, mg.has_aux, mg.zbits, mga.vram_bytes,
+    mg_line("MGL-WINOPEN %dx%d mode=%03x bpp=%d scale=%dx%d pitch=%d buffers=%d aux=%d z%d vram=%u heap=%u",
+            w, h, mg.mode.mode, mg.bpp, mg_hx(w), mg_hy(h), pitch, mg.nbuffers, mg.has_aux, mg.zbits, mga.vram_bytes,
             mg.heap_end - mg.heap_off);
     return FXTRUE;
 }
@@ -332,3 +348,6 @@ GR_ENTRY(void, grSstOrigin, (GrOriginLocation_t origin))
 {
     mg.st.origin = origin == GR_ORIGIN_LOWER_LEFT ? GR_ORIGIN_LOWER_LEFT : GR_ORIGIN_UPPER_LEFT;
 }
+
+int mg_hx(int x) { return mg.scaled ? (int)mga_floor(x * mg.sx + 0.5) : x; }
+int mg_hy(int y) { return mg.scaled ? (int)mga_floor(y * mg.sy + 0.5) : y; }

@@ -130,14 +130,82 @@ static uint16_t aux_value32(uint32_t v)
     return (uint16_t)(v >> 16);
 }
 
+/* Resolution override: game pixel (x, y) covers hardware pixels
+ * [x0, x1) x [y0, y1); reads sample the pixel at the centre. */
+static void hw_rect(uint32_t x, uint32_t y, uint32_t *x0, uint32_t *x1, uint32_t *y0, uint32_t *y1)
+{
+    if (!mg.scaled) {
+        *x0 = x; *x1 = x + 1; *y0 = y; *y1 = y + 1;
+        return;
+    }
+    *x0 = (uint32_t)(x * mg.sx); *x1 = (uint32_t)((x + 1) * mg.sx);
+    *y0 = (uint32_t)(y * mg.sy); *y1 = (uint32_t)((y + 1) * mg.sy);
+    if (*x1 <= *x0) *x1 = *x0 + 1;
+    if (*y1 <= *y0) *y1 = *y0 + 1;
+}
+
+static void hw_centre(uint32_t x, uint32_t y, uint32_t *hx, uint32_t *hy)
+{
+    if (!mg.scaled) {
+        *hx = x; *hy = y;
+        return;
+    }
+    *hx = (uint32_t)((x + 0.5) * mg.sx);
+    *hy = (uint32_t)((y + 0.5) * mg.sy);
+}
+
+static void wr565(uint32_t off, uint32_t x, uint32_t y, uint16_t c)
+{
+    uint32_t x0, x1, y0, y1, X, Y;
+    hw_rect(x, y, &x0, &x1, &y0, &y1);
+    for (Y = y0; Y < y1; Y++)
+        for (X = x0; X < x1; X++)
+            put565(crow(off, Y), X, c);
+}
+
+static void wrargb(uint32_t off, uint32_t x, uint32_t y, uint32_t argb)
+{
+    uint32_t x0, x1, y0, y1, X, Y;
+    hw_rect(x, y, &x0, &x1, &y0, &y1);
+    for (Y = y0; Y < y1; Y++)
+        for (X = x0; X < x1; X++)
+            store_argb(crow(off, Y), X, argb);
+}
+
+static void wrdepth(uint32_t x, uint32_t y, uint32_t z)
+{
+    uint32_t x0, x1, y0, y1, X, Y, pitch = (uint32_t)mg.pitch_px;
+    hw_rect(x, y, &x0, &x1, &y0, &y1);
+    for (Y = y0; Y < y1; Y++)
+        for (X = x0; X < x1; X++) {
+            if (mg.zbits == 32) ((uint32_t *)(mga_fb + mg.aux_off))[Y * pitch + X] = z;
+            else ((uint16_t *)(mga_fb + mg.aux_off))[Y * pitch + X] = (uint16_t)z;
+        }
+}
+
+static uint16_t rd565(uint32_t off, uint32_t x, uint32_t y)
+{
+    uint32_t X, Y;
+    hw_centre(x, y, &X, &Y);
+    return get565(crow(off, Y), X);
+}
+
+static uint32_t rdaux(uint32_t x, uint32_t y)
+{
+    uint32_t X, Y, pitch = (uint32_t)mg.pitch_px;
+    hw_centre(x, y, &X, &Y);
+    return mg.zbits == 32 ? ((const uint32_t *)(mga_fb + mg.aux_off))[Y * pitch + X]
+                          : ((const uint16_t *)(mga_fb + mg.aux_off))[Y * pitch + X];
+}
+
 static int need_shadow(GrLock_t type, GrBuffer_t buffer, GrLfbWriteMode_t mode, GrOriginLocation_t origin, FxBool pipe)
 {
     if ((type & 1) == GR_LFB_READ_ONLY) {
         if (buffer == GR_BUFFER_AUXBUFFER)
-            return mg.zbits != 16 || origin == GR_ORIGIN_LOWER_LEFT;
-        return origin == GR_ORIGIN_LOWER_LEFT || mg.bpp != 16;
+            return mg.zbits != 16 || origin == GR_ORIGIN_LOWER_LEFT || mg.scaled;
+        return origin == GR_ORIGIN_LOWER_LEFT || mg.bpp != 16 || mg.scaled;
     }
-    if (pipe || mg_trace_on)
+    if (pipe || mg_trace_on || mg.scaled)
         return 1;                /* tracing: the shadow shows which pixels were written */
     if (buffer == GR_BUFFER_AUXBUFFER)
         return mode != GR_LFBWRITEMODE_ZA16 || mg.zbits != 16 ||
@@ -191,15 +259,12 @@ GR_ENTRY(FxBool, grLfbLock, (GrLock_t type, GrBuffer_t buffer, GrLfbWriteMode_t 
             /* Read locks through a shadow: convert the buffer out. */
             for (y = 0; y < (uint32_t)mg.height; y++) {
                 uint32_t sy = origin == GR_ORIGIN_LOWER_LEFT ? (uint32_t)mg.height - 1 - y : y;
-                const uint16_t *src16 = (const uint16_t *)(mga_fb + off) + sy * (uint32_t)mg.pitch_px;
-                const uint32_t *src32 = (const uint32_t *)(mga_fb + off) + sy * (uint32_t)mg.pitch_px;
-                const uint8_t *cr = crow(off, sy);
                 uint16_t *d = (uint16_t *)(shadow + y * SHADOW_STRIDE16);
                 for (x = 0; x < (uint32_t)mg.width; x++) {
                     if (buffer == GR_BUFFER_AUXBUFFER)
-                        d[x] = mg.zbits == 32 ? aux_value32(src32[x]) : src16[x];
+                        d[x] = mg.zbits == 32 ? aux_value32(rdaux(x, sy)) : (uint16_t)rdaux(x, sy);
                     else
-                        d[x] = get565(cr, x);
+                        d[x] = rd565(off, x, sy);
                 }
             }
             info->lfbPtr = shadow;
@@ -310,6 +375,16 @@ static void pipe_pixel(uint32_t src, uint16_t depth, uint8_t *row, uint32_t px, 
     store_argb(row, px, out);
 }
 
+static void wrpipe(uint32_t off, uint32_t x, uint32_t y, uint32_t src, uint16_t depth)
+{
+    uint32_t x0, x1, y0, y1, X, Y, pitch = (uint32_t)mg.pitch_px;
+    hw_rect(x, y, &x0, &x1, &y0, &y1);
+    for (Y = y0; Y < y1; Y++)
+        for (X = x0; X < x1; X++)
+            pipe_pixel(src, depth, crow(off, Y), X, (uint16_t *)(mga_fb + mg.aux_off) + Y * pitch + X,
+                       (uint32_t *)(mga_fb + mg.aux_off) + Y * pitch + X);
+}
+
 /* Decode one written LFB value to ARGB8888 (+ depth). */
 static uint32_t decode_lfb(uint32_t v, uint16_t *depth)
 {
@@ -340,15 +415,10 @@ static uint32_t decode_lfb(uint32_t v, uint16_t *depth)
 
 static void write_back(void)
 {
-    uint32_t off = mg_buffer_offset(lk.buffer), x, y, pitch = (uint32_t)mg.pitch_px;
+    uint32_t off = mg_buffer_offset(lk.buffer), x, y;
     int depth_buf = lk.buffer == GR_BUFFER_AUXBUFFER;
     for (y = 0; y < (uint32_t)mg.height; y++) {
         uint32_t dy = lk.origin == GR_ORIGIN_LOWER_LEFT ? (uint32_t)mg.height - 1 - y : y;
-        uint16_t *dst16 = (uint16_t *)(mga_fb + off) + dy * pitch;   /* aux buffer rows */
-        uint32_t *dst32 = (uint32_t *)(mga_fb + off) + dy * pitch;
-        uint8_t *cr = crow(off, dy);                                  /* colour buffer row */
-        uint16_t *z16 = (uint16_t *)(mga_fb + mg.aux_off) + dy * pitch;
-        uint32_t *z32 = (uint32_t *)(mga_fb + mg.aux_off) + dy * pitch;
         if (lk.pipe) {
             const uint32_t *s32 = (const uint32_t *)(shadow + y * SHADOW_STRIDE32);
             const uint16_t *s16 = (const uint16_t *)(shadow + y * SHADOW_STRIDE16);
@@ -364,7 +434,7 @@ static void write_back(void)
                 }
                 if (v == sv)
                     continue;
-                pipe_pixel(decode_lfb(v, &d), d, cr, x, &z16[x], &z32[x]);
+                wrpipe(off, x, dy, decode_lfb(v, &d), d);
             }
             continue;
         }
@@ -380,17 +450,15 @@ static void write_back(void)
                 switch (lk.mode) {
                 case GR_LFBWRITEMODE_888:
                 case GR_LFBWRITEMODE_8888:
-                    store_argb(cr, x, order_argb(v));
+                    wrargb(off, x, dy, order_argb(v));
                     break;
                 default: {                                  /* colour + depth */
                     uint16_t cv = (uint16_t)(v & 0xFFFF), d = (uint16_t)(v >> 16);
                     if (lk.mode == GR_LFBWRITEMODE_565_DEPTH) c = cv;
                     else c = (uint16_t)(((cv & 0x7FE0) << 1) | ((cv >> 4) & 0x20) | (cv & 0x1F));
-                    put565(cr, x, c);
-                    if (mg.has_aux) {
-                        if (mg.zbits == 32) z32[x] = mg_depth_clear_value(d);
-                        else z16[x] = (uint16_t)mg_depth_clear_value(d);
-                    }
+                    wr565(off, x, dy, c);
+                    if (mg.has_aux)
+                        wrdepth(x, dy, mg_depth_clear_value(d));
                     break; }
                 }
             }
@@ -402,14 +470,12 @@ static void write_back(void)
                 uint16_t v = s[x], sv = pr[x];
                 if (v == sv)
                     continue;
-                if (depth_buf) {
-                    if (mg.zbits == 32) dst32[x] = mg_depth_clear_value(v);
-                    else dst16[x] = (uint16_t)mg_depth_clear_value(v);
-                } else if (lk.mode == GR_LFBWRITEMODE_565) {
-                    put565(cr, x, v);
-                } else {                                   /* 555 / 1555 */
-                    put565(cr, x, (uint16_t)(((v & 0x7FE0) << 1) | ((v >> 4) & 0x20) | (v & 0x1F)));
-                }
+                if (depth_buf)
+                    wrdepth(x, dy, mg_depth_clear_value(v));
+                else if (lk.mode == GR_LFBWRITEMODE_565)
+                    wr565(off, x, dy, v);
+                else                                       /* 555 / 1555 */
+                    wr565(off, x, dy, (uint16_t)(((v & 0x7FE0) << 1) | ((v >> 4) & 0x20) | (v & 0x1F)));
             }
         }
     }
@@ -506,7 +572,13 @@ GR_ENTRY(FxBool, grLfbReadRegion, (GrBuffer_t src_buffer, FxU32 src_x, FxU32 src
         uint16_t *d = (uint16_t *)((uint8_t *)dst_data + y * dst_stride);
         if (mg.st.origin == GR_ORIGIN_LOWER_LEFT)
             sy = (uint32_t)mg.height - 1 - sy;
-        if (src_buffer == GR_BUFFER_AUXBUFFER && mg.zbits == 32) {
+        if (mg.scaled) {
+            uint32_t x;
+            for (x = 0; x < src_width; x++)
+                d[x] = src_buffer == GR_BUFFER_AUXBUFFER
+                           ? (mg.zbits == 32 ? aux_value32(rdaux(src_x + x, sy)) : (uint16_t)rdaux(src_x + x, sy))
+                           : rd565(off, src_x + x, sy);
+        } else if (src_buffer == GR_BUFFER_AUXBUFFER && mg.zbits == 32) {
             const uint32_t *s = (const uint32_t *)(mga_fb + off) + sy * pitch + src_x;
             uint32_t x;
             for (x = 0; x < src_width; x++)
@@ -535,27 +607,26 @@ GR_ENTRY(FxBool, grLfbWriteRegion, (GrBuffer_t dst_buffer, FxU32 dst_x, FxU32 ds
     for (y = 0; y < src_height; y++) {
         uint32_t dy = dst_y + y;
         const uint8_t *s = (const uint8_t *)src_data + (int32_t)y * src_stride;
-        uint8_t *cr;
         uint16_t *zr;
         if (mg.st.origin == GR_ORIGIN_LOWER_LEFT)
             dy = (uint32_t)mg.height - 1 - dy;
-        cr = crow(off, dy);
         zr = (uint16_t *)(mga_fb + off) + dy * pitch;
         for (x = 0; x < src_width; x++) {
             uint32_t dx = dst_x + x;
             switch (src_format) {
-            case GR_LFB_SRC_FMT_565: put565(cr, dx, ((const uint16_t *)s)[x]); break;
+            case GR_LFB_SRC_FMT_565: wr565(off, dx, dy, ((const uint16_t *)s)[x]); break;
             case GR_LFB_SRC_FMT_555:
             case GR_LFB_SRC_FMT_1555: {
                 uint16_t v = ((const uint16_t *)s)[x];
-                put565(cr, dx, (uint16_t)(((v & 0x7FE0) << 1) | ((v >> 4) & 0x20) | (v & 0x1F)));
+                wr565(off, dx, dy, (uint16_t)(((v & 0x7FE0) << 1) | ((v >> 4) & 0x20) | (v & 0x1F)));
                 break; }
             case GR_LFB_SRC_FMT_888:
             case GR_LFB_SRC_FMT_8888:
-                store_argb(cr, dx, order_argb(((const uint32_t *)s)[x]));
+                wrargb(off, dx, dy, order_argb(((const uint32_t *)s)[x]));
                 break;
             case GR_LFB_SRC_FMT_ZA16:
-                zr[dx] = ((const uint16_t *)s)[x];
+                if (mg.scaled) wrdepth(dx, dy, ((const uint16_t *)s)[x]);
+                else zr[dx] = ((const uint16_t *)s)[x];
                 break;
             default:
                 mg_log(MG_LOG_WARN, "lfb: write format %d unsupported", (int)src_format);

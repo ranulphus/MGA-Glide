@@ -20,6 +20,7 @@ GR_ENTRY(void, grBufferClear, (GrColor_t color, GrAlpha_t alpha, FxU16 depth))
         y0 = mg.height - mg.st.clip_y1;
         y1 = mg.height - mg.st.clip_y0;
     }
+    x0 = mg_hx(x0); x1 = mg_hx(x1); y0 = mg_hy(y0); y1 = mg_hy(y1);
     if (mg.st.color_mask_rgb)
         engine_fill(x0, y0, x1 - x0, y1 - y0, mg.bpp == 32 ? (mg_color_to_argb(color) & 0xFFFFFFu)
                                                            : mg_argb_to_565(mg_color_to_argb(color)));

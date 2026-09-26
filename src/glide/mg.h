@@ -56,6 +56,8 @@ typedef struct {
     mga_vbe_mode mode;
     int         width, height, pitch_px;
     int         bpp;                 /* colour depth: 16, or 32 with MGAGLIDE bpp=32 */
+    int         scaled;              /* MGAGLIDE res=WxH: rendering larger than the game's size */
+    double      sx, sy;              /* hardware pixels per game pixel */
     int         nbuffers, has_aux;
     uint32_t    buf_off[MG_MAX_BUFFERS];
     uint32_t    aux_off;
@@ -119,5 +121,8 @@ void mg_frame_end(void);
 
 void mg_gamma_apply(void);
 void mg_hooks_install(void);
+/* Game coordinates to hardware pixels (resolution override). */
+int  mg_hx(int x);
+int  mg_hy(int y);
 
 #endif

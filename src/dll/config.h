@@ -26,6 +26,7 @@ typedef struct {
     int  hooks;                /* fault / exit hooks that restore the video (default 1) */
     int  bpp;                  /* enhancement: 32 = render in 8888 (default 16, as the Voodoo) */
     int  trilinear;            /* enhancement: G200+ blends mip levels (default 0) */
+    int  res_w, res_h;         /* enhancement: render at this size instead of the game's (res=WxH) */
 } mg_config_t;
 
 extern mg_config_t mg_config;
