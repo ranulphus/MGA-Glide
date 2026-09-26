@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-uint8_t rp_scratch[64 * 1024];
+uint8_t rp_scratch[2u << 20];          /* output buffers, up to a 1024x1024 read-back */
 
 float rp_f(uint32_t v)
 {

@@ -21,19 +21,19 @@ and `tools/conform/run.py`.
 | Alpha test | `ALPHACTRL.aten`, `atmode`, `atref` on the selected alpha | same |
 | Specular | `TEXCTL2.specen` adds the iterated `SPECR/G/B` colour after texturing | same |
 | Decal blend | `TEXCTL2.decalblend` blends texel and diffuse by texel alpha | same |
-| Mipmaps | `TEXORG1..4`, `TEXFILTER.mapnb` and the `mm*` minification modes; the level comes from the per-pixel coordinate gradients | Level formula is the Voodoo's (`0.5 log2` of the larger squared gradient); the G200's own is unknown |
+| Mipmaps | `TEXORG1..4`, `TEXFILTER.mapnb` and the `mm*` minification modes; the level comes from the per-pixel coordinate gradients and the nearest-level modes round it | Rounding measured on the cuda6 G200eR2 (`docs/loop-c-results.md`, E5) |
 | `DWGSYNC` | reads back the last value written | same register documentation |
 
 Patch `0005-mga-texel-alpha.patch` (both cards) gives TW15 texels their
-1-bit alpha and expands TW12 fields by bit replication.
+1-bit alpha and expands TW12 fields by bit replication; patch
+`0006-mga-measured-texturing.patch` makes the larger-weight texel decide
+colour keys under bilinear filtering and rounds the mip level. All three
+behaviours were then confirmed on the G200eR2 (Loop C).
 
-## To check on silicon
+## Checked on the G200eR2 (Loop C)
 
-Each of these is a guess until the physical G200 (Loop B) and cuda6
-(Loop C) confirm it; see the milestone S / M5 items in the plan:
-
-- the mip level formula and the `fthres` threshold;
-- 4-bit texel expansion (replication versus shift);
-- blending precision and rounding;
-- whether plain `TRAP` honours `ALPHACTRL` exactly as `TEXTURE_TRAP` does;
-- `DSTORG` alignment rules.
+Texel expansion, TW15 alpha, blend arithmetic, blending in plain `TRAP`,
+mip level rounding and colour keys under bilinear filtering: see
+`docs/loop-c-results.md`. Still unchecked: large `fthres` values, the
+two-level (trilinear) modes, `DSTORG` alignment rules, and anything that
+might differ between the G200eR2 and a retail G200 (Loop B).

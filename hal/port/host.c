@@ -65,15 +65,31 @@ volatile void *sys_map_phys(uint32_t phys, uint32_t size)
 
 void sys_unmap_phys(volatile void *p, uint32_t size) { MGA_UNUSED(p); MGA_UNUSED(size); }
 
-int sys_rm_int(uint8_t intno, sys_rmregs *r) { MGA_UNUSED(intno); MGA_UNUSED(r); return -1; }
+/* Real-mode interrupts go to an optional hook (the host trace replayer
+ * answers the VBE calls); conventional memory is a private first megabyte. */
+static host_rm_hook rm_hook;
+static void *rm_ctx;
+static uint8_t *lowmem;
+static uint32_t lowmem_next = 0x10000;
+
+void host_set_rm_hook(host_rm_hook fn, void *ctx) { rm_hook = fn; rm_ctx = ctx; }
+
+int sys_rm_int(uint8_t intno, sys_rmregs *r) { return rm_hook ? rm_hook(rm_ctx, intno, r) : -1; }
 
 void *sys_dos_alloc(uint32_t bytes, uint16_t *rm_segment)
 {
-    *rm_segment = 0;
-    return calloc(1, bytes);
+    uint8_t *p;
+    if (!lowmem && !(lowmem = (uint8_t *)calloc(1, 1u << 20)))
+        return NULL;
+    if (lowmem_next + bytes > 0xA0000u)
+        return NULL;
+    p = lowmem + lowmem_next;
+    *rm_segment = (uint16_t)(lowmem_next >> 4);
+    lowmem_next = (lowmem_next + bytes + 15u) & ~15u;
+    return p;
 }
 
-void sys_dos_free(void *p) { free(p); }
+void sys_dos_free(void *p) { MGA_UNUSED(p); }
 
 uint32_t sys_time_us(void)
 {
@@ -87,7 +103,12 @@ void sys_delay_us(uint32_t us) { MGA_UNUSED(us); }
 void *sys_alloc(uint32_t bytes) { return calloc(1, bytes); }
 void sys_free(void *p) { free(p); }
 
-void *sys_real_ptr(uint16_t seg, uint16_t off) { MGA_UNUSED(seg); MGA_UNUSED(off); return NULL; }
+void *sys_real_ptr(uint16_t seg, uint16_t off)
+{
+    if (!lowmem && !(lowmem = (uint8_t *)calloc(1, 1u << 20)))
+        return NULL;
+    return lowmem + (((uint32_t)seg << 4) + off);
+}
 
 int  sys_hook_faults(sys_fault_fn fn) { (void)fn; return -1; }
 void sys_unhook_faults(void) { }

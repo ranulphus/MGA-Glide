@@ -5,7 +5,7 @@
 #define REFRAST_H
 #include <stdint.h>
 
-#define RR_VRAM (8u << 20)
+#define RR_VRAM (16u << 20)
 
 typedef struct {
     uint8_t  vram[RR_VRAM];

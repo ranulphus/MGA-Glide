@@ -55,7 +55,7 @@ build/host/libmgahal.a: $(HAL_HOST:%.c=build/host/%.o)
 	ar rcs $@ $^
 hal-host: build/host/libmgahal.a
 
-build/gen/stubs.c build/gen/api_names.c build/gen/api_ids.h build/gen/api_names.h build/gen/thunks.c build/gen/replay_gen.c build/gen/proxy_thunks.c build/gen/glapi_names.c: build/gen/stamp
+build/gen/stubs.c build/gen/api_names.c build/gen/api_ids.h build/gen/api_names.h build/gen/thunks.c build/gen/replay_gen.c build/gen/proxy_thunks.c build/gen/glapi_names.c build/gen/glapi_static.c: build/gen/stamp
 
 # ---- Runtime DLL ---------------------------------------------------------
 RT_SRCS := $(wildcard src/rt/*.c src/dll/*.c src/glide/*.c src/lfb/*.c src/tex/*.c src/combine/*.c src/trace/*.c)
@@ -109,6 +109,17 @@ build/djgpp/SMOKE.EXE: tests/hal/smoke.c build/djgpp/libmgahal.a
 	$(Q)echo "  DJLD    $@"
 	$(Q)$(DJCC) $(DJ_CFLAGS) -o $@ $< build/djgpp/libmgahal.a
 smoke-djgpp: build/djgpp/SMOKE.EXE
+
+# ---- Host trace replay (tools/hreplay) --------------------------------------
+HR_SRCS := $(RT_SRCS) $(HAL_HOST) tests/unit/refrast.c tools/hreplay/hreplay.c
+HR_GEN  := build/gen/thunks.c build/gen/stubs.c build/gen/api_names.c build/gen/replay_gen.c build/gen/glapi_static.c
+build/host32/hreplay: $(HR_SRCS) $(HR_GEN) $(wildcard src/*/*.h hal/include/mga/*.h tests/unit/*.h tests/shim/*.h)
+	@mkdir -p $(dir $@)
+	$(Q)echo "  CC32    $@"
+	$(Q)$(HOST_CC) $(HOST_CFLAGS32) -Wno-unused-parameter -Wno-array-parameter -Itests/shim -Itests/unit -o $@ $(HR_SRCS) $(HR_GEN) -lm
+hreplay: build/host32/hreplay
+hreplay-check: build/host32/hreplay dostests runtime
+	$(DEV) $(PYTHON) tools/hreplay/check.py
 
 # ---- Host tests ----------------------------------------------------------
 include tests/unit/unit.mk

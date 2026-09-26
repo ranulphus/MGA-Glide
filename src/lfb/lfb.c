@@ -434,7 +434,10 @@ static void write_back(void)
                 }
                 if (v == sv)
                     continue;
-                wrpipe(off, x, dy, decode_lfb(v, &d), d);
+                {
+                    uint32_t argb = decode_lfb(v, &d);   /* before d is read: argument order is unspecified */
+                    wrpipe(off, x, dy, argb, d);
+                }
             }
             continue;
         }

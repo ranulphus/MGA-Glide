@@ -1,0 +1,41 @@
+diff --git a/src/video/vid_mga.c b/src/video/vid_mga.c
+index 91a95f8..446bb8c 100644
+--- a/src/video/vid_mga.c
++++ b/src/video/vid_mga.c
+@@ -5525,6 +5525,14 @@ texture_read_level(mystique_t *mystique, int *tex_r, int *tex_g, int *tex_b, int
+             *tex_g = (int) lerp(tg, bg, ft);
+             *tex_b = (int) lerp(tb, bb, ft);
+             *tex_a = (int) lerp(ta, ba, ft);
++            /* MGA-Glide local patch (measured on a G200eR2, docs/loop-c-results.md):
++             * the texel with the larger weight decides the colour and alpha
++             * keys; keyed texels still contribute their colour to the filter. */
++            if (fs >= 0.5 || ft >= 0.5) {
++                int kr, kg, kb, ka = 255;
++                src = texture_texel_fetch(mystique, &kr, &kg, &kb, &ka, atransp, fs >= 0.5 ? s1 : s,
++                                          ft >= 0.5 ? t1 : t, tex_pitch);
++            }
+         }
+     }
+ 
+@@ -5536,8 +5544,8 @@ texture_read_level(mystique_t *mystique, int *tex_r, int *tex_g, int *tex_b, int
+  * (8 nearest level, point; 9 nearest level, bilinear; 0xA two levels,
+  * point; 0xC two levels, bilinear). The level comes from the per-pixel
+  * gradients of the texture coordinates, lambda = 0.5 log2 of the larger
+- * squared gradient, as the Voodoo computes it; G200 silicon is to be
+- * checked on the bench (PRD milestone S / M5). Each level halves the
++ * squared gradient; the nearest-level modes round it (measured on the
++ * cuda6 G200eR2 with fthres 0x10; larger fthres values are not modelled). Each level halves the
+  * width, height and pitch. */
+ static void
+ g200_uv(mystique_t *mystique, int32_t S, int32_t T, int32_t Q, double *u, double *v)
+@@ -5620,7 +5628,9 @@ texture_read(mystique_t *mystique, int *tex_r, int *tex_g, int *tex_b, int *atra
+         return g200_read_level(mystique, 0, magf == 2 ? 2 : 0, tex_r, tex_g, tex_b, atransp, tex_a);
+     filt  = (minf == 0x9 || minf == 0xc) ? 2 : 0;
+     two   = (minf == 0xa || minf == 0xc);
+-    level = (int) floor(lambda);
++    /* Measured on a G200eR2 (TEXFILTER.fthres 0x10): the nearest-level
++     * modes round lambda to the nearest level. */
++    level = two ? (int) floor(lambda) : (int) floor(lambda + 0.5);
+     if (level >= last) {
+         level = last;
+         two   = 0;

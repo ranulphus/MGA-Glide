@@ -15,13 +15,28 @@ static int ut_base;
 
 #define UT_IOBASE 0x0E80
 
+/* Echo to the console only in a text mode: in a graphics mode the BIOS
+ * draws the glyphs through the legacy VGA window, which lands in VRAM (the
+ * second colour buffer at 640x480) and spoils the frames under test. */
+static int text_mode(void)
+{
+#if defined(__WATCOMC__) || defined(__DJGPP__)
+    uint8_t mode = *(volatile uint8_t *)0x449;      /* BIOS data area: current video mode */
+    return mode <= 3 || mode == 7;
+#else
+    return 1;
+#endif
+}
+
 static void line(const char *s)
 {
     serial_puts(s);
     serial_puts("\n");
-    fputs(s, stdout);
-    fputc('\n', stdout);
-    fflush(stdout);
+    if (text_mode()) {
+        fputs(s, stdout);
+        fputc('\n', stdout);
+        fflush(stdout);
+    }
 }
 
 static void vline(const char *prefix, const char *fmt, va_list ap)

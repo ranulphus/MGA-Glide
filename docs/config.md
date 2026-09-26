@@ -17,7 +17,8 @@ draw what a Voodoo Graphics board would.
 |---|---|---|
 | `res` | `WxH`, e.g. `1024x768` | Render at W x H while the game keeps its own resolution. Textures use finer mip levels; LFB access is scaled |
 | `bpp` | `16` (default), `32` | Render in 32-bit colour (no dithering); falls back to 16 when no 32-bit mode fits |
-| `trilinear` | `0`, `1` | G200 and later: blend between mip levels |
+| `hwmip` | `0`, `1` | G200 and later: let the chip pick the mip level per pixel (it rounds where the Voodoo floors, so textures are a little softer; no 8-row bands) |
+| `trilinear` | `0`, `1` | G200 and later: blend between mip levels (implies `hwmip`) |
 | `bilinear` | `0`, `1` | Filter every texture bilinearly |
 | `z32` | `-1` auto (default), `0`, `1` | 32-bit depth buffer. Auto uses it when VRAM allows (it makes W-buffering more precise than the Voodoo's) |
 

@@ -423,10 +423,13 @@ static void draw_textured(const GrVertex *a, const GrVertex *b, const GrVertex *
     }
     if (need_lod)
         lod_setup(&L, a, b, c);
-    if (need_lod && mga.max_mip_levels > 1 && tmu0.lod_bias == 0.0f && !F.on) {
-        /* G200: one draw with a hardware mip window starting at the finest
-         * level any part of the triangle needs. (No LOD bias register, so a
-         * biased chain keeps the banded path.) */
+    if (need_lod && mga.max_mip_levels > 1 && (mg_config.hwmip || mg_config.trilinear) &&
+        tmu0.lod_bias == 0.0f && !F.on) {
+        /* Enhancement (hwmip=1): one draw with a hardware mip window starting
+         * at the finest level any part of the triangle needs; the chip picks
+         * the level per pixel. It rounds the level where the Voodoo floors
+         * it (measured on a G200eR2), so the default keeps the exact banded
+         * path. (No LOD bias register: a biased chain keeps it too.) */
         draw_opts mo = *o;
         GrLOD_t l0 = level_for(lod_at(&L, a->x, a->y)), l;
         double cxm = (a->x + b->x + c->x) / 3.0, cym = (a->y + b->y + c->y) / 3.0;
