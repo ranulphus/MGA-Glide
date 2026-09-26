@@ -12,6 +12,16 @@ typedef struct {
     int      ncc_sel;
 } tex_tables;
 
+/* Texture variants: alpha rewritten for keying on chips without the
+ * corresponding per-pixel test (G100). */
+enum { TV_PLAIN = 0, TV_CHROMA = 1, TV_ATEST = 2 };
+typedef struct {
+    int      kind;          /* TV_* bit set */
+    uint32_t chroma;        /* 0x00RRGGBB key: exact matches become transparent */
+    int      afunc, aref;   /* alpha test: texels failing become transparent */
+} tex_variant;
+uint32_t tex_variant_key(const tex_variant *v);
+
 /* Decode one Glide texel to 0xAARRGGBB exactly as the Voodoo does. */
 uint32_t tex_decode(GrTextureFormat_t fmt, uint32_t texel, const tex_tables *t);
 /* Choose the hardware format for a decoded level. */
@@ -21,6 +31,6 @@ int tex_classify(const uint32_t *argb, int n);
  * extension). Returns the hardware format used. */
 int tex_convert_level(GrTextureFormat_t fmt, const void *src, int w, int h,
                       uint16_t *dst, int dst_pitch, int hw_w, int hw_h, int clamp_s, int clamp_t,
-                      const tex_tables *t, int force_hwfmt, uint32_t *scratch);
+                      const tex_tables *t, int force_hwfmt, uint32_t *scratch, const tex_variant *var);
 
 #endif

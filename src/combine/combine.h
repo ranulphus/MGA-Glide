@@ -22,4 +22,21 @@ typedef struct {
 
 void mg_combine_plan(mg_plan *p);
 
+enum { AS_ONE, AS_ITERATED, AS_CONSTANT, AS_TEXTURE, AS_MODULATED_ITER, AS_MODULATED_CONST };
+
+typedef struct {
+    int alpha_src;      /* AS_*: where the fragment's alpha comes from */
+    int stipple;        /* G100: approximate the blend with the stipple */
+    int invert;         /* stipple with 255 - alpha */
+    int fixed_alpha;    /* >= 0: stipple with this constant coverage instead */
+    int native;         /* chip blends: ALPHACTRL factors below */
+    uint32_t factors;   /* ALPHACTRL src | dst << 4 */
+    int color_off;      /* draw depth only (blend leaves colour unchanged) */
+    int skip;           /* nothing to draw */
+    int atest;          /* alpha test to apply (GR_CMP_*), GR_CMP_ALWAYS = none */
+    int approx;
+} mg_aplan;
+
+void mg_alpha_plan(mg_aplan *a);
+
 #endif

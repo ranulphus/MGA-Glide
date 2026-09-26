@@ -53,7 +53,7 @@ def cmd_ref(tests):
         shutil.rmtree(dst, ignore_errors=True)
         os.makedirs(dst)
         for fn in sorted(os.listdir(out)):
-            if fn.startswith(t + "_") and fn.endswith(".png"):
+            if fn.startswith(t + "_") and fn.endswith(".png") and ".diff" not in fn:
                 shutil.copyfile(os.path.join(out, fn), os.path.join(dst, fn))
         json.dump({"ovl_sha256": sha, "status": r["status"], "tests": r.get("tests", [])},
                   open(os.path.join(dst, "ref.json"), "w"), indent=1)
@@ -83,10 +83,13 @@ def cmd_check(tests):
                     frames[fn] = {"ok": False, "reason": "missing"}
                     ok = False
                     continue
-                c = imgcmp.compare(os.path.join(refd, fn), got, cfg["tol"], cfg["frac"], cfg["edge"],
-                                   cfg["box"], os.path.join(out, fn[:-4] + ".diff.png"))
+                fc = dict(cfg)
+                fc.update(cfg.get("frames", {}).get(fn, {}))
+                c = imgcmp.compare(os.path.join(refd, fn), got, fc["tol"], fc["frac"], fc["edge"],
+                                   fc["box"], os.path.join(out, fn[:-4] + ".diff.png"))
+                c["gate"] = fc.get("gate", True)
                 frames[fn] = c
-                ok = ok and c["ok"]
+                ok = ok and (c["ok"] or not c["gate"])
         else:
             ok = False
             frames["_"] = {"ok": False, "reason": "no reference"}
@@ -95,7 +98,7 @@ def cmd_check(tests):
     with cf.ThreadPoolExecutor(JOBS) as ex:
         for t, res in ex.map(job, tests):
             summary[t] = res
-            worst = max([f.get("frac", 1.0) for f in res["frames"].values()] or [0])
+            worst = max([f.get("frac", 1.0) for f in res["frames"].values() if f.get("gate", True)] or [0])
             print("check %-6s %-4s run=%-9s frames=%d worst-frac=%.4f %s" % (
                 t, "PASS" if res["ok"] else "FAIL", res["run"], len(res["frames"]), worst,
                 "; ".join("%s %s" % (x["name"], x["detail"]) for x in res["tests"])))

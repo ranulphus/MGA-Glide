@@ -6,6 +6,7 @@
 #include "combine/combine.h"
 #include "tex/texmgr.h"
 #include "mga/fp.h"
+#include <string.h>
 
 /* The Voodoo converts float vertices to 12.4 fixed point by truncation
  * toward zero; games that follow 3dfx's advice pre-snap to 1/16 anyway. */
@@ -197,12 +198,22 @@ static void tex_adjust(mga_svtx *a, mga_svtx *b, mga_svtx *c, const tex_level_hw
     }
 }
 
-static void emit_texture_state(const tex_level_hw *hw, int modulate)
+typedef struct {
+    tex_variant var;          /* keyed texture variant (alpha test / chroma key) */
+    uint32_t    alphactrl;    /* ALPHACTRL for the draw */
+    int         akey0;        /* key texels whose alpha field is 0 (formats that keep alpha) */
+} draw_opts;
+
+static void emit_texture_state(const tex_level_hw *hw, int modulate, const draw_opts *o)
 {
-    /* takey=1, tamask=0: texel alpha never keys (G100 spec: opaque). */
-    uint32_t texctl = (uint32_t)hw->hwfmt | TEXCTL_TPITCHLIN | TEXCTL_TPITCHEXT((uint32_t)hw->pitch & 0x7FF) |
-                      TEXCTL_TAKEY;
+    /* takey=1, tamask=0: texel alpha never keys (G100 spec: opaque). A
+     * keyed variant uses tamask=1, takey=0: alpha 0 is transparent. */
+    uint32_t texctl = (uint32_t)hw->hwfmt | TEXCTL_TPITCHLIN | TEXCTL_TPITCHEXT((uint32_t)hw->pitch & 0x7FF);
     uint32_t filt = bilinear_on() ? TEXFILTER_BILIN : TEXFILTER_NRST;
+    if (o->var.kind || (o->akey0 && (hw->hwfmt == HW_TW12 || hw->hwfmt == HW_TW15)))
+        texctl |= TEXCTL_STRANS | TEXCTL_TAMASK;
+    else
+        texctl |= TEXCTL_TAKEY;
     if (tmu0.clamp_s == GR_TEXTURECLAMP_CLAMP) texctl |= TEXCTL_CLAMPU;
     if (tmu0.clamp_t == GR_TEXTURECLAMP_CLAMP) texctl |= TEXCTL_CLAMPV;
     if (modulate) texctl |= TEXCTL_TMODULATE;
@@ -211,8 +222,7 @@ static void emit_texture_state(const tex_level_hw *hw, int modulate)
     MGA_WR32(MGAREG_TEXCTL, texctl);
     MGA_WR32(MGAREG_TEXFILTER, TEXFILTER_MIN(filt) | TEXFILTER_MAG(filt));
     MGA_WR32(MGAREG_TEXTRANS, 0x0000FFFFu);
-    /* Blending off: alpha from the (unused) diffuse plane, no stipple. */
-    MGA_WR32(MGAREG_ALPHACTRL, ALPHACTRL_G100_FIXED | ALPHACTRL_ALPHASEL(ALPHASEL_DIFFUSE));
+    MGA_WR32(MGAREG_ALPHACTRL, o->alphactrl);
 }
 
 /* Draw a textured triangle. The G100 samples one level per trapezoid, so
@@ -221,12 +231,12 @@ static void emit_texture_state(const tex_level_hw *hw, int modulate)
 #define BAND_ROWS 8
 
 static void draw_band(const mga_svtx *a0, const mga_svtx *b0, const mga_svtx *c0, mga_tri_ctx *ctx,
-                      const mg_plan *plan, GrLOD_t lod, int row0, int row1)
+                      const mg_plan *plan, const draw_opts *o, GrLOD_t lod, int row0, int row1)
 {
     mga_svtx sa = *a0, sb = *b0, sc = *c0;
     tex_level_hw hw;
     double sig_s, sig_t;
-    if (plan->tex_white || tex_bind_level(lod, &hw) < 0) {
+    if (plan->tex_white || tex_bind_level(lod, o->var.kind ? &o->var : NULL, &hw) < 0) {
         tex_white(&hw);
         sig_s = sig_t = 0;
     } else {
@@ -239,7 +249,7 @@ static void draw_band(const mga_svtx *a0, const mga_svtx *b0, const mga_svtx *c0
     sb.s *= (float)sig_s; sb.t *= (float)sig_t;
     sc.s *= (float)sig_s; sc.t *= (float)sig_t;
     tex_adjust(&sa, &sb, &sc, &hw);
-    emit_texture_state(&hw, plan->modulate);
+    emit_texture_state(&hw, plan->modulate, o);
     ctx->tex_tw = hw.w_log2;
     ctx->tex_th = hw.h_log2;
     ctx->clip_y0 = row0 < 0 ? 0 : row0;
@@ -252,7 +262,7 @@ static void draw_band(const mga_svtx *a0, const mga_svtx *b0, const mga_svtx *c0
 
 static void draw_textured(const GrVertex *a, const GrVertex *b, const GrVertex *c,
                           const mga_svtx *sa, const mga_svtx *sb, const mga_svtx *sc,
-                          mga_tri_ctx *ctx, const mg_plan *plan)
+                          mga_tri_ctx *ctx, const mg_plan *plan, const draw_opts *o)
 {
     lod_planes L;
     int32_t ymin = sa->Y16, ymax = sa->Y16;
@@ -260,7 +270,7 @@ static void draw_textured(const GrVertex *a, const GrVertex *b, const GrVertex *
     double cx;
     GrLOD_t run_lod;
     if (tmu0.mipmap == GR_MIPMAP_DISABLE || tmu0.small == tmu0.large || plan->tex_white) {
-        draw_band(sa, sb, sc, ctx, plan, tmu0.large, 0, mg.mode.height);
+        draw_band(sa, sb, sc, ctx, plan, o, tmu0.large, 0, mg.mode.height);
         return;
     }
     lod_setup(&L, a, b, c);
@@ -285,12 +295,121 @@ static void draw_textured(const GrVertex *a, const GrVertex *b, const GrVertex *
         if (run_lod == (GrLOD_t)-1)
             run_lod = l;
         else if (l != run_lod) {
-            draw_band(sa, sb, sc, ctx, plan, run_lod, run_start, row);
+            draw_band(sa, sb, sc, ctx, plan, o, run_lod, run_start, row);
             run_start = row;
             run_lod = l;
         }
     }
-    draw_band(sa, sb, sc, ctx, plan, run_lod, run_start, r1);
+    draw_band(sa, sb, sc, ctx, plan, o, run_lod, run_start, r1);
+}
+
+static int atest_pass(int func, int a, int ref)
+{
+    switch (func) {
+    case GR_CMP_NEVER: return 0;
+    case GR_CMP_LESS: return a < ref;
+    case GR_CMP_EQUAL: return a == ref;
+    case GR_CMP_LEQUAL: return a <= ref;
+    case GR_CMP_GREATER: return a > ref;
+    case GR_CMP_NOTEQUAL: return a != ref;
+    case GR_CMP_GEQUAL: return a >= ref;
+    default: return 1;
+    }
+}
+
+/* Apply the alpha plan: alpha test, chroma key and blending. Returns 0
+ * when the triangle draws nothing. */
+/* Alpha below which stipple coverage rounds to zero (half of 1/16). */
+#define STIPPLE_MIN_ALPHA 8
+
+static int alpha_setup(mg_plan *plan, const mg_aplan *ap, draw_opts *o, mga_svtx *sa, mga_svtx *sb, mga_svtx *sc)
+{
+    const mg_state *s = &mg.st;
+    mga_svtx *v[3];
+    int i, tex_alpha = ap->alpha_src == AS_TEXTURE || ap->alpha_src == AS_MODULATED_ITER ||
+                       ap->alpha_src == AS_MODULATED_CONST;
+    int const_a = (int)(mg_color_to_argb(s->constant_color) >> 24);
+    int binary = tmu0.fmt == GR_TEXFMT_ARGB_1555;
+    v[0] = sa; v[1] = sb; v[2] = sc;
+    /* Per-vertex alpha for the diffuse plane. */
+    for (i = 0; i < 3; i++) {
+        if (ap->alpha_src == AS_CONSTANT || ap->alpha_src == AS_MODULATED_CONST)
+            v[i]->a = (float)const_a;
+        else if (ap->alpha_src == AS_ONE || ap->alpha_src == AS_TEXTURE)
+            v[i]->a = 255;
+        if (ap->fixed_alpha >= 0)
+            v[i]->a = (float)ap->fixed_alpha;
+        if (ap->invert)
+            v[i]->a = 255 - v[i]->a;
+    }
+    /* Alpha test. */
+    if (ap->atest != GR_CMP_ALWAYS) {
+        if (tex_alpha && plan->textured) {
+            o->var.kind |= TV_ATEST;
+            o->var.afunc = ap->atest;
+            o->var.aref = s->alpha_test_ref;
+        } else {
+            int pass = 0;
+            for (i = 0; i < 3; i++)
+                pass += atest_pass(ap->atest, (int)v[i]->a, s->alpha_test_ref);
+            if (!pass)
+                return 0;
+        }
+    }
+    /* Chroma key: exact texel matches become transparent. */
+    if (s->chroma_mode == GR_CHROMAKEY_ENABLE) {
+        uint32_t key = mg_color_to_argb(s->chroma_value) & 0xFFFFFF;
+        if (plan->textured && !plan->tex_white) {
+            o->var.kind |= TV_CHROMA;
+            o->var.chroma = key;
+        } else if (plan->color_src == CS_CONSTANT && (mg_color_to_argb(s->constant_color) & 0xFFFFFF) == key) {
+            return 0;
+        }
+    }
+    /* Blending. */
+    if (ap->native) {
+        o->alphactrl = ap->factors | ALPHACTRL_ALPHASEL(tex_alpha ? ALPHASEL_MODULATED : ALPHASEL_DIFFUSE);
+        return 1;
+    }
+    if (ap->stipple) {
+        if (ap->alpha_src == AS_TEXTURE && binary && plan->textured && ap->fixed_alpha < 0) {
+            /* 1-bit alpha: blending with alpha 0 or 1 is exactly a key. */
+            o->var.kind |= TV_ATEST;
+            o->var.afunc = ap->invert ? GR_CMP_LESS : GR_CMP_GEQUAL;
+            o->var.aref = 128;
+            return 1;
+        }
+        /* The stipple threshold matrix includes 0, so any alpha draws at
+         * least one pixel in 16, where a blend with alpha ~0 draws nothing.
+         * Drop what would round to zero coverage: whole triangles when the
+         * alpha comes from the vertices, texels when it comes from the
+         * texture (hardware alpha key, which keeps the texel alpha). */
+        {
+            int src_vtx = ap->fixed_alpha >= 0 || ap->alpha_src != AS_TEXTURE;
+            int src_tex = ap->fixed_alpha < 0 && tex_alpha && plan->textured && !ap->invert;
+            if (src_vtx && ap->alpha_src != AS_TEXTURE) {
+                int max_a = 0;
+                for (i = 0; i < 3; i++)
+                    if ((int)v[i]->a > max_a)
+                        max_a = (int)v[i]->a;
+                if (max_a < STIPPLE_MIN_ALPHA)
+                    return 0;
+            }
+            if (src_tex)
+                o->akey0 = 1;   /* hardware key on alpha 0; no conversion, alpha kept */
+        }
+        if (!plan->textured) {
+            /* G100 applies alpha only in textured trapezoids. */
+            plan->textured = 1;
+            plan->tex_white = 1;
+            plan->modulate = 1;
+        }
+        o->alphactrl = ALPHACTRL_G100_FIXED | ALPHACTRL_ASTIPPLE |
+                       ALPHACTRL_ALPHASEL(ap->alpha_src == AS_TEXTURE && ap->fixed_alpha < 0 ? ALPHASEL_TEXTURE :
+                                          (ap->alpha_src == AS_MODULATED_ITER || ap->alpha_src == AS_MODULATED_CONST) &&
+                                          ap->fixed_alpha < 0 ? ALPHASEL_MODULATED : ALPHASEL_DIFFUSE);
+    }
+    return 1;
 }
 
 void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
@@ -298,6 +417,8 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
     mga_svtx sa, sb, sc;
     mga_tri_ctx ctx;
     mg_plan plan;
+    mg_aplan ap;
+    draw_opts opts;
     int wmode = mg.st.depth_mode == GR_DEPTHBUFFER_WBUFFER || mg.st.depth_mode == GR_DEPTHBUFFER_WBUFFER_COMPARE_TO_BIAS;
     int depth = mg.st.depth_mode != GR_DEPTHBUFFER_DISABLE && mg.has_aux;
     int64_t area;
@@ -320,11 +441,20 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
     if (!mg.st.color_mask_rgb && !(depth && mg.st.depth_mask))
         return;
     mg_combine_plan(&plan);
-    if (plan.approx)
+    mg_alpha_plan(&ap);
+    if (plan.approx || ap.approx)
         mg_note_approx();
+    if (mg_config.census)
+        mg_census();
+    if (ap.skip || (ap.color_off && !depth))
+        return;
     vtx(&sa, a, wmode, plan.color_src);
     vtx(&sb, b, wmode, plan.color_src);
     vtx(&sc, c, wmode, plan.color_src);
+    memset(&opts, 0, sizeof opts);
+    opts.alphactrl = ALPHACTRL_G100_FIXED | ALPHACTRL_ALPHASEL(ALPHASEL_DIFFUSE);
+    if (!alpha_setup(&plan, &ap, &opts, &sa, &sb, &sc))
+        return;
     mg_validate();
     ctx.flags = MGA_S_VOODOO_EDGES;
     ctx.dwgctl = DWG_BOP_COPY;
@@ -347,7 +477,9 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
         ctx.flags |= MGA_S_TEX;
         if (plan.modulate && (plan.color_src == CS_ITERATED || plan.color_src == CS_ITER_ALPHA))
             ctx.flags |= MGA_S_COLOR;
-        draw_textured(a, b, c, &sa, &sb, &sc, &ctx, &plan);
+        if (ap.stipple && ap.alpha_src != AS_TEXTURE)
+            ctx.flags |= MGA_S_ALPHA;
+        draw_textured(a, b, c, &sa, &sb, &sc, &ctx, &plan, &opts);
     }
     mg_stats.tris++;
 }

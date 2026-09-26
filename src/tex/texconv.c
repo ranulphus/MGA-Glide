@@ -96,9 +96,67 @@ static int src_index(int x, int len, int clamp)
     return clamp ? len - 1 : x % len;
 }
 
+uint32_t tex_variant_key(const tex_variant *v)
+{
+    if (!v || !v->kind)
+        return 0;
+    return ((uint32_t)v->kind << 30) ^ ((v->kind & TV_CHROMA) ? (v->chroma & 0xFFFFFF) : 0) ^
+           ((v->kind & TV_ATEST) ? (((uint32_t)v->afunc << 24) | ((uint32_t)v->aref << 16)) * 31u : 0);
+}
+
+static int atest_pass(int func, int a, int ref)
+{
+    switch (func) {
+    case GR_CMP_NEVER: return 0;
+    case GR_CMP_LESS: return a < ref;
+    case GR_CMP_EQUAL: return a == ref;
+    case GR_CMP_LEQUAL: return a <= ref;
+    case GR_CMP_GREATER: return a > ref;
+    case GR_CMP_NOTEQUAL: return a != ref;
+    case GR_CMP_GEQUAL: return a >= ref;
+    default: return 1;
+    }
+}
+
+/* Give each transparent texel the mean colour of its opaque 4-neighbours.
+ * The key is carried by the alpha bit alone, so this changes nothing that
+ * is drawn directly; it stops bilinear filtering from pulling the edges of
+ * keyed sprites towards the colour hidden behind the key (usually black).
+ * Only opaque texels are read and only transparent ones written, so one
+ * in-place pass is order-independent. */
+static void bleed_keyed(uint32_t *px, int w, int h, int clamp_s, int clamp_t)
+{
+    static const int dx[4] = { -1, 1, 0, 0 }, dy[4] = { 0, 0, -1, 1 };
+    int x, y, k;
+    for (y = 0; y < h; y++)
+        for (x = 0; x < w; x++) {
+            unsigned r = 0, g = 0, b = 0, n = 0;
+            if (px[y * w + x] >> 24)
+                continue;
+            for (k = 0; k < 4; k++) {
+                int nx = x + dx[k], ny = y + dy[k];
+                uint32_t c;
+                if (nx < 0 || nx >= w) {
+                    if (clamp_s) continue;
+                    nx = (nx + w) % w;
+                }
+                if (ny < 0 || ny >= h) {
+                    if (clamp_t) continue;
+                    ny = (ny + h) % h;
+                }
+                c = px[ny * w + nx];
+                if (!(c >> 24))
+                    continue;
+                r += (c >> 16) & 0xFF; g += (c >> 8) & 0xFF; b += c & 0xFF; n++;
+            }
+            if (n)
+                px[y * w + x] = ((r / n) << 16) | ((g / n) << 8) | (b / n);
+        }
+}
+
 int tex_convert_level(GrTextureFormat_t fmt, const void *src, int w, int h,
                       uint16_t *dst, int dst_pitch, int hw_w, int hw_h, int clamp_s, int clamp_t,
-                      const tex_tables *t, int force_hwfmt, uint32_t *scratch)
+                      const tex_tables *t, int force_hwfmt, uint32_t *scratch, const tex_variant *var)
 {
     int x, y, hwfmt, native = -1;
     const uint8_t *s8 = (const uint8_t *)src;
@@ -107,7 +165,7 @@ int tex_convert_level(GrTextureFormat_t fmt, const void *src, int w, int h,
     if (fmt == GR_TEXFMT_RGB_565) native = HW_TW16;
     else if (fmt == GR_TEXFMT_ARGB_1555) native = HW_TW15;
     else if (fmt == GR_TEXFMT_ARGB_4444) native = HW_TW12;
-    if (native >= 0 && (force_hwfmt < 0 || force_hwfmt == native)) {
+    if (native >= 0 && (force_hwfmt < 0 || force_hwfmt == native) && !(var && var->kind)) {
         for (y = 0; y < hw_h; y++) {
             const uint16_t *row = s16 + src_index(y, h, clamp_t) * w;
             for (x = 0; x < hw_w; x++)
@@ -118,7 +176,22 @@ int tex_convert_level(GrTextureFormat_t fmt, const void *src, int w, int h,
     for (y = 0; y < h; y++)
         for (x = 0; x < w; x++)
             scratch[y * w + x] = tex_decode(fmt, tex_bpp(fmt) == 2 ? s16[y * w + x] : s8[y * w + x], t);
-    hwfmt = force_hwfmt >= 0 ? force_hwfmt : tex_classify(scratch, w * h);
+    if (var && var->kind) {
+        /* Keyed variant: 1-bit alpha, transparent where the key matches or
+         * the alpha test fails; drawn with the hardware alpha key. */
+        for (x = 0; x < w * h; x++) {
+            uint32_t c = scratch[x];
+            int keep = 1;
+            if ((var->kind & TV_CHROMA) && (c & 0xFFFFFF) == (var->chroma & 0xFFFFFF))
+                keep = 0;
+            if ((var->kind & TV_ATEST) && !atest_pass(var->afunc, (int)(c >> 24), var->aref))
+                keep = 0;
+            scratch[x] = (c & 0xFFFFFF) | (keep ? 0xFF000000u : 0);
+        }
+        bleed_keyed(scratch, w, h, clamp_s, clamp_t);
+        hwfmt = HW_TW15;
+    } else
+        hwfmt = force_hwfmt >= 0 ? force_hwfmt : tex_classify(scratch, w * h);
     for (y = 0; y < hw_h; y++) {
         const uint32_t *row = scratch + src_index(y, h, clamp_t) * w;
         for (x = 0; x < hw_w; x++)

@@ -2,5 +2,6 @@
 # BOX86_COMMIT by tools/86box/build.sh.
 local/0001-mga-unsupported-state-warns.patch
 local/0002-mga-bilinear-fixes.patch
+local/0003-mga-16bpp-palette-index.patch
 local/0101-sdl-monitor-key-and-pipe.patch
 local/0102-unittester-clean-exit-and-serial-flush.patch

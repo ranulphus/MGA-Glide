@@ -42,7 +42,7 @@ grErrorSetCallback | void | GrErrorCallbackFnc_t fnc | 1 | gs | partial
 grFogColorValue | void | GrColor_t fogcolor | 2 | gs | partial
 grFogMode | void | GrFogMode_t mode | 2 | gs | partial
 grFogTable | void | const GrFog_t ft[] | 2 | gs | partial
-grGammaCorrectionValue | void | float value | 2 | gs | stub
+grGammaCorrectionValue | void | float value | 2 | gs | partial
 grGlideGetState | void | GrState *state | 3 | gs | partial
 grGlideGetVersion | void | char version[80] | 1 | gs | partial
 grGlideInit | void | void | 1 | gs | partial

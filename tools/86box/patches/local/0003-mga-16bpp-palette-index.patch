@@ -1,0 +1,29 @@
+diff --git a/src/video/vid_mga.c b/src/video/vid_mga.c
+index f57bcea..4a0a57d 100644
+--- a/src/video/vid_mga.c
++++ b/src/video/vid_mga.c
+@@ -6768,15 +6768,18 @@ mystique_conv_16to32(svga_t* svga, uint16_t color, uint8_t bpp)
+             uint8_t g = getcolg(svga->pallook[((color & 0x3E0) >> 5) | (!!(color & 0x8000) >> 8)]);
+             uint8_t r = getcolb(svga->pallook[((color & 0x7C00) >> 10) | (!!(color & 0x8000) >> 8)]);
+ #else
+-            uint8_t b = getcolr(svga->pallook[color & 0x1f]);
+-            uint8_t g = getcolg(svga->pallook[(color & 0x3e0) >> 5]);
+-            uint8_t r = getcolb(svga->pallook[(color & 0x7c00) >> 10]);
++            /* MGA-Glide local patch: the palette RAM is indexed by each
++             * component in the top bits of the 8-bit index (as the X.org
++             * driver loads it), not by the raw 5-bit value. */
++            uint8_t b = getcolr(svga->pallook[(color & 0x1f) << 3]);
++            uint8_t g = getcolg(svga->pallook[((color & 0x3e0) >> 5) << 3]);
++            uint8_t r = getcolb(svga->pallook[((color & 0x7c00) >> 10) << 3]);
+ #endif
+             ret = (video_15to32[color] & 0xFF000000) | makecol(r, g, b);
+         } else {
+-            uint8_t b = getcolr(svga->pallook[color & 0x1f]);
+-            uint8_t g = getcolg(svga->pallook[(color & 0x7e0) >> 5]);
+-            uint8_t r = getcolb(svga->pallook[(color & 0xf800) >> 11]);
++            uint8_t b = getcolr(svga->pallook[(color & 0x1f) << 3]);
++            uint8_t g = getcolg(svga->pallook[((color & 0x7e0) >> 5) << 2]);
++            uint8_t r = getcolb(svga->pallook[((color & 0xf800) >> 11) << 3]);
+             ret = (video_16to32[color] & 0xFF000000) | makecol(r, g, b);
+         }
+     } else

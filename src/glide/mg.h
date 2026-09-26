@@ -98,6 +98,7 @@ uint32_t mg_wdepth_from_code(FxU16 code, int zbits);
 uint32_t mg_depth_clear_value(FxU16 depth);
 /* combine.c */
 void mg_note_approx(void);
+void mg_census(void);
 /* frame.c */
 typedef struct { uint32_t tris; } mg_stats_t;
 extern mg_stats_t mg_stats;
@@ -105,5 +106,7 @@ void mg_frame_end(void);
 
 /* FPU control for entry points that do float maths (see fp.h). */
 #include "mga/fp.h"
+
+void mg_gamma_apply(void);
 
 #endif

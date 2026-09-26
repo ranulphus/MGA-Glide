@@ -48,7 +48,7 @@ GR_ENTRY(void, grGlideInit, (void))
     mg.error_cb = cb;
     mg_line("MGL-INIT MGA-Glide %s", MGA_GLIDE_VERSION);
     mg_config_load();
-    mg.gamma = 1.0f;
+    mg.gamma = 1.7f;            /* retail Voodoo Graphics default, measured by t22_d */
     strcpy(mg.version, mg_config.report_version);
     mg_state_defaults();
     if (mg_device_open() == 0)
@@ -226,6 +226,7 @@ GR_ENTRY(FxBool, grSstWinOpen, (FxU32 hWnd, GrScreenResolution_t screen_resoluti
     mg.dirty = ~0u;
     engine_sync(200000);
     vbe_set_display_start(mg.buf_off[mg.front], pitch * 2, 16);
+    mg_gamma_apply();
     mg_line("MGL-WINOPEN %dx%d mode=%03x pitch=%d buffers=%d aux=%d z%d vram=%u heap=%u",
             w, h, mg.mode.mode, pitch, mg.nbuffers, mg.has_aux, mg.zbits, mga.vram_bytes,
             mg.heap_end - mg.heap_off);

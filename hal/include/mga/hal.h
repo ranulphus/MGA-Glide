@@ -85,6 +85,9 @@ uint32_t engine_vcount(void);
 extern const mga_target *engine_target;
 extern uint32_t engine_resets, engine_timeouts;
 
+/* dac.c */
+void dac_set_ramp(const uint8_t ramp[256]);
+
 /* fifo.c: the single choke point for register writes (PRD §10). */
 void fifo_reserve(int n);
 void fifo_reset(void);

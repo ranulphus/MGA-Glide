@@ -21,6 +21,7 @@ typedef struct {
     int  combine_strict;
     int  forced_bilinear;
     int  gamma_enable;
+    int  census;               /* log distinct draw states (MGL-CENSUS) */
 } mg_config_t;
 
 extern mg_config_t mg_config;

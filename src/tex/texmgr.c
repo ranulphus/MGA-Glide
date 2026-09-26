@@ -22,7 +22,7 @@ typedef struct {
     uint32_t hw_block, hw_bytes;            /* VRAM allocation (0 bytes = none) */
     tex_level_hw hw[9];
     uint8_t  hw_valid[9];
-    uint32_t hw_pal_gen, hw_ncc_gen;
+    uint32_t hw_pal_gen, hw_ncc_gen, hw_var;
     int      hw_clamp;
     uint32_t last_frame;
 } tex_rec;
@@ -421,8 +421,12 @@ static int ensure_block(int ri)
     return 0;
 }
 
-int tex_bind_level(GrLOD_t lod, tex_level_hw *hw)
+static int last_hwfmt = HW_TW16;
+int tex_level_alpha_class(void) { return last_hwfmt; }
+
+int tex_bind_level(GrLOD_t lod, const tex_variant *var, tex_level_hw *hw)
 {
+    uint32_t vkey = tex_variant_key(var);
     tex_rec *r;
     int clamp_key = (tmu0.clamp_s == GR_TEXTURECLAMP_CLAMP) | ((tmu0.clamp_t == GR_TEXTURECLAMP_CLAMP) << 1);
     int w, h, palettised, nccfmt;
@@ -441,11 +445,12 @@ int tex_bind_level(GrLOD_t lod, tex_level_hw *hw)
     nccfmt = r->fmt == GR_TEXFMT_YIQ_422 || r->fmt == GR_TEXFMT_AYIQ_8422;
     tex_dims(lod, r->aspect, &w, &h);
     if ((palettised && r->hw_pal_gen != tmu0.pal_gen) || (nccfmt && r->hw_ncc_gen != tmu0.ncc_gen) ||
-        ((w < 8 || h < 8) && r->hw_clamp != clamp_key)) {
+        ((w < 8 || h < 8) && r->hw_clamp != clamp_key) || r->hw_var != vkey) {
         memset(r->hw_valid, 0, sizeof r->hw_valid);
         r->hw_pal_gen = tmu0.pal_gen;
         r->hw_ncc_gen = tmu0.ncc_gen;
         r->hw_clamp = clamp_key;
+        r->hw_var = vkey;
     }
     if (!r->hw_valid[lod]) {
         tex_level_hw *lv = &r->hw[lod];
@@ -453,12 +458,13 @@ int tex_bind_level(GrLOD_t lod, tex_level_hw *hw)
         /* The level may still be read by queued draws. */
         engine_sync(200000);
         lv->hwfmt = tex_convert_level(r->fmt, r->shadow + r->shadow_off[lod], w, h, staging, hw_w, hw_w, hw_h,
-                                      clamp_key & 1, (clamp_key >> 1) & 1, &tmu0.tables, -1, scratch);
+                                      clamp_key & 1, (clamp_key >> 1) & 1, &tmu0.tables, -1, scratch, var);
         for (y = 0; y < hw_h; y++)
             memcpy((void *)(mga_fb + lv->org + (uint32_t)(y * hw_w * 2)), staging + y * hw_w, (size_t)hw_w * 2);
         r->hw_valid[lod] = 1;
     }
     *hw = r->hw[lod];
     hw->logical_maxdim = w > h ? w : h;
+    last_hwfmt = hw->hwfmt;
     return 0;
 }

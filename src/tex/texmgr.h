@@ -42,7 +42,10 @@ void tex_reset(void);                              /* at grSstWinOpen */
 void tex_heap_init(uint32_t start, uint32_t end);
 /* Ensure level 'lod' of the current source is resident; fills *hw.
  * Returns 0, or -1 when there is no usable texture (draw with white). */
-int  tex_bind_level(GrLOD_t lod, tex_level_hw *hw);
+int  tex_bind_level(GrLOD_t lod, const tex_variant *var, tex_level_hw *hw);
+/* Alpha at a texel is binary (0/255) for the bound texture's level? Used
+ * to decide whether an alpha test can use the hardware key directly. */
+int  tex_level_alpha_class(void);
 int  tex_white(tex_level_hw *hw);
 void tex_frame(void);                              /* LRU clock */
 
