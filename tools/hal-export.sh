@@ -23,11 +23,13 @@ for f in $(git ls-files hal); do copy "$f"; done
 # Host reference rasteriser and the setup unit test.
 for f in tests/unit/unit.c tests/unit/unit.h tests/unit/refrast.c tests/unit/refrast.h tests/unit/test_trap.c; do copy "$f"; done
 # Smoke and bring-up programs, the guest shim and DOS helpers.
-for f in tests/hal/smoke.c tests/hal/probe.c tests/hal/romdump.c tests/shim/hx.c tests/shim/hx.h $(git ls-files tools/dos); do copy "$f"; done
+for f in tests/hal/smoke.c tests/hal/probe.c tests/hal/romdump.c tests/shim/hx.c tests/shim/hx.h tests/shim/hello.c $(git ls-files tools/dos); do copy "$f"; done
+# Loop C rig (Linux port is part of hal/).
+for f in tests/rig/mgarig.c $(git ls-files tools/rig); do copy "$f"; done
 # Loop A harness, 86Box build and patches, setup scripts, dev container.
-for f in $(git ls-files tools/loopa tools/86box tools/setup tools/docker) tools/dev tools/imgcmp.py; do copy "$f"; done
+for f in $(git ls-files tools/loopa tools/86box tools/setup tools/docker tools/bench) tools/dev tools/imgcmp.py; do copy "$f"; done
 # Documents that describe the shared parts.
-for f in docs/loops.md docs/emulated-g200.md docs/reference-gaps.md docs/bench.md LICENSE; do copy "$f"; done
+for f in docs/loops.md docs/emulated-g200.md docs/emulated-g400.md docs/reference-gaps.md docs/bench.md docs/loop-c-results.md LICENSE; do copy "$f"; done
 
 version=$(git describe --always --dirty 2>/dev/null || echo unknown)
 echo "$version" > "$dest/VERSION"
@@ -52,7 +54,7 @@ OWENV := env WATCOM=$(WATCOM) PATH=$(OWBIN):$(PATH) INCLUDE=$(WATCOM)/h
 WCC := $(OWENV) $(OWBIN)/wcc386
 OW_CFLAGS := -bt=dos -mf -3s -fp5 -fpi87 -zri -ei -j -zastd=c99 -zq -we -wx -i=hal/include -dMGA_OW=1 -oxt
 
-.PHONY: all hal-djgpp hal-host hal-ow tests-host smoke-djgpp setup-djgpp setup-ow 86box clean
+.PHONY: all hal-djgpp hal-host hal-ow tests-host smoke-djgpp dostests-djgpp setup-djgpp setup-ow 86box clean
 all: hal-djgpp hal-host tests-host
 
 build/djgpp/%.o: %.c
@@ -65,6 +67,13 @@ hal-djgpp: build/djgpp/libmgahal.a
 build/djgpp/SMOKE.EXE: tests/hal/smoke.c build/djgpp/libmgahal.a
 	$(Q)$(DJCC) $(DJ_CFLAGS) -o $@ $^
 smoke-djgpp: build/djgpp/SMOKE.EXE
+
+# Guest shim programs with DJGPP (Loop A and bench jobs run them with CWSDPMI).
+build/djgpp/HELLO.EXE: tests/shim/hello.c tests/shim/hx.c build/djgpp/libmgahal.a
+	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^
+build/djgpp/PROBE.EXE: tests/hal/probe.c tests/shim/hx.c build/djgpp/libmgahal.a
+	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^
+dostests-djgpp: build/djgpp/HELLO.EXE build/djgpp/PROBE.EXE
 
 build/host/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -105,15 +114,20 @@ MGA-Glide (Open Watcom, DOS/4GW) and DOS-GL (DJGPP):
 | \`hal/\` | PCI, capabilities, VBE, FIFO pacing, engine, DAC, trapezoid setup; ports for DOS/4GW, DJGPP and the host |
 | \`tests/unit/\` | host reference rasteriser and the setup test |
 | \`tests/hal/\` | \`smoke.c\` (any toolchain), \`probe.c\`, \`romdump.c\` |
-| \`tools/loopa/\`, \`tools/86box/\` | Loop A harness and the pinned 86Box with the local patches (never upstreamed), incl. the emulated G200 |
+| \`tools/loopa/\`, \`tools/86box/\` | Loop A harness and the pinned 86Box with the local patches (never upstreamed): emulated G200, G400 and G450 on Matrox's own BIOSes |
+| \`tools/bench/\` | Loop B: bench job runner, upload sink, capture helper, the 86Box virtual bench PC |
+| \`tests/rig/\`, \`tools/rig/\` | Loop C rig for a Matrox card under Linux (\`hal/port/linux.c\`) |
 
 \`\`\`
 make setup-djgpp && make hal-djgpp smoke-djgpp
 make hal-host tests-host
 \`\`\`
 
-See \`docs/loops.md\` and \`docs/emulated-g200.md\`.
+See \`docs/loops.md\`, \`docs/bench.md\`, \`docs/emulated-g200.md\` and \`docs/emulated-g400.md\`.
+\`MANIFEST\` lists every file's sha256 so a vendored copy can be checked for local edits.
 EOF2
+
+(cd "$dest" && find . -type f ! -name MANIFEST ! -path './.git/*' | LC_ALL=C sort | xargs sha256sum > MANIFEST)
 
 if [ "$git_init" = 1 ]; then
   (cd "$dest" && git init -q && git add -A && git -c user.name="$(git -C "$root" config user.name)" \

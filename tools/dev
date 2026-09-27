@@ -12,6 +12,11 @@ if ! docker image inspect "$img" >/dev/null 2>&1; then
   docker build -q -t "$img" "$repo/tools/docker" >&2
 fi
 opt=${MGA_OPT:-$HOME/.local/opt}; cache=${MGA_CACHE:-$HOME/.cache/mga-glide}
+# A project that vendors this harness (DOS-GL: third_party/mgahal) runs it
+# from its own tree: mount the caller's repository as well.
+caller=$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)
+extra=()
+if [ -n "$caller" ] && [ "$caller" != "$repo" ]; then extra=(-v "$caller:$caller"); fi
 mkdir -p "$opt" "$cache"
 tty=(); [ -t 0 ] && [ -t 1 ] && tty=(-it)
 envs=()
@@ -20,7 +25,7 @@ while IFS='=' read -r k _; do
 done < <(env)
 exec docker run --rm "${tty[@]}" --init \
   -u "$(id -u):$(id -g)" -e HOME="$HOME" -e MGA_CACHE="$cache" "${envs[@]}" \
-  -v "$repo:$repo" -v "$opt:$opt" -v "$cache:$cache" \
+  -v "$repo:$repo" -v "$opt:$opt" -v "$cache:$cache" "${extra[@]}" \
   ${MGA_GAMES_DIR:+-v "$MGA_GAMES_DIR:$MGA_GAMES_DIR:ro"} \
   ${MGA_DOCKER_NETWORK:+--network "$MGA_DOCKER_NETWORK"} \
   -w "$PWD" "$img" "$@"

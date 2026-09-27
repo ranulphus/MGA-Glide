@@ -9,12 +9,12 @@ are marked **pending**.
 
 | Item | Status | Evidence |
 |---|---|---|
-| **B1** G100, G200, G450 in the HAL | G100: complete (emulated). G200: complete against the emulated G200. G450: capabilities only | `hal/src/chip.c`; conformance 24/24 on both emulated cards |
+| **B1** G100, G200, G450 in the HAL | G100: complete (emulated). G200: complete against the emulated G200 on Matrox's BIOS 900-33. G400 and G450: complete against emulated cards on Matrox's BIOSes 897-21 and 935-20 | `hal/src/chip.c`; conformance 25/25 on all four emulated cards; `docs/emulated-g400.md` |
 | **B2** G100 blending | Stipple only: `ALPHACTRL` must hold `0x54` in its low byte, `astipple` (bit 11) turns the stipple on, `alphasel` picks texture, diffuse or modulated alpha. Additive and destination-reading blends cannot be expressed | `docs/combine-coverage.md`; G100 approximations |
 | **B3** 86Box | The G100 needs `-DDEV_BRANCH=ON`. Use `tools/86box/build.sh` (pinned commit plus `tools/86box/series`) | local patches 0001–0005, 0101–0102 |
 | **B4** G100 `ALPHACTRL` | Stipple alpha only, confirmed in 86Box. On silicon: **pending** | as B2 |
-| **B5** Emulated G200 | `--card g200`: native `ALPHACTRL` blending and alpha test (also in plain `TRAP`), `TEXCTL2` specular and decal blend, `TEXORG1..4` mip levels, `DSTORG` with absolute `ZORG` | `docs/emulated-g200.md` lists what is modelled and what is guessed |
-| **B6** HAL and harness | `tools/hal-export.sh` produces a standalone tree (HAL, reference rasteriser, smoke/probe/romdump, Loop A, 86Box build, patches). `make hal-djgpp smoke-djgpp` builds; the DJGPP smoke test passes in Loop A on both emulated cards (with CWSDPMI r7, fetched and pinned by `setup-djgpp`) | `tests/hal/smoke.c` |
+| **B5** Emulated G200 (and G400/G450) | `--card g200`: native `ALPHACTRL` blending and alpha test (also in plain `TRAP`), `TEXCTL2` specular and decal blend, `TEXORG1..4` mip levels, `DSTORG` with absolute `ZORG`. `--card g400` / `g450` add the G400 family's identity, BIOS, 32 MB BAR, 16-entry FIFO and CRTC units | `docs/emulated-g200.md`, `docs/emulated-g400.md` list what is modelled and what is guessed |
+| **B6** HAL and harness | `tools/hal-export.sh` produces a standalone tree (HAL, reference rasteriser, smoke/probe/romdump, the guest shim with DJGPP builds of HELLO and PROBE, Loop A, Loop B bench tooling, the Loop C rig, 86Box build and patches) with a `MANIFEST` of sha256 sums. The DJGPP HELLO and PROBE pass in Loop A (CWSDPMI r7 from `setup-djgpp`) and as bench jobs on the 86Box virtual bench PC | `tests/shim/`, `tests/hal/` |
 | **B9** DPMI and crash handling | `hal/port/djgpp.c` implements the port API for DJGPP. The fault/exit hooks exist only in the DOS/4GW port (`sys_hook_faults` returns -1 elsewhere), so DOS-GL keeps its own top-level handler, as planned | `hal/include/mga/sys.h` |
 | **B10** Toolchain neutrality | The HAL builds warning-free with Open Watcom, DJGPP (gcc 12.2, `-Werror`) and the host compiler; CI builds all three | `.github/workflows/ci.yml` |
 | **B12** Shared test infrastructure | `tools/imgcmp.py` (565 quantisation, tolerance, edge masks, box filter, ignore rectangles, per-cell gating), `tools/loopa/run.py` (statuses, serial parsing, screenshots, `--card`), `VMODE` for display-state checks | `docs/loops.md` |
@@ -44,6 +44,6 @@ are marked **pending**.
 | Item | What is missing |
 |---|---|
 | **B7** Throughput | Only emulator figures exist (`t23`: ~52 K small triangles/s in 86Box, which measures the emulator). Pentium II figures and the WARP decision come from milestone S |
-| **B8** BAR layout, revision IDs, VBE lists, FIFO depth | Emulated values: framebuffer, MMIO and ILOAD apertures as in `tests/hal/probe.c` output; FIFO depth 64 on G100/G200 (documented 16 on G450). The G100 BIOS's VBE list is in `docs/loops.md`'s probe run. Physical cards: **pending** |
-| **B11** cuda6 | `tools/rig/rig-probe.sh` reads the G200eR2's identity and BARs. The MMIO stages (register reset values, one `TRAP`, one `TEXTURE_TRAP`) are approved but not yet run |
+| **B8** BAR layout, revision IDs, VBE lists, FIFO depth | Emulated values: framebuffer, MMIO and ILOAD apertures as in `tests/hal/probe.c` output; FIFO depth 64 on G100/G200, 16 on G400/G450 (from the G400 specification, modelled); the Matrox BIOSes report VBE 3.0 and 555/565 modes to 1280x1024. BAR layout confirmed on the G200eR2. Physical G100/G200/G400/G450: **pending** |
+| **B11** cuda6 | All four `mgarig` stages ran on the G200eR2 (register values, `DWGSYNC`, one `TRAP`, one `TEXTURE_TRAP`) plus texturing and blending experiments; the chip kept its 3D engine. `mgarig` identifies any Matrox card from its config space (`RIG_BDF`) | `docs/loop-c-results.md` |
 | **B2/B4 on silicon** | Stipple pattern, alpha thresholds and texel-key behaviour under bilinear filtering (see the milestone S list in the plan) |

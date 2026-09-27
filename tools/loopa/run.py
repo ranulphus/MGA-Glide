@@ -29,6 +29,9 @@ import png  # noqa: E402
 CACHE = os.environ.get("MGA_CACHE", os.path.expanduser("~/.cache/mga-glide"))
 BOX86_DIR = os.environ.get("BOX86_DIR", os.path.join(CACHE, "86box"))
 WATCOM = os.environ.get("WATCOM", os.path.expanduser("~/.local/opt/watcom-20260901"))
+DJGPP_PREFIX = os.environ.get("DJGPP_PREFIX", os.path.expanduser("~/.local/opt/djgpp-gcc1220"))
+# DPMI host for DJGPP programs (fetched by `make setup-djgpp`); found via PATH.
+CWSDPMI = os.path.join(DJGPP_PREFIX, "dos", "CWSDPMI.EXE")
 
 
 
@@ -162,6 +165,8 @@ def run(a):
         for t in ("UTEXIT.COM", "SERSAY.COM", "WAITSEC.COM", "REBOOT.COM", "VMODE.COM"):
             d.put(os.path.join(ROOT, "build/ow/dos", t), "/HX/" + t)
         d.put(os.path.join(WATCOM, "binw/dos4gw.exe"), "/HX/DOS4GW.EXE")
+        if os.path.exists(CWSDPMI):
+            d.put(CWSDPMI, "/HX/CWSDPMI.EXE")
         d.mkdir("/TEST")
         exe_name = os.path.basename(a.exe).upper() if a.exe else None
         if a.exe:

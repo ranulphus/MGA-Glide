@@ -1,13 +1,30 @@
-/* hx.c - guest test shim implementation (Open Watcom, DOS/4GW). */
+/* hx.c - guest test shim implementation. Toolchain-neutral: port I/O and
+ * real-mode memory go through the HAL port (mga/sys.h), so the same file
+ * builds with Open Watcom (DOS/4GW) and DJGPP (CWSDPMI). */
 #include "hx.h"
 #include "mga/serial.h"
 #include "mga/sys.h"
-#include <conio.h>
-#include <dos.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__WATCOMC__)
+#  include <i86.h>
+#  define irq_off() _disable()
+#  define irq_on()  _enable()
+#elif defined(__DJGPP__)
+#  include <dos.h>
+#  define irq_off() disable()
+#  define irq_on()  enable()
+#else
+#  define irq_off() ((void)0)
+#  define irq_on()  ((void)0)
+#endif
+#ifndef HX_BUILD_ID
+#  define HX_BUILD_ID "unknown"
+#endif
+#define inp(p)     sys_inb(p)
+#define outp(p, v) sys_outb((p), (uint8_t)(v))
 
 hx_args_t hx_args;
 static int hx_nfail;
@@ -21,7 +38,7 @@ static int ut_base;
 static int text_mode(void)
 {
 #if defined(__WATCOMC__) || defined(__DJGPP__)
-    uint8_t mode = *(volatile uint8_t *)0x449;      /* BIOS data area: current video mode */
+    uint8_t mode = *(volatile uint8_t *)sys_real_ptr(0x40, 0x49);  /* BIOS data area: video mode */
     return mode <= 3 || mode == 7;
 #else
     return 1;
@@ -82,12 +99,12 @@ static void ut_setbase(int base)
 {
     static const char magic[] = "86Box";
     int i;
-    _disable();
+    irq_off();
     for (i = 0; i < 5; i++)
         outp(0x80, magic[i]);
     outp(0x80, base & 0xFF);
     outp(0x80, (base >> 8) & 0xFF);
-    _enable();
+    irq_on();
 }
 
 int hx_ut_present(void) { return ut_base != 0; }
@@ -205,7 +222,7 @@ static int hx_bench_capture(const char *name)
     const char *e = getenv("HX_CAPWAIT");
     long ticks = e ? atol(e) * 182L / 10 : 0;
 #if defined(__WATCOMC__) || defined(__DJGPP__)
-    volatile uint32_t *bios_ticks = (volatile uint32_t *)0x46C;
+    volatile uint32_t *bios_ticks = (volatile uint32_t *)sys_real_ptr(0x40, 0x6C);
     uint32_t t0;
 #endif
     if (ticks <= 0)

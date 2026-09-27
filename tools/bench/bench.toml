@@ -78,3 +78,23 @@ capture = ""
 capture_opts = ""
 reset = "tools/bench/vpc.py reset g100"
 games = 'D:'
+
+[pc.vbench-g400]
+card = "g400"
+serial = "file:out/vbench/g400/serial.log"
+address = "10.0.2.2"
+ftp_port = 2133
+capture = ""
+capture_opts = ""
+reset = "tools/bench/vpc.py reset g400"
+games = 'D:'
+
+[pc.vbench-g450]
+card = "g450"
+serial = "file:out/vbench/g450/serial.log"
+address = "10.0.2.2"
+ftp_port = 2134
+capture = ""
+capture_opts = ""
+reset = "tools/bench/vpc.py reset g450"
+games = 'D:'

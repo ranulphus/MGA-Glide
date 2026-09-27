@@ -4,11 +4,18 @@
 #include <stddef.h>
 
 /* Loading an invalid selector into ES raises #GP under any DPMI host. */
+#if defined(__WATCOMC__)
 void load_bad_selector(void);
 #pragma aux load_bad_selector = \
     "mov ax, 0x1235" \
     "mov es, ax" \
     modify [eax];
+#else
+static void load_bad_selector(void)
+{
+    __asm__ volatile("movw $0x1235, %%ax\n\tmovw %%ax, %%es" ::: "eax");
+}
+#endif
 
 int main(int argc, char **argv)
 {

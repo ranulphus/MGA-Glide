@@ -110,6 +110,20 @@ build/djgpp/SMOKE.EXE: tests/hal/smoke.c build/djgpp/libmgahal.a
 	$(Q)$(DJCC) $(DJ_CFLAGS) -o $@ $< build/djgpp/libmgahal.a
 smoke-djgpp: build/djgpp/SMOKE.EXE
 
+# The guest shim's programs built with DJGPP (as DOS-GL's are): Loop A and
+# bench jobs run them with CWSDPMI.
+DJ_SHIM := -Itests/shim -DHX_BUILD_ID='"$(BUILD_ID)"'
+build/djgpp/%.EXE: build/djgpp/libmgahal.a tests/shim/hx.c tests/shim/hx.h
+	@mkdir -p $(dir $@)
+	$(Q)echo "  DJLD    $@"
+	$(Q)$(DJCC) $(DJ_CFLAGS) $(DJ_SHIM) -o $@ $(DJ_SRC_$*) tests/shim/hx.c build/djgpp/libmgahal.a
+DJ_SRC_HELLO := tests/shim/hello.c
+DJ_SRC_PROBE := tests/hal/probe.c
+build/djgpp/HELLO.EXE: tests/shim/hello.c
+build/djgpp/PROBE.EXE: tests/hal/probe.c
+dostests-djgpp: build/djgpp/HELLO.EXE build/djgpp/PROBE.EXE
+.PHONY: dostests-djgpp
+
 # ---- Host trace replay (tools/hreplay) --------------------------------------
 HR_SRCS := $(RT_SRCS) $(HAL_HOST) tests/unit/refrast.c tools/hreplay/hreplay.c
 HR_GEN  := build/gen/thunks.c build/gen/stubs.c build/gen/api_names.c build/gen/replay_gen.c build/gen/glapi_static.c

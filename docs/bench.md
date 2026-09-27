@@ -13,13 +13,19 @@ reset hook.
    receiver (`tools/bench/ftpsink.py`) on the PC's `ftp_port`.
 2. The PC's poller (`C:\HX\BENCH.BAT`) sees `LATEST.TXT` change, fetches
    the job into `C:\TEST` with mTCP `HTGET` (three tries per file) and
-   runs `C:\TEST\RUN.BAT`.
+   runs `C:\TEST\RUN.BAT`. The job carries its DPMI host: `CWSDPMI.EXE` for
+   DJGPP programs (detected from the go32 stub; DOS-GL), `DOS4GW.EXE`
+   otherwise (`--extender` overrides).
 3. The program reports over COM1 (`HX-` lines, and `MGL-` lines from the
    runtime). A snapshot with no 86Box unit tester prints
    `HX-CAPTURE <name>` and holds the frame for `HX_CAPWAIT` seconds; the
    host grabs it from the PC's capture device.
 4. `RUN.BAT` uploads `C:\OUT` with mTCP `FTP` (a generated script of `put`
    lines; the password is a per-job token), then the poller reboots the PC.
+   `REBOOT.COM` resets through the PCI reset control register (port
+   `CF9h`, a full chipset reset) and falls back to the keyboard controller;
+   a keyboard-controller reset alone resets only the CPU and in 86Box
+   sometimes left the machine executing garbage at the reset vector.
 5. Results land in `out/bench/<pc>/<job>/`: `serial.log`, `files/` (the
    PC's `C:\OUT`), PNGs converted from its PPMs, `capture-*.png`,
    `result.json`. On `HANG` or `TIMEOUT` the PC's `reset` hook runs.

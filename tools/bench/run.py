@@ -42,6 +42,16 @@ import png  # noqa: E402
 import serlog  # noqa: E402
 
 WATCOM = os.environ.get("WATCOM", os.path.expanduser("~/.local/opt/watcom-20260901"))
+DJGPP_PREFIX = os.environ.get("DJGPP_PREFIX", os.path.expanduser("~/.local/opt/djgpp-gcc1220"))
+EXTENDERS = {"dos4gw": (os.path.join(WATCOM, "binw/dos4gw.exe"), "DOS4GW.EXE"),
+             "cwsdpmi": (os.path.join(DJGPP_PREFIX, "dos/CWSDPMI.EXE"), "CWSDPMI.EXE")}
+
+
+def extender_of(exe):
+    """DJGPP programs carry the go32 stub and need CWSDPMI; the rest DOS/4GW."""
+    with open(exe, "rb") as f:
+        head = f.read(4096)
+    return "cwsdpmi" if b"go32stub" in head or b"CWSDPMI" in head else "dos4gw"
 DOS83 = re.compile(r"^[A-Z0-9_$~!#%&-]{1,8}(\.[A-Z0-9_$~!#%&-]{1,3})?$")
 
 
@@ -110,7 +120,8 @@ def build_job(a, pc, cfg, job, token, jd):
         files.append(name)
         return name
 
-    add(os.path.join(WATCOM, "binw/dos4gw.exe"), "DOS4GW.EXE")
+    ext = a.extender or (extender_of(a.exe) if a.exe else "dos4gw")
+    add(*EXTENDERS[ext])
     if a.ovl:
         add(a.ovl, "GLIDE2X.OVL")
     for spec in a.file:
@@ -164,6 +175,8 @@ def main():
     ap.add_argument("--idle", type=float, help="silent seconds that count as a hang (default 180; games "
                     "log nothing per frame, so for --game only --timeout applies)")
     ap.add_argument("--capwait", type=int, default=4, help="seconds the PC holds a frame on HX-CAPTURE")
+    ap.add_argument("--extender", choices=sorted(EXTENDERS),
+                    help="DPMI host shipped with the job (default: CWSDPMI for DJGPP programs, else DOS/4GW)")
     a = ap.parse_args()
     if a.replay:
         a.exe = a.exe or os.path.join(ROOT, "build/ow/dos/GLPLAY.EXE")
