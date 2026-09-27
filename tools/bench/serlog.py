@@ -38,7 +38,9 @@ class Lines:
         self.buf = b""
         self.log = open(log, "a") if log else None
         if spec.startswith("file:"):
-            self.path = spec[5:]
+            # Relative paths are relative to the harness root, where vpc.py writes.
+            root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            self.path = os.path.join(root, spec[5:])
             os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)
             if not os.path.exists(self.path):
                 open(self.path, "wb").close()

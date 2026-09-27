@@ -1,6 +1,7 @@
 /* draw.c - vertex conversion, culling and the drawing entry points. */
 #include "glide/mg.h"
 #include "mga/setup.h"
+#include "mga/tex.h"
 #include "mga/regs_mga.h"
 #include "mga/mmio.h"
 #include "combine/combine.h"
@@ -187,38 +188,19 @@ static int bilinear_on(void)
            mg_config.forced_bilinear;
 }
 
-/* Coordinates here are normalised (1.0 = one texture width) and multiplied
- * by q. Two adjustments keep the engine on well-behaved inputs:
- *  - in wrap mode, shift each axis by whole texture periods so the smallest
- *    coordinate lies in [0, 1) (identical result; no negative coordinates,
- *    and no large ones that would force the prescale down);
- *  - with bilinear filtering, move the sample point by half a texel so the
- *    filter centres on texels as the Voodoo's does. */
-static void tex_adjust(mga_svtx *a, mga_svtx *b, mga_svtx *c, const tex_level_hw *hw)
+/* The sampler state for a bound level, from the TMU0 state (tex_emit and
+ * tex_adjust_coords in the HAL, hal/src/texhw.c). */
+static void tex_state(mga_texstate *t, const tex_level_hw *hw)
 {
-    mga_svtx *v[3];
-    int i, axis;
-    v[0] = a; v[1] = b; v[2] = c;
-    for (axis = 0; axis < 2; axis++) {
-        int wrap = axis ? tmu0.clamp_t == GR_TEXTURECLAMP_WRAP : tmu0.clamp_s == GR_TEXTURECLAMP_WRAP;
-        double mn = 1e30, half = 0.5 / (double)(1 << (axis ? hw->h_log2 : hw->w_log2));
-        for (i = 0; i < 3; i++) {
-            double q = v[i]->q > 0 ? v[i]->q : 1e-9;
-            double u = (axis ? v[i]->t : v[i]->s) / q;
-            if (u < mn) mn = u;
-        }
-        if (bilinear_on())
-            mn -= half;
-        for (i = 0; i < 3; i++) {
-            float *p = axis ? &v[i]->t : &v[i]->s;
-            double shift = 0;
-            if (bilinear_on())
-                shift -= half;
-            if (wrap)
-                shift -= mga_floor(mn);     /* minimum into [0, 1): whole periods only */
-            *p += (float)(shift * v[i]->q);
-        }
-    }
+    memset(t, 0, sizeof *t);
+    t->org = hw->org;
+    t->w_log2 = hw->w_log2;
+    t->h_log2 = hw->h_log2;
+    t->pitch = hw->pitch;
+    t->hwfmt = (uint32_t)hw->hwfmt;
+    t->clamp_u = tmu0.clamp_s == GR_TEXTURECLAMP_CLAMP;
+    t->clamp_v = tmu0.clamp_t == GR_TEXTURECLAMP_CLAMP;
+    t->bilinear = bilinear_on();
 }
 
 typedef struct {
@@ -233,36 +215,20 @@ typedef struct {
 static void emit_texture_state(const tex_level_hw *hw, int modulate, const draw_opts *o,
                                const uint32_t *mip_org, int mip_n)
 {
-    /* takey=1, tamask=0: texel alpha never keys (G100 spec: opaque). A
-     * keyed variant uses tamask=1, takey=0: alpha 0 is transparent. */
-    uint32_t texctl = (uint32_t)hw->hwfmt | TEXCTL_TPITCHLIN | TEXCTL_TPITCHEXT((uint32_t)hw->pitch & 0x7FF);
-    uint32_t filt = bilinear_on() ? TEXFILTER_BILIN : TEXFILTER_NRST;
-    if (o->var.kind || (o->akey0 && (hw->hwfmt == HW_TW12 || hw->hwfmt == HW_TW15)))
-        texctl |= TEXCTL_STRANS | TEXCTL_TAMASK;
-    else
-        texctl |= TEXCTL_TAKEY;
-    if (tmu0.clamp_s == GR_TEXTURECLAMP_CLAMP) texctl |= TEXCTL_CLAMPU;
-    if (tmu0.clamp_t == GR_TEXTURECLAMP_CLAMP) texctl |= TEXCTL_CLAMPV;
-    if (modulate) texctl |= TEXCTL_TMODULATE;
-    fifo_reserve(10);
-    MGA_WR32(MGAREG_TEXORG, hw->org);
-    MGA_WR32(MGAREG_TEXCTL, texctl);
-    if (mga.has_texctl2)
-        MGA_WR32(MGAREG_TEXCTL2, o->texctl2);
-    if (mip_n > 1) {
-        /* G200 window: levels 1..n-1 at TEXORG1..; the chip picks the level
-         * per pixel (nearest level; texel filter as the game chose). */
-        static const uint32_t orgreg[4] = { MGAREG_TEXORG1, MGAREG_TEXORG2, MGAREG_TEXORG3, MGAREG_TEXORG4 };
-        int k;
-        for (k = 1; k < mip_n; k++)
-            MGA_WR32(orgreg[k - 1], mip_org[k]);
-        MGA_WR32(MGAREG_TEXFILTER, TEXFILTER_MIN(mg_config.trilinear ? (filt == TEXFILTER_BILIN ? TEXFILTER_MM8S : TEXFILTER_MM4S)
-                                                                     : (filt == TEXFILTER_BILIN ? TEXFILTER_MM2S : TEXFILTER_MM1S)) |
-                                   TEXFILTER_MAG(filt) | TEXFILTER_FILTERALPHA | TEXFILTER_FTHRES(0x10) |
-                                   TEXFILTER_MAPNB(mip_n - 1));
-    } else
-        MGA_WR32(MGAREG_TEXFILTER, TEXFILTER_MIN(filt) | TEXFILTER_MAG(filt));
-    MGA_WR32(MGAREG_TEXTRANS, 0x0000FFFFu);
+    mga_texstate t;
+    int k;
+    tex_state(&t, hw);
+    t.modulate = modulate;
+    t.trilinear = mg_config.trilinear;
+    t.texctl2 = o->texctl2;
+    /* A keyed variant, or alpha-0 texels keyed for an alpha test: alpha 0
+     * is transparent. Otherwise texel alpha never keys (G100 spec: opaque). */
+    t.key_alpha0 = o->var.kind || (o->akey0 && (hw->hwfmt == HW_TW12 || hw->hwfmt == HW_TW15));
+    t.mip_n = mip_n;
+    for (k = 0; k < mip_n && k < 5; k++)
+        t.mip_org[k] = mip_org[k];
+    tex_emit(&t);
+    fifo_reserve(1);
     MGA_WR32(MGAREG_ALPHACTRL, o->alphactrl);
 }
 
@@ -353,7 +319,11 @@ static void draw_band(const mga_svtx *a0, const mga_svtx *b0, const mga_svtx *c0
     sa.s *= (float)sig_s; sa.t *= (float)sig_t;
     sb.s *= (float)sig_s; sb.t *= (float)sig_t;
     sc.s *= (float)sig_s; sc.t *= (float)sig_t;
-    tex_adjust(&sa, &sb, &sc, &hw);
+    {
+        mga_texstate ts;
+        tex_state(&ts, &hw);
+        tex_adjust_coords(&sa, &sb, &sc, &ts);
+    }
     {
         uint32_t mip_org[5];
         int mip_n = 0;

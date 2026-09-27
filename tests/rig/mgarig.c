@@ -50,7 +50,7 @@ static int map(void)
 static void regs(void)
 {
     static const struct { uint32_t off; const char *name; } r[] = {
-        { 0x1E10, "FIFOSTATUS" }, { 0x1E14, "STATUS" }, { 0x1C04, "MACCESS" }, { 0x1C1C, "ZORG" },
+        { 0x1E10, "FIFOSTATUS" }, { 0x1E14, "STATUS" }, { 0x1C04, "MACCESS" }, { 0x1C1C, "PLNWT" }, { 0x1C0C, "ZORG" },
         { 0x1C8C, "PITCH" }, { 0x1C94, "YDSTORG" }, { 0x1C98, "YTOP" }, { 0x1C9C, "YBOT" },
         { 0x1C80, "CXBNDRY" }, { 0x2C30, "TEXCTL" }, { 0x2C3C, "TEXCTL2" }, { 0x2C4C, "DWGSYNC" },
         { 0x2C58, "TEXFILTER" }, { 0x2C7C, "ALPHACTRL" }, { 0x2CB4, "SRCORG" }, { 0x2CB8, "DSTORG" },

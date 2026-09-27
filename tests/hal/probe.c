@@ -38,6 +38,9 @@ static void display_state(void)
     }
     hx_log("HX-STAT dac mulctrl=%02x miscctrl=%02x genctrl=%02x pixrdmsk=%02x lut%s",
            xreg(0x19), xreg(0x1E), xreg(0x1D), MGA_RD8(MGAREG_PIXRDMSK), lut);
+    /* Pixel clock: MISC clksel picks PLL set A/B/C; Fvco = 27 MHz * (n+1)/(m+1), Fo = Fvco/(p+1). */
+    hx_log("HX-STAT pll misc=%02x pixclkctrl=%02x setC m=%02x n=%02x p=%02x",
+           MGA_RD8(0x1FCC), xreg(0x1A), xreg(0x4C), xreg(0x4D), xreg(0x4E));
     hx_log("HX-STAT crtc offset=%02x start=%02x%02x ext0=%02x ext1=%02x ext2=%02x ext3=%02x vde=%02x ovf=%02x"
            " maxscan=%02x mode=%02x",
            crtc(MGAREG_CRTC_INDEX, 0x13), crtc(MGAREG_CRTC_INDEX, 0x0C), crtc(MGAREG_CRTC_INDEX, 0x0D),
@@ -77,7 +80,7 @@ int main(int argc, char **argv)
         hx_done(HX_INIT_FAILED);
     hx_log("HX-STAT status=%08lx fifostatus=%08lx", (unsigned long)MGA_RD32(MGAREG_STATUS),
            (unsigned long)MGA_RD32(MGAREG_FIFOSTATUS));
-    hx_log("HX-STAT vbe version=%04x", vbe_version());
+    hx_log("HX-STAT vbe version=%04x total_memory=%lu", vbe_version(), (unsigned long)vbe_total_memory());
     vbe_enumerate(mode_cb, NULL);
     ok = vbe_find_mode(640, 480, 16, &mode) == 0;
     hx_test("vbe-find", ok, "mode=%03x", mode.mode);

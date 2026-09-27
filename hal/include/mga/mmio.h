@@ -9,6 +9,14 @@
 
 extern volatile uint8_t *mga_mmio;
 
+/* Register write trace (hal/src/debug/regtrace.c). Recording is compiled
+ * into MGA_WR32 with MGA_TRACE_MMIO or MG_DEBUG; the functions always exist. */
+void     mga_trace_record(uint32_t off, uint32_t v);
+void     mga_trace_record_at(uint32_t off, uint32_t v, const char *file, int line);
+void     mga_trace_dump(void (*out)(const char *line), int max);   /* oldest first; max 0 = all */
+uint32_t mga_trace_count(void);
+void     mga_trace_clear(void);
+
 #if defined(MGA_HOST)
 void     mga_host_wr32(uint32_t off, uint32_t v);
 uint32_t mga_host_rd32(uint32_t off);
@@ -19,9 +27,8 @@ uint8_t  mga_host_rd8(uint32_t off);
 #  define MGA_WR8(off, v)  mga_host_wr8((off), (v))
 #  define MGA_RD8(off)     mga_host_rd8(off)
 #else
-#  if defined(MG_DEBUG)
-void mga_trace_record(uint32_t off, uint32_t v);
-#    define MGA_TRACE(off, v) mga_trace_record((off), (v))
+#  if defined(MG_DEBUG) || defined(MGA_TRACE_MMIO)
+#    define MGA_TRACE(off, v) mga_trace_record_at((off), (v), __FILE__, __LINE__)
 #  else
 #    define MGA_TRACE(off, v) ((void)0)
 #  endif

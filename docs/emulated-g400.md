@@ -25,6 +25,7 @@ Neither models the G400's second texture unit, its new combiner
 | Bus FIFO | 16 entries (`FIFOSTATUS.fifocount<4:0>`, reset `0x210`) | same | G400 specification, FIFOSTATUS |
 | CRTC offset | always 128-bit units, start address 64-bit units (the G200 model gets this only with `OPTION.interleave`, which means something else on the G400) | same | G400 specification §4.6.5 |
 | `CRTCEXT6..8` | stored and read back (the G400 BIOS reads `CRTCEXT8`) | same | G400 specification |
+| Pixel clock | Fvco = Fref·(N+1)/(M+1), Fo = Fvco/(P+1) with **Fref = 14.31818 MHz** | Fvco = 2·27 MHz·(N+2)/(M+1), Fo = Fvco/2^((P&3)+1) | G400: the formula is the specification's, but 897-21's tables only make sense with a 14.318 MHz reference (640x480: M=1, N=27, P=7 → 25.06 MHz; at the specification's 27 MHz the VCO would be 378 MHz, beyond its 310 MHz limit). G450: as the Linux matroxfb driver models it; 935-20 then programs 25.07 MHz. Both inferred: check on the cards |
 
 Under both BIOSes PROBE reports VBE 3.0, the real LFB address, the
 expected VRAM size, working engine and depth fills, and the same DAC and
@@ -35,6 +36,6 @@ both cards, and the GTA and Screamer Rally trace replays pass on both.
 
 Everything specific to the physical cards (Loop B): the OPTION values the
 BIOSes leave (`50040120` on the G400, `40091120` on the G450 in 86Box),
-PLL behaviour, the real G450's clip quirk (`g400_clip_quirk` in the HAL
+the pixel-PLL reference and formula above, the real G450's clip quirk (`g400_clip_quirk` in the HAL
 caps is not yet used), and the G450 PCI card's PLX bridge (the HAL now
 scans every PCI bus, so a card behind a bridge is found).

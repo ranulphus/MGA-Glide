@@ -36,6 +36,15 @@ static int vbe_init(void)
 
 int vbe_version(void) { return vbe_init() == 0 ? vbe_ver : 0; }
 
+/* Video memory the BIOS reports (VBE info block TotalMemory, 64 KB units):
+ * safe before any mode is set, unlike mga_probe_vram(), which writes VRAM. */
+uint32_t vbe_total_memory(void)
+{
+    if (vbe_init() < 0)
+        return 0;
+    return (uint32_t)(vbe_buf[0x12] | (vbe_buf[0x13] << 8)) << 16;
+}
+
 static int mode_info(uint16_t mode, mga_vbe_mode *m)
 {
     sys_rmregs r;

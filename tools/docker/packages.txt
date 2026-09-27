@@ -33,3 +33,4 @@ xdotool
 dosfstools
 libfl2
 gdb
+libosmesa6-dev

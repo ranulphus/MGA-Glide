@@ -12,7 +12,7 @@ index 757aebe..2fac136 100644
  
  /* JEGA */
 diff --git a/src/video/vid_mga.c b/src/video/vid_mga.c
-index c25a2d7..686ee29 100644
+index c25a2d7..d7d945c 100644
 --- a/src/video/vid_mga.c
 +++ b/src/video/vid_mga.c
 @@ -75,6 +75,13 @@ mystique_unsupported(const char *fmt, ...)
@@ -83,7 +83,22 @@ index c25a2d7..686ee29 100644
              svga->memaddr_latch <<= 1;
      }
  }
-@@ -1055,7 +1064,10 @@ mystique_recalctimings(svga_t *svga)
+@@ -992,6 +1001,14 @@ mystique_getclock(int clock, void *priv)
+     int n  = mystique->xpixpll[2].n;
+     int pl = mystique->xpixpll[2].p;
+ 
++    if (mystique->type == MGA_G450) {
++        /* MGA-Glide local: the G450's PLL (as Linux matroxfb models it):
++         * Fvco = 2 * 27 MHz * (N + 2) / (M + 1), Fo = Fvco / 2^((P & 3) + 1).
++         * Matrox's 935-20 BIOS then programs 25.07 MHz for 640x480. */
++        float fvco = 2.0f * 27000000.0f * ((float) n + 2.0f) / ((float) m + 1.0f);
++        return fvco / (float) (1 << ((pl & 3) + 1));
++    }
++
+     float fvco = mystique->pll_ref_clock * ((float) n + 1.0f) / ((float) m + 1.0f);
+     float fo   = fvco / ((float) pl + 1.0);
+ 
+@@ -1055,7 +1072,10 @@ mystique_recalctimings(svga_t *svga)
          if (mystique->type >= MGA_1064SG)
              svga->memaddr_latch = ((mystique->crtcext_regs[0] & CRTCX_R0_STARTADD_MASK) << 16) | (svga->crtc[0xc] << 8) | svga->crtc[0xd];
  
@@ -95,7 +110,7 @@ index c25a2d7..686ee29 100644
              svga->rowoffset <<= 1;
              if (mystique->type >= MGA_1064SG)
                  svga->memaddr_latch <<= 1;
-@@ -1202,7 +1214,7 @@ mystique_recalc_mapping(mystique_t *mystique)
+@@ -1202,7 +1222,7 @@ mystique_recalc_mapping(mystique_t *mystique)
          mem_mapping_disable(&mystique->ctrl_mapping);
  
      if (mystique->lfb_base)
@@ -104,7 +119,7 @@ index c25a2d7..686ee29 100644
      else
          mem_mapping_disable(&mystique->lfb_mapping);
  
-@@ -1662,15 +1674,17 @@ mystique_ctrl_read_b(uint32_t addr, void *priv)
+@@ -1662,15 +1682,17 @@ mystique_ctrl_read_b(uint32_t addr, void *priv)
                  ret = (mystique->dwgreg.dwgsync >> ((addr & 3) * 8)) & 0xff;
                  break;
              case REG_FIFOSTATUS:
@@ -125,7 +140,7 @@ index c25a2d7..686ee29 100644
                      ret |= 1;
                  break;
              case REG_FIFOSTATUS + 2:
-@@ -6717,7 +6731,9 @@ mystique_pci_read(UNUSED(int func), int addr, UNUSED(int len), void *priv)
+@@ -6717,7 +6739,9 @@ mystique_pci_read(UNUSED(int func), int addr, UNUSED(int len), void *priv)
                  break;
  
              case 0x02:
@@ -136,7 +151,7 @@ index c25a2d7..686ee29 100644
                      ret = 0x21;
                  else if (mystique->type == MGA_G100)
                      ret = 0x01;
-@@ -6725,7 +6741,7 @@ mystique_pci_read(UNUSED(int func), int addr, UNUSED(int len), void *priv)
+@@ -6725,7 +6749,7 @@ mystique_pci_read(UNUSED(int func), int addr, UNUSED(int len), void *priv)
                      ret = (mystique->type == MGA_2164W) ? (mystique->is_agp ? 0x1f : 0x1b) : ((mystique->type == MGA_2064W) ? 0x19 : 0x1a);
                  break; /*MGA*/
              case 0x03:
@@ -145,7 +160,7 @@ index c25a2d7..686ee29 100644
                      ret = 0x05;
                  else if (mystique->type == MGA_G100)
                      ret = 0x10;
-@@ -6748,7 +6764,10 @@ mystique_pci_read(UNUSED(int func), int addr, UNUSED(int len), void *priv)
+@@ -6748,7 +6772,10 @@ mystique_pci_read(UNUSED(int func), int addr, UNUSED(int len), void *priv)
                  break; /*Fast DEVSEL timing*/
  
              case 0x08:
@@ -157,7 +172,7 @@ index c25a2d7..686ee29 100644
                  break; /*Revision ID*/
              case 0x09:
                  ret = 0;
-@@ -6980,7 +6999,9 @@ mystique_pci_write(UNUSED(int func), int addr, UNUSED(int len), uint8_t val, voi
+@@ -6980,7 +7007,9 @@ mystique_pci_write(UNUSED(int func), int addr, UNUSED(int len), uint8_t val, voi
              break;
          case 0x13:
              if (mystique->type >= MGA_1164SG) {
@@ -168,7 +183,21 @@ index c25a2d7..686ee29 100644
                      mystique->lfb_base = val << 24;
                  else
                      mystique->lfb_base = (mystique->lfb_base & 0x00800000) | (val << 24);
-@@ -7164,6 +7185,10 @@ mystique_init(const device_t *info)
+@@ -7153,7 +7182,12 @@ mystique_init(const device_t *info)
+     mystique->type   = info->local;
+     mystique->is_agp = !!(info->flags & DEVICE_AGP);
+ 
+-    if (mystique->type >= MGA_G100)
++    /* MGA-Glide local: Matrox's G400 BIOS (897-21) computes its pixel-PLL
++     * tables for a 14.31818 MHz reference (640x480: M=1, N=27, P=7 gives
++     * 25.06 MHz; at 27 MHz the VCO would be out of range). */
++    if (mystique->type == MGA_G400)
++        mystique->pll_ref_clock = 14318181.0f;
++    else if (mystique->type >= MGA_G100)
+         mystique->pll_ref_clock = 27000000.0f;
+     else
+         mystique->pll_ref_clock = 14318181.0f;
+@@ -7164,6 +7198,10 @@ mystique_init(const device_t *info)
          romfn = mystique->is_agp ? ROM_MILLENNIUM_II_AGP : ROM_MILLENNIUM_II;
      else if (mystique->type == MGA_1064SG)
          romfn = ROM_MYSTIQUE;
@@ -179,7 +208,7 @@ index c25a2d7..686ee29 100644
      else if (mystique->type == MGA_G200 && rom_present(ROM_G200) &&
               !(getenv("MGAGLIDE_G200_BIOS") && !strcmp(getenv("MGAGLIDE_G200_BIOS"), "g100")))
          romfn = ROM_G200;
-@@ -7246,7 +7271,7 @@ mystique_init(const device_t *info)
+@@ -7246,7 +7284,7 @@ mystique_init(const device_t *info)
          mystique->svga.clock_gen = mystique;
          mystique->svga.getclock  = mystique_getclock;
          if (mystique->type >= MGA_G100)
@@ -188,7 +217,7 @@ index c25a2d7..686ee29 100644
      }
  
      io_sethandler(0x03a0, 0x0040, mystique_in, NULL, NULL, mystique_out, NULL, NULL, mystique);
-@@ -7392,6 +7417,18 @@ matrox_g100_available(void)
+@@ -7392,6 +7430,18 @@ matrox_g100_available(void)
  {
      return rom_present(ROM_G100);
  }
@@ -207,7 +236,7 @@ index c25a2d7..686ee29 100644
  #endif
  
  static void
-@@ -7551,6 +7588,55 @@ const device_t millennium_ii_agp_device = {
+@@ -7551,6 +7601,55 @@ const device_t millennium_ii_agp_device = {
  
  #ifdef USE_G100
  /* MGA-Glide local patch (WP-3): an emulated Millennium G200 (AGP). */

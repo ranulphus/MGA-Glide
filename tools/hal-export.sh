@@ -42,7 +42,7 @@ WATCOM ?= $(HOME)/.local/opt/watcom-20260901
 export WATCOM DJGPP_PREFIX DJGPP_URL DJGPP_SHA256 CWSDPMI_URL CWSDPMI_SHA256 OW_URL OW_SHA256
 Q ?= @
 
-HAL_COMMON := hal/src/debug/serial.c hal/src/pci.c hal/src/chip.c hal/src/vbe.c hal/src/fifo.c hal/src/engine.c hal/src/dac.c hal/src/setup/trap.c
+HAL_COMMON := hal/src/debug/serial.c hal/src/debug/regtrace.c hal/src/pci.c hal/src/chip.c hal/src/vbe.c hal/src/fifo.c hal/src/engine.c hal/src/dac.c hal/src/texhw.c hal/src/setup/trap.c
 
 DJENV := env LD_LIBRARY_PATH=$(DJGPP_PREFIX)/hostlib
 DJCC := $(DJENV) $(DJGPP_PREFIX)/bin/i586-pc-msdosdjgpp-gcc
@@ -54,7 +54,7 @@ OWENV := env WATCOM=$(WATCOM) PATH=$(OWBIN):$(PATH) INCLUDE=$(WATCOM)/h
 WCC := $(OWENV) $(OWBIN)/wcc386
 OW_CFLAGS := -bt=dos -mf -3s -fp5 -fpi87 -zri -ei -j -zastd=c99 -zq -we -wx -i=hal/include -dMGA_OW=1 -oxt
 
-.PHONY: all hal-djgpp hal-host hal-ow tests-host smoke-djgpp dostests-djgpp setup-djgpp setup-ow 86box clean
+.PHONY: all hal-djgpp hal-host hal-ow tests-host smoke-djgpp dostests-djgpp dostools setup-djgpp setup-ow 86box clean
 all: hal-djgpp hal-host tests-host
 
 build/djgpp/%.o: %.c
@@ -92,6 +92,20 @@ build/ow/%.obj: %.c
 	@mkdir -p $(dir $@)
 	$(Q)$(WCC) $(OW_CFLAGS) -fo=$@ $<
 hal-ow: $(HAL_COMMON:%.c=build/ow/%.obj) build/ow/hal/port/ow_dos4g.obj
+
+# 16-bit DOS helpers for Loop A and the bench (SERSAY, UTEXIT, WAITSEC, REBOOT,
+# VMODE), built with Open Watcom's 16-bit compiler (make setup-ow).
+DOS_TOOLS := UTEXIT SERSAY WAITSEC REBOOT VMODE
+build/ow/dos/%.COM:
+	@mkdir -p build/ow/dos/obj16
+	$(Q)$(OWENV) $(OWBIN)/wcc -bt=dos -ms -0 -os -zq -we -fo=build/ow/dos/obj16/$*.obj $<
+	$(Q)$(OWENV) $(OWBIN)/wlink option quiet system com name $@ file build/ow/dos/obj16/$*.obj
+build/ow/dos/UTEXIT.COM: tools/dos/utexit.c
+build/ow/dos/SERSAY.COM: tools/dos/sersay.c
+build/ow/dos/WAITSEC.COM: tools/dos/waitsec.c
+build/ow/dos/REBOOT.COM: tools/dos/reboot.c
+build/ow/dos/VMODE.COM: tools/dos/vmode.c
+dostools: $(DOS_TOOLS:%=build/ow/dos/%.COM)
 
 setup-djgpp:
 	tools/setup/setup-djgpp.sh

@@ -188,7 +188,11 @@ def run(a):
                 a.sound = game.get("sound", "")
         for spec in a.file:
             src, dst = spec.split("=", 1) if "=" in spec else (spec, "/TEST/" + os.path.basename(spec).upper())
-            d.put(src, dst.replace("\\", "/"))
+            dst = dst.replace("\\", "/")
+            parts = dst.strip("/").split("/")[:-1]
+            for i in range(1, len(parts) + 1):
+                d.mkdir("/" + "/".join(parts[:i]))
+            d.put(src, dst)
         if a.ovl:
             import hashlib
             dst = a.ovl_dst or ("D:\\" + game["ovl"] if game else "C:\\TEST\\GLIDE2X.OVL")
@@ -326,8 +330,8 @@ def run(a):
         if status is None:
             if FATAL_RE.search(boxlog + stderr_text) and info["done"] is None:
                 status = "EMU-FATAL"
-            elif info["done"] is None and p.returncode == 0 and "MGL-EXIT frames=" in text:
-                status = "PASS"        # a game ended by MGAGLIDE exit_after (no HX-DONE from games)
+            elif info["done"] is None and p.returncode in (0, 124) and ("MGL-EXIT frames=" in text or "DGL-EXIT frames=" in text):
+                status = "PASS"        # a game ended by MGAGLIDE exit_after / DGL_EXIT_AFTER (no HX-DONE from games)
             elif info["done"] is None and p.returncode == 124:
                 status = "GUEST-EXC"   # program died; RUN.BAT's fallback ended the run
             elif info["done"] is None:

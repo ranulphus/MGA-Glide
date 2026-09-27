@@ -64,6 +64,7 @@ int  vbe_set_mode(const mga_vbe_mode *m, int pitch_px, int *actual_pitch_px);
 int  vbe_set_display_start(uint32_t byte_offset, int pitch_bytes, int bpp);
 void vbe_set_text_mode(void);
 int  vbe_version(void);
+uint32_t vbe_total_memory(void);   /* bytes, from the VBE info block (0 if unknown) */
 
 /* engine.c */
 typedef struct {
