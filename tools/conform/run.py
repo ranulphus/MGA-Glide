@@ -25,6 +25,9 @@ MGA_OVL = os.path.join(ROOT, "build", "ow", "GLIDE2X.OVL")
 EXE = os.path.join(ROOT, "build", "ow", "dos", "CONFORM.EXE")
 REFDIR = os.path.join(ROOT, "tests", "conform", "ref", "voodoo")
 CARD = os.environ.get("MGA_CARD", "g100")
+# Manifest entries keyed by card: the G400 family draws with the G200's
+# combine and blend capabilities, so it shares the G200's expectations.
+CARD_CLASS = {"g400": "g200", "g450": "g200"}.get(CARD, CARD)
 MANIFEST = json.load(open(os.path.join(ROOT, "tests", "conform", "manifest.json")))
 JOBS = int(os.environ.get("LOOPA_JOBS", "6"))
 
@@ -95,7 +98,7 @@ def cmd_check(tests):
                 fc.update(cfg.get("frames", {}).get(fn, {}))
                 cells = fc.get("cells")
                 if cells and isinstance(cells.get("approx"), dict):
-                    fc["cells"] = dict(cells, approx=cells["approx"].get(CARD, []))
+                    fc["cells"] = dict(cells, approx=cells["approx"].get(CARD, cells["approx"].get(CARD_CLASS, [])))
                 c = imgcmp.compare(os.path.join(refd, fn), got, fc["tol"], fc["frac"], fc["edge"],
                                    fc["box"], os.path.join(out, fn[:-4] + ".diff.png"), fc.get("ignore", ()),
                                    fc.get("cells"))

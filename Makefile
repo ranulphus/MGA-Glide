@@ -175,6 +175,8 @@ conform-ref: dostests
 conform-ci: runtime dostests
 	$(PYTHON) tools/conform/run.py check
 	MGA_CARD=g200 $(PYTHON) tools/conform/run.py check
+	MGA_CARD=g400 $(PYTHON) tools/conform/run.py check
+	MGA_CARD=g450 $(PYTHON) tools/conform/run.py check
 
 # Loop C rig program (static x86-64 Linux, for cuda6; docs/loop-c-results.md).
 build/mgarig: tests/rig/mgarig.c $(HAL_COMMON) hal/port/linux.c $(wildcard hal/include/mga/*.h)

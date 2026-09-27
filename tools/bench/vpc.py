@@ -190,7 +190,7 @@ def start(card, game=None):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("action", choices=["start", "reset", "screenshot", "stop"])
-    ap.add_argument("card", choices=["g100", "g200"])
+    ap.add_argument("card", choices=["g100", "g200", "g400", "g450"])
     ap.add_argument("--game", help="attach this game's Loop A image as D: (bench.toml: games = 'D:')")
     a = ap.parse_args()
     if a.action == "start":

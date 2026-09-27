@@ -36,6 +36,8 @@ WATCOM = os.environ.get("WATCOM", os.path.expanduser("~/.local/opt/watcom-202609
 CARDS = {
     "g100": ("productiva_g100", "Matrox Productiva G100"),
     "g200": ("millennium_g200", "Matrox Millennium G200 (MGA-Glide emulation)"),
+    "g400": ("millennium_g400", "Matrox Millennium G400 (MGA-Glide emulation)"),
+    "g450": ("millennium_g450", "Matrox Millennium G450 (MGA-Glide emulation)"),
 }
 
 def sh(cmd, **kw):
@@ -100,7 +102,7 @@ def build_config(vm, a, serial, cimg, bootimg, extra_hdd):
         "@VOODOO@": "1" if a.voodoo else "0",
         "@VOODOO_RECOMPILER@": str(a.voodoo_recompiler),
         "@VOODOO_THREADS@": str(a.voodoo_threads),
-        "@G100_MB@": str(a.g100_mb),
+        "@G100_MB@": str(max(a.g100_mb, 16) if a.card in ("g400", "g450") else a.g100_mb),
         "@GFXCARD@": CARDS[a.card][0],
         "@GFXNAME@": CARDS[a.card][1],
         "@SNDCARD@": a.sound or "none",

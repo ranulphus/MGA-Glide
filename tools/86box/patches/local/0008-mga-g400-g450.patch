@@ -1,0 +1,278 @@
+diff --git a/src/include/86box/video.h b/src/include/86box/video.h
+index 757aebe..2fac136 100644
+--- a/src/include/86box/video.h
++++ b/src/include/86box/video.h
+@@ -515,6 +515,8 @@ extern const device_t millennium_ii_agp_device;
+ #ifdef USE_G100
+ extern const device_t productiva_g100_device;
+ extern const device_t millennium_g200_device;
++extern const device_t millennium_g400_device;
++extern const device_t millennium_g450_device;
+ #endif /* USE_G100 */
+ 
+ /* JEGA */
+diff --git a/src/video/vid_mga.c b/src/video/vid_mga.c
+index c25a2d7..686ee29 100644
+--- a/src/video/vid_mga.c
++++ b/src/video/vid_mga.c
+@@ -75,6 +75,13 @@ mystique_unsupported(const char *fmt, ...)
+ /* MGA-Glide local: Matrox's G200 AGP BIOS 900-33, unpacked from Matrox's
+  * public setup257.exe into the local ROM set by tools/86box/build.sh. */
+ #define ROM_G200              "roms/video/matrox/mgaglide/900-33.bin"
++/* MGA-Glide local: Matrox's G400 AGP BIOS 897-21, from the same package. */
++#define ROM_G400              "roms/video/matrox/mgaglide/897-21.bin"
++/* MGA-Glide local: Matrox's G450 BIOS 935-20 (a 34 KB image; the flasher
++ * module appended to the file lies past the 64 KB window's image end). */
++#define ROM_G450              "roms/video/matrox/mgaglide/935-20.bin"
++
++#define MGA_BUS_FIFO(m) ((m)->type <= MGA_1064SG ? 32 : (m)->type >= MGA_G400 ? 16 : 64)
+ 
+ #define FIFO_SIZE        65536
+ #define FIFO_MASK        (FIFO_SIZE - 1)
+@@ -468,6 +475,8 @@ enum {
+     MGA_2164W, /*Millennium II*/
+     MGA_G100,  /*Productiva G100*/
+     MGA_G200,  /*Millennium G200 (MGA-Glide local emulation)*/
++    MGA_G400,  /*Millennium G400 (MGA-Glide local emulation)*/
++    MGA_G450,  /*Millennium G450 (MGA-Glide local emulation)*/
+ };
+ 
+ enum {
+@@ -513,7 +522,7 @@ typedef struct mystique_t {
+ 
+     uint8_t pci_slot, irq_state, pad, pad0;
+ 
+-    uint8_t pci_regs[256], crtcext_regs[6],
++    uint8_t pci_regs[256], crtcext_regs[9],
+         xreg_regs[256], dmamap[16];
+ 
+     int vram_size, crtcext_idx, xreg_idx, xzoomctrl;
+@@ -823,7 +832,7 @@ mystique_out(uint16_t addr, uint8_t val, void *priv)
+             if (mystique->crtcext_idx == 1)
+                 svga->dpms = !!(val & 0x30);
+             old = mystique->crtcext_regs[mystique->crtcext_idx];
+-            if (mystique->crtcext_idx < 6)
++            if (mystique->crtcext_idx < ((mystique->type >= MGA_G400) ? 9 : 6))
+                 mystique->crtcext_regs[mystique->crtcext_idx] = val;
+ 
+             if ((mystique->type >= MGA_1064SG) && (mystique->crtcext_idx == 0) &&
+@@ -836,7 +845,7 @@ mystique_out(uint16_t addr, uint8_t val, void *priv)
+ 
+                 svga->memaddr_latch      = (((mystique->crtcext_regs[0] & CRTCX_R0_STARTADD_MASK) << 16) |
+                                              (svga->crtc[0xc] << 8) | svga->crtc[0xd]) + ((svga->crtc[8] & 0x60) >> 5);
+-                if ((mystique->pci_regs[0x41] & (OPTION_INTERLEAVE >> 8))) {
++                if ((mystique->pci_regs[0x41] & (OPTION_INTERLEAVE >> 8)) || mystique->type >= MGA_G400) {
+                     svga->rowoffset <<= 1;
+                     svga->memaddr_latch <<= 1;
+                 }
+@@ -932,7 +941,7 @@ mystique_in(uint16_t addr, void *priv)
+             break;
+ 
+         case 0x3df:
+-            if (mystique->crtcext_idx < 6)
++            if (mystique->crtcext_idx < ((mystique->type >= MGA_G400) ? 9 : 6))
+                 temp = mystique->crtcext_regs[mystique->crtcext_idx];
+             break;
+ 
+@@ -962,7 +971,7 @@ mystique_vblank_start(svga_t *svga)
+ 
+     if (mystique->crtcext_regs[3] & CRTCX_R3_MGAMODE) {
+         svga->memaddr_latch      = ((mystique->crtcext_regs[0] & CRTCX_R0_STARTADD_MASK) << 16) | (svga->crtc[0xc] << 8) | svga->crtc[0xd];
+-        if (mystique->pci_regs[0x41] & (OPTION_INTERLEAVE >> 8))
++        if ((mystique->pci_regs[0x41] & (OPTION_INTERLEAVE >> 8)) || mystique->type >= MGA_G400)
+             svga->memaddr_latch <<= 1;
+     }
+ }
+@@ -1055,7 +1064,10 @@ mystique_recalctimings(svga_t *svga)
+         if (mystique->type >= MGA_1064SG)
+             svga->memaddr_latch = ((mystique->crtcext_regs[0] & CRTCX_R0_STARTADD_MASK) << 16) | (svga->crtc[0xc] << 8) | svga->crtc[0xd];
+ 
+-        if ((mystique->pci_regs[0x41] & (OPTION_INTERLEAVE >> 8))) {
++        /* G400 and later: the offset always counts 128-bit units and the
++         * start address 64-bit units (G400 spec 4.6.5), as the interleaved
++         * G100/G200 do; OPTION bit 12 means something else there. */
++        if ((mystique->pci_regs[0x41] & (OPTION_INTERLEAVE >> 8)) || mystique->type >= MGA_G400) {
+             svga->rowoffset <<= 1;
+             if (mystique->type >= MGA_1064SG)
+                 svga->memaddr_latch <<= 1;
+@@ -1202,7 +1214,7 @@ mystique_recalc_mapping(mystique_t *mystique)
+         mem_mapping_disable(&mystique->ctrl_mapping);
+ 
+     if (mystique->lfb_base)
+-        mem_mapping_set_addr(&mystique->lfb_mapping, mystique->lfb_base, (mystique->type >= MGA_2164W) ? 0x1000000 : 0x800000);
++        mem_mapping_set_addr(&mystique->lfb_mapping, mystique->lfb_base, (mystique->type >= MGA_G400) ? 0x2000000 : (mystique->type >= MGA_2164W) ? 0x1000000 : 0x800000);
+     else
+         mem_mapping_disable(&mystique->lfb_mapping);
+ 
+@@ -1662,15 +1674,17 @@ mystique_ctrl_read_b(uint32_t addr, void *priv)
+                 ret = (mystique->dwgreg.dwgsync >> ((addr & 3) * 8)) & 0xff;
+                 break;
+             case REG_FIFOSTATUS:
++                /* Bus FIFO depth: 32 to the Mystique, 64 on the G100/G200,
++                 * 16 on the G400 (its fifocount is <4:0>, reset 0x210). */
+                 fifocount = FIFO_SIZE - FIFO_ENTRIES;
+-                if (fifocount > (mystique->type <= MGA_1064SG ? 32 : 64))
+-                    fifocount = (mystique->type <= MGA_1064SG ? 32 : 64);
++                if (fifocount > MGA_BUS_FIFO(mystique))
++                    fifocount = MGA_BUS_FIFO(mystique);
+                 ret = fifocount;
+                 break;
+             case REG_FIFOSTATUS + 1:
+                 if (FIFO_EMPTY)
+                     ret |= 2;
+-                else if (FIFO_ENTRIES >= (mystique->type <= MGA_1064SG ? 32 : 64))
++                else if (FIFO_ENTRIES >= MGA_BUS_FIFO(mystique))
+                     ret |= 1;
+                 break;
+             case REG_FIFOSTATUS + 2:
+@@ -6717,7 +6731,9 @@ mystique_pci_read(UNUSED(int func), int addr, UNUSED(int len), void *priv)
+                 break;
+ 
+             case 0x02:
+-                if (mystique->type == MGA_G200)
++                if (mystique->type >= MGA_G400)
++                    ret = 0x25;
++                else if (mystique->type == MGA_G200)
+                     ret = 0x21;
+                 else if (mystique->type == MGA_G100)
+                     ret = 0x01;
+@@ -6725,7 +6741,7 @@ mystique_pci_read(UNUSED(int func), int addr, UNUSED(int len), void *priv)
+                     ret = (mystique->type == MGA_2164W) ? (mystique->is_agp ? 0x1f : 0x1b) : ((mystique->type == MGA_2064W) ? 0x19 : 0x1a);
+                 break; /*MGA*/
+             case 0x03:
+-                if (mystique->type == MGA_G200)
++                if (mystique->type >= MGA_G200)
+                     ret = 0x05;
+                 else if (mystique->type == MGA_G100)
+                     ret = 0x10;
+@@ -6748,7 +6764,10 @@ mystique_pci_read(UNUSED(int func), int addr, UNUSED(int len), void *priv)
+                 break; /*Fast DEVSEL timing*/
+ 
+             case 0x08:
+-                ret = (mystique->type == MGA_1164SG) ? 3 : 0;
++                /* G400: 3, past the revision-2 workarounds in its BIOS;
++                 * a G450 would be 0x80 and up. */
++                ret = (mystique->type == MGA_G450) ? 0x82 :
++                      (mystique->type == MGA_1164SG || mystique->type == MGA_G400) ? 3 : 0;
+                 break; /*Revision ID*/
+             case 0x09:
+                 ret = 0;
+@@ -6980,7 +6999,9 @@ mystique_pci_write(UNUSED(int func), int addr, UNUSED(int len), uint8_t val, voi
+             break;
+         case 0x13:
+             if (mystique->type >= MGA_1164SG) {
+-                if (mystique->type >= MGA_2164W)
++                if (mystique->type >= MGA_G400)
++                    mystique->lfb_base = (val & 0xfe) << 24;   /* 32 MB BAR */
++                else if (mystique->type >= MGA_2164W)
+                     mystique->lfb_base = val << 24;
+                 else
+                     mystique->lfb_base = (mystique->lfb_base & 0x00800000) | (val << 24);
+@@ -7164,6 +7185,10 @@ mystique_init(const device_t *info)
+         romfn = mystique->is_agp ? ROM_MILLENNIUM_II_AGP : ROM_MILLENNIUM_II;
+     else if (mystique->type == MGA_1064SG)
+         romfn = ROM_MYSTIQUE;
++    else if (mystique->type == MGA_G450)
++        romfn = ROM_G450;
++    else if (mystique->type == MGA_G400)
++        romfn = ROM_G400;
+     else if (mystique->type == MGA_G200 && rom_present(ROM_G200) &&
+              !(getenv("MGAGLIDE_G200_BIOS") && !strcmp(getenv("MGAGLIDE_G200_BIOS"), "g100")))
+         romfn = ROM_G200;
+@@ -7246,7 +7271,7 @@ mystique_init(const device_t *info)
+         mystique->svga.clock_gen = mystique;
+         mystique->svga.getclock  = mystique_getclock;
+         if (mystique->type >= MGA_G100)
+-            mystique->svga.decode_mask = 0xffffff;
++            mystique->svga.decode_mask = (mystique->type >= MGA_G400) ? 0x1ffffff : 0xffffff;
+     }
+ 
+     io_sethandler(0x03a0, 0x0040, mystique_in, NULL, NULL, mystique_out, NULL, NULL, mystique);
+@@ -7392,6 +7417,18 @@ matrox_g100_available(void)
+ {
+     return rom_present(ROM_G100);
+ }
++
++static int
++matrox_g400_available(void)
++{
++    return rom_present(ROM_G400);
++}
++
++static int
++matrox_g450_available(void)
++{
++    return rom_present(ROM_G450);
++}
+ #endif
+ 
+ static void
+@@ -7551,6 +7588,55 @@ const device_t millennium_ii_agp_device = {
+ 
+ #ifdef USE_G100
+ /* MGA-Glide local patch (WP-3): an emulated Millennium G200 (AGP). */
++static const device_config_t g400_config[] = {
++  // clang-format off
++    {
++        .name           = "memory",
++        .description    = "Memory size",
++        .type           = CONFIG_SELECTION,
++        .default_string = NULL,
++        .default_int    = 16,
++        .file_filter    = NULL,
++        .spinner        = { 0 },
++        .selection      = {
++            { .description = "16 MB", .value = 16 },
++            { .description = "32 MB", .value = 32 },
++            { .description = ""                   }
++        },
++        .bios           = { { 0 } }
++    },
++    { .name = "", .description = "", .type = CONFIG_END }
++  // clang-format on
++};
++
++const device_t millennium_g400_device = {
++    .name          = "Matrox Millennium G400 (MGA-Glide emulation)",
++    .internal_name = "millennium_g400",
++    .flags         = DEVICE_AGP,
++    .local         = MGA_G400,
++    .init          = mystique_init,
++    .close         = mystique_close,
++    .reset         = NULL,
++    .available     = matrox_g400_available,
++    .speed_changed = mystique_speed_changed,
++    .force_redraw  = mystique_force_redraw,
++    .config        = g400_config
++};
++
++const device_t millennium_g450_device = {
++    .name          = "Matrox Millennium G450 (MGA-Glide emulation)",
++    .internal_name = "millennium_g450",
++    .flags         = DEVICE_AGP,
++    .local         = MGA_G450,
++    .init          = mystique_init,
++    .close         = mystique_close,
++    .reset         = NULL,
++    .available     = matrox_g450_available,
++    .speed_changed = mystique_speed_changed,
++    .force_redraw  = mystique_force_redraw,
++    .config        = g400_config
++};
++
+ const device_t millennium_g200_device = {
+     .name          = "Matrox Millennium G200 (MGA-Glide emulation)",
+     .internal_name = "millennium_g200",
+diff --git a/src/video/vid_table.c b/src/video/vid_table.c
+index f30cf5b..1ab368a 100644
+--- a/src/video/vid_table.c
++++ b/src/video/vid_table.c
+@@ -210,6 +210,8 @@ video_cards[] = {
+ #ifdef USE_G100
+     { .device = &productiva_g100_device,                        .flags = VIDEO_FLAG_TYPE_SPECIAL   },
+     { .device = &millennium_g200_device,                        .flags = VIDEO_FLAG_TYPE_SPECIAL   },
++    { .device = &millennium_g400_device,                        .flags = VIDEO_FLAG_TYPE_SPECIAL   },
++    { .device = &millennium_g450_device,                        .flags = VIDEO_FLAG_TYPE_SPECIAL   },
+ #endif /*USE_G100 */
+     { .device = &s3_trio3d2x_agp_device,                        .flags = VIDEO_FLAG_TYPE_NONE      },
+     { .device = &s3_virge_gx2_agp_device,                       .flags = VIDEO_FLAG_TYPE_NONE      },

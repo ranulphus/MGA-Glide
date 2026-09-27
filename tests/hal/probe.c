@@ -38,10 +38,12 @@ static void display_state(void)
     }
     hx_log("HX-STAT dac mulctrl=%02x miscctrl=%02x genctrl=%02x pixrdmsk=%02x lut%s",
            xreg(0x19), xreg(0x1E), xreg(0x1D), MGA_RD8(MGAREG_PIXRDMSK), lut);
-    hx_log("HX-STAT crtc offset=%02x start=%02x%02x ext0=%02x ext1=%02x ext2=%02x ext3=%02x vde=%02x ovf=%02x",
+    hx_log("HX-STAT crtc offset=%02x start=%02x%02x ext0=%02x ext1=%02x ext2=%02x ext3=%02x vde=%02x ovf=%02x"
+           " maxscan=%02x mode=%02x",
            crtc(MGAREG_CRTC_INDEX, 0x13), crtc(MGAREG_CRTC_INDEX, 0x0C), crtc(MGAREG_CRTC_INDEX, 0x0D),
            crtc(MGAREG_CRTCEXT_INDEX, 0), crtc(MGAREG_CRTCEXT_INDEX, 1), crtc(MGAREG_CRTCEXT_INDEX, 2),
-           crtc(MGAREG_CRTCEXT_INDEX, 3), crtc(MGAREG_CRTC_INDEX, 0x12), crtc(MGAREG_CRTC_INDEX, 0x07));
+           crtc(MGAREG_CRTCEXT_INDEX, 3), crtc(MGAREG_CRTC_INDEX, 0x12), crtc(MGAREG_CRTC_INDEX, 0x07),
+           crtc(MGAREG_CRTC_INDEX, 0x09), crtc(MGAREG_CRTC_INDEX, 0x17));
 }
 
 static void mode_cb(const mga_vbe_mode *m, void *ctx)
