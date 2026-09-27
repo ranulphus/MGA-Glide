@@ -5,6 +5,7 @@ Inputs: abi/constants.tsv (interface constants), abi/types.h.frag
 (project-authored type and structure definitions) and abi/glide2x.api
 (function table). The output is the project's own clean-room header.
 """
+import os
 import sys
 
 from api import load_api
@@ -55,6 +56,8 @@ def main(root, out):
     w("}")
     w("#endif")
     w("#endif /* MGAGLIDE_GLIDE2_H */")
+    if os.path.dirname(out):
+        os.makedirs(os.path.dirname(out), exist_ok=True)   # check-header writes to build/, absent in a fresh checkout
     with open(out, "w") as fh:
         fh.write("\n".join(o) + "\n")
 
