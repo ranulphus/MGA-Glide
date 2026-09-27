@@ -46,7 +46,10 @@ make tests-host check-exports check-clib
 
 Testing runs the DOS programs and the games in a patched 86Box with an
 emulated Matrox card next to an emulated Voodoo for reference images
-(`docs/loops.md`, `docs/toolchain.md`).
+(`docs/loops.md`, `docs/toolchain.md`). The same patched 86Box builds on
+Windows for manual use: `tools/86box/mkwinkit.sh` packages a kit whose
+`build-windows.sh` runs in MSYS2 (`tools/86box/windows/README.md`), and
+`tools/86box/mkwinvm.py` packages a ready-to-boot machine.
 
 ## Documentation
 

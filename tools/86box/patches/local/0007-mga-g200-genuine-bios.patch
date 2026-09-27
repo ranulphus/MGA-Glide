@@ -37,7 +37,7 @@ index 446bb8c..c25a2d7 100644
 -        /* MGA-Glide local patch (WP-3): no G200 BIOS in the ROM set; the G100
 -         * BIOS drives the shared VGA/VBE hardware. Its PCI data structure
 -         * names the G200 so the system BIOS runs it for this card. */
-+    if (mystique->type == MGA_G200 && romfn == ROM_G100 && mystique->bios_rom.rom) {
++    if (mystique->type == MGA_G200 && !strcmp(romfn, ROM_G100) && mystique->bios_rom.rom) {
 +        /* MGA-Glide local patch (WP-3): fallback when the G200 BIOS is absent
 +         * (or MGAGLIDE_G200_BIOS=g100); the G100 BIOS drives the shared
 +         * VGA/VBE hardware. Its PCI data structure names the G200 so the
