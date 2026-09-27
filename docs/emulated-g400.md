@@ -29,7 +29,7 @@ Neither models the G400's second texture unit, its new combiner
 
 Under both BIOSes PROBE reports VBE 3.0, the real LFB address, the
 expected VRAM size, working engine and depth fills, and the same DAC and
-CRTC state as the G200 after setting 640x480x16. Conformance is 25/25 on
+CRTC state as the G200 after setting 640x480x16. Conformance is 26/26 on
 both cards, and the GTA and Screamer Rally trace replays pass on both.
 
 ## Still unchecked

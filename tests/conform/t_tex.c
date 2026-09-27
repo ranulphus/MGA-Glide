@@ -505,6 +505,37 @@ static void t20(void)
     ct_close();
 }
 
+/* t26: a texture replaced in place while it is the current source, drawn
+ * without calling grTexSource again: whole-chain, single-level and partial
+ * downloads. The TMU reads whatever the memory now holds, so each quad
+ * shows the texture as it was when it was drawn. */
+static void t26(void)
+{
+    GrTexInfo ti;
+    if (ct_open(2, 1) < 0) return;
+    tex_setup_combine(0);
+    info64(&ti);
+    gl.grBufferClear(0x00101010, 0, 0);
+    tinted64(1);
+    gl.grTexDownloadMipMap(GR_TMU0, 0x10000, GR_MIPMAPLEVELMASK_BOTH, &ti);
+    gl.grTexSource(GR_TMU0, 0x10000, GR_MIPMAPLEVELMASK_BOTH, &ti);
+    tquad(10, 10, 310, 230, 0, 0, 256, 256);
+    tinted64(2);
+    gl.grTexDownloadMipMap(GR_TMU0, 0x10000, GR_MIPMAPLEVELMASK_BOTH, &ti);
+    tquad(330, 10, 630, 230, 0, 0, 256, 256);
+    tinted64(3);
+    gl.grTexDownloadMipMapLevel(GR_TMU0, 0x10000, GR_LOD_64, GR_LOD_64, GR_ASPECT_1x1, GR_TEXFMT_RGB_565,
+                                GR_MIPMAPLEVELMASK_BOTH, texbuf);
+    tquad(10, 250, 310, 470, 0, 0, 256, 256);
+    tinted64(4);
+    gl.grTexDownloadMipMapLevelPartial(GR_TMU0, 0x10000, GR_LOD_64, GR_LOD_64, GR_ASPECT_1x1,
+                                       GR_TEXFMT_RGB_565, GR_MIPMAPLEVELMASK_BOTH,
+                                       (uint16_t *)texbuf + 32 * 64, 32, 63);
+    tquad(330, 250, 630, 470, 0, 0, 256, 256);
+    ct_capture(GR_BUFFER_BACKBUFFER);
+    ct_close();
+}
+
 /* t24: texture-coordinate magnitude sweep: large s,t offsets (wrapped)
  * and a range of q, exercising the per-triangle prescale. */
 static void t24(void)
@@ -545,6 +576,7 @@ const ct_test ct_tex_tests[] = {
     { "t20", t20, "Get/SetState, hints" },
     { "t24", t24, "texture coordinate magnitude sweep" },
     { "t25", t25, "texture state defaults" },
+    { "t26", t26, "texture replaced in place while sourced" },
     { "t10", t10, "texture formats, aspects, small LODs" },
     { "t11", t11, "filtering, clamping, perspective" },
     { "t12", t12, "mipmaps, gu allocator, level downloads" },

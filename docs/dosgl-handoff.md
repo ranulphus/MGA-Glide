@@ -9,7 +9,7 @@ are marked **pending**.
 
 | Item | Status | Evidence |
 |---|---|---|
-| **B1** G100, G200, G450 in the HAL | G100: complete (emulated). G200: complete against the emulated G200 on Matrox's BIOS 900-33. G400 and G450: complete against emulated cards on Matrox's BIOSes 897-21 and 935-20 | `hal/src/chip.c`; conformance 25/25 on all four emulated cards; `docs/emulated-g400.md` |
+| **B1** G100, G200, G450 in the HAL | G100: complete (emulated). G200: complete against the emulated G200 on Matrox's BIOS 900-33. G400 and G450: complete against emulated cards on Matrox's BIOSes 897-21 and 935-20 | `hal/src/chip.c`; conformance 26/26 on all four emulated cards; `docs/emulated-g400.md` |
 | **B2** G100 blending | Stipple only: `ALPHACTRL` must hold `0x54` in its low byte, `astipple` (bit 11) turns the stipple on, `alphasel` picks texture, diffuse or modulated alpha. Additive and destination-reading blends cannot be expressed | `docs/combine-coverage.md`; G100 approximations |
 | **B3** 86Box | The G100 needs `-DDEV_BRANCH=ON`. Use `tools/86box/build.sh` (pinned commit plus `tools/86box/series`) | local patches 0001–0005, 0101–0102 |
 | **B4** G100 `ALPHACTRL` | Stipple alpha only, confirmed in 86Box. On silicon: **pending** | as B2 |

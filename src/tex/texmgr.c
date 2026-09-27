@@ -170,6 +170,8 @@ static int rec_alloc(void)
     return oldest;
 }
 
+static int source_lookup(void);
+
 static int rec_find(uint32_t start, GrLOD_t large, GrAspectRatio_t aspect, GrTextureFormat_t fmt, FxU32 evenOdd)
 {
     int i;
@@ -214,6 +216,11 @@ static int rec_create(uint32_t start, GrLOD_t large, GrLOD_t small, GrAspectRati
         return -1;
     }
     r->last_frame = frame_clock;
+    /* A download into the chain being sourced replaces its record: the
+     * source stays bound, as on a Voodoo, where the TMU simply reads the
+     * new texels (games update textures in place without grTexSource). */
+    if (tmu0.has_source && tmu0.rec < 0)
+        tmu0.rec = source_lookup();
     return i;
 }
 
@@ -306,9 +313,24 @@ GR_ENTRY(void, grTexDownloadMipMapLevelPartial, (GrChipID_t tmu, FxU32 startAddr
         level_store(&recs[i], thisLod, data, start, end);
 }
 
+/* The record the current source refers to: an exact chain, or a view of a
+ * longer chain that starts at one of its levels; -1 if none. */
+static int source_lookup(void)
+{
+    int i = rec_find(tmu0.addr, tmu0.large, tmu0.aspect, tmu0.fmt, tmu0.evenOdd), j;
+    for (j = 0; j < MAX_RECS && i < 0; j++) {
+        const tex_rec *r = &recs[j];
+        if (r->used && r->aspect == tmu0.aspect && r->fmt == tmu0.fmt &&
+            tmu0.large >= r->large && tmu0.large <= GR_LOD_1 &&
+            r->start + tex_level_offset(tmu0.large, r->large, r->aspect, r->fmt, r->evenOdd) == tmu0.addr)
+            i = j;
+    }
+    return i;
+}
+
 GR_ENTRY(void, grTexSource, (GrChipID_t tmu, FxU32 startAddress, FxU32 evenOdd, GrTexInfo *info))
 {
-    int i, j;
+    int i;
     if (tmu != GR_TMU0 || !info)
         return;
     tmu0.large = info->largeLod;
@@ -318,17 +340,7 @@ GR_ENTRY(void, grTexSource, (GrChipID_t tmu, FxU32 startAddress, FxU32 evenOdd, 
     tmu0.evenOdd = evenOdd;
     tmu0.addr = startAddress;
     tmu0.has_source = 1;
-    i = rec_find(startAddress, info->largeLod, info->aspectRatio, info->format, evenOdd);
-    if (i < 0) {
-        /* A view of a longer chain that starts at one of its levels. */
-        for (j = 0; j < MAX_RECS && i < 0; j++) {
-            const tex_rec *r = &recs[j];
-            if (r->used && r->aspect == info->aspectRatio && r->fmt == info->format &&
-                info->largeLod >= r->large && info->largeLod <= GR_LOD_1 &&
-                r->start + tex_level_offset(info->largeLod, r->large, r->aspect, r->fmt, r->evenOdd) == startAddress)
-                i = j;
-        }
-    }
+    i = source_lookup();
     if (i < 0) {
         static uint32_t warned;
         if (warned++ < 8)

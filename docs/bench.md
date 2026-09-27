@@ -86,7 +86,15 @@ tools/bench/run.py --pc bench-g200 --replay ~/.cache/mga-glide/traces/gta-voodoo
     --frames 60,150 --ovl build/ow/GLIDE2X.OVL
 tools/bench/run.py --pc bench-g200 --game sr --ovl build/ow/GLIDE2X.OVL \
     --set MGAGLIDE=exit_after=400
+tools/bench/run.py --pc bench-g450 --file A.EXE --file B.EXE --ovl build/ow/GLIDE2X.OVL \
+    --cmd "A.EXE --x" --cmd "B.EXE --glide=C:\TEST\GLIDE2X.OVL"
 ```
+
+`--cmd` runs several programs in one job, each line in turn in `C:\TEST`
+(DOSBench runs its OpenGL and Glide programs back to back this way): every
+EXE shipped with `--file` gets its DOS extender, and the job passes when every
+program reports `HX-DONE 0`. Loop A's `run.py --cmd` likewise waits for every
+program that reports `HX-START` to report `HX-DONE`.
 
 Game jobs need a game that runs unattended: Screamer Rally's attract-mode
 race does; GTA waits at its menus for Enter, which only Loop A can press.

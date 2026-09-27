@@ -10,6 +10,12 @@ uploads C:\\OUT to this script's FTP sink and reboots.
   run.py --pc bench-g200 --exe build/ow/dos/CONFORM.EXE --ovl build/ow/GLIDE2X.OVL --args "t04"
   run.py --pc bench-g200 --replay TRACE.BIN --frames 60,150 --ovl build/ow/GLIDE2X.OVL
   run.py --pc bench-g200 --game gta --ovl build/ow/GLIDE2X.OVL --set MGAGLIDE_EXIT=600
+  run.py --pc bench-g450 --file A.EXE --file B.EXE --cmd "A.EXE --x" --cmd "B.EXE --y"
+
+--cmd runs several programs in one job (DOSBench runs its Glide and OpenGL
+programs back to back): each line goes into RUN.BAT in turn, every EXE
+shipped with --file gets its DOS extender, and the job passes when every
+program reports HX-DONE 0.
 
 PCs and their serial ports, capture devices and reset hooks come from
 tools/bench/bench.toml and bench.local.toml. Results: out/bench/<pc>/<job>/
@@ -120,8 +126,13 @@ def build_job(a, pc, cfg, job, token, jd):
         files.append(name)
         return name
 
-    ext = a.extender or (extender_of(a.exe) if a.exe else "dos4gw")
-    add(*EXTENDERS[ext])
+    exts = [a.extender] if a.extender else []
+    if not exts:
+        exes = ([a.exe] if a.exe else []) + [f.partition("=")[0] for f in a.file
+                                             if (f.partition("=")[2] or f).upper().endswith(".EXE")]
+        exts = sorted({extender_of(e) for e in exes}) or ["dos4gw"]
+    for ext in exts:
+        add(*EXTENDERS[ext])
     if a.ovl:
         add(a.ovl, "GLIDE2X.OVL")
     for spec in a.file:
@@ -143,6 +154,8 @@ def build_job(a, pc, cfg, job, token, jd):
             run += ["COPY C:\\TEST\\GLIDE2X.OVL %s > NUL" % ovl]
         run += [l + (" " + a.args if a.args else "") for l in game["run"]]
         run += ["COPY %s.MGB %s > NUL" % (ovl[:-4], ovl), "C:", "CD \\TEST"]
+    elif a.cmd:
+        run += a.cmd
     else:
         run += ["%s %s" % (add(a.exe), a.args)]
     run += ["SERSAY HX-EXIT",
@@ -170,6 +183,7 @@ def main():
     ap.add_argument("--replay", help="GLPLAY a call trace (tools/gltrace) with --ovl")
     ap.add_argument("--frames", default="", help="frames GLPLAY captures (with --replay)")
     ap.add_argument("--game", help="game key from tools/games/games.json, installed on the PC")
+    ap.add_argument("--cmd", action="append", default=[], help="RUN.BAT line (repeatable) instead of --exe")
     ap.add_argument("--timeout", type=float, default=900, help="seconds from pick-up to HX-EXIT")
     ap.add_argument("--pickup", type=float, default=300, help="seconds for the PC to pick the job up")
     ap.add_argument("--idle", type=float, help="silent seconds that count as a hang (default 180; games "
@@ -184,11 +198,12 @@ def main():
         a.args = ("C:\\TEST\\TRACE.BIN %s %s" % (a.frames, a.args)).strip()
     if a.idle is None:
         a.idle = a.timeout if a.game else 180
-    if not (a.exe or a.game):
-        ap.error("one of --exe, --replay, --game is needed")
+    if not (a.exe or a.game or a.cmd):
+        ap.error("one of --exe, --replay, --game, --cmd is needed")
     pc = cfg["pc"][a.pc]
     host = cfg["host"]
-    job = "%s-%d" % (a.name or a.game or os.path.basename(a.exe).split(".")[0].lower(), int(time.time()))
+    job = "%s-%d" % (a.name or a.game or (os.path.basename(a.exe).split(".")[0].lower() if a.exe else "cmd"),
+                     int(time.time()))
     token = secrets.token_hex(6)
     pub = os.path.join(ROOT, "dist/bench", a.pc)
     out = os.path.join(ROOT, "out/bench", a.pc, job)
@@ -242,7 +257,8 @@ def main():
             if text.startswith("HX-CAPTURE "):
                 cap.grab(text.split(None, 1)[1])
             elif text.startswith("HX-DONE "):
-                done = text.split()[1:2] == ["0"]
+                # Every program must pass (--cmd jobs run several).
+                done = (done is not False) and text.split()[1:2] == ["0"]
             elif text.startswith("MGL-EXIT frames="):
                 game_exit = True
             elif text.startswith("HX-EXIT"):
@@ -282,7 +298,7 @@ def main():
             w, h, rgb = png.read_ppm(os.path.join(files, fn))
             png.write_png(os.path.join(out, fn[:-4].lower() + ".png"), w, h, rgb)
     result = {"job": job, "pc": a.pc, "card": pc["card"], "status": status,
-              "exe": a.exe, "args": a.args, "ovl": a.ovl, "game": a.game,
+              "exe": a.exe, "args": a.args, "ovl": a.ovl, "game": a.game, "cmd": a.cmd,
               "uploaded": sink.received, "upload_complete": bool(upload_end),
               "elapsed_s": round(time.time() - t0, 1)}
     json.dump(result, open(os.path.join(out, "result.json"), "w"), indent=1)

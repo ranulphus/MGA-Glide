@@ -259,8 +259,13 @@ def run(a):
             if size != last_size:
                 last_size, last_change = size, now
                 text = open(serial, "rb").read().decode("latin-1")
-                if done_at is None and "HX-DONE" in text:
-                    done_at = now
+                # Finished once every program started has reported HX-DONE
+                # (a --cmd job can run several programs in turn).
+                started, finished = text.count("HX-START "), text.count("HX-DONE ")
+                if finished and finished >= started:
+                    done_at = done_at or now
+                else:
+                    done_at = None
             if rc is not None:
                 break
             if boot_at is None and size:
