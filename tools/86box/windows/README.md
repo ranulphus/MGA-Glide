@@ -44,11 +44,14 @@ it needs are next to it, and the ROMs are in its `roms\` folder.
 
 ## Using it
 
-- **The test machine** (`dosbench-g450-vm.zip`, if you were given it):
+- **The test machine** (`dosbench-g450-vm.zip`, or `dosbench-g450-games-vm.zip`
+  with GTA and Screamer Rally installed from your own copies, if you were given it):
   unzip it, then `86Box.exe -P C:\path\to\dosbench-g450`, or add the folder
   in the 86Box manager. It is Loop A's machine: an ABIT BF6 (440BX) board,
   a Pentium II 350, 64 MB, the emulated G450 plus a Voodoo Graphics, and a
   Sound Blaster 16, booting FreeDOS. Its `README.txt` says what is on C:.
+  In the games version, `SR` and `GTA` run the games on MGA-Glide on the
+  Matrox card, and `SR 3DFX` or `GTA 3DFX` on 3dfx's own runtime on the Voodoo.
 - **Your own machines**: in Settings > Display choose one of the Matrox
   Millennium G200/G400/G450 (MGA-Glide emulation) cards (or the Productiva
   G100), and tick Voodoo Graphics to have a 3dfx card alongside. The
