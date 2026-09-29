@@ -1,0 +1,23 @@
+diff --git a/src/video/vid_mga.c b/src/video/vid_mga.c
+index 458d8a1..b32eda5 100644
+--- a/src/video/vid_mga.c
++++ b/src/video/vid_mga.c
+@@ -6400,6 +6400,10 @@ blit_bitblt(mystique_t *mystique)
+             break;
+ 
+         case DWGCTRL_ATYPE_RPL:
++        case DWGCTRL_ATYPE_RSTR:
++            /* MGA-Glide local patch 0010: the specifications' LUT load uses
++             * atype RSTR (G200 spec 4.5.8, G400 spec p.4-68); upstream took
++             * RPL only, and an RSTR blit with tlutload drew into VRAM. */
+             if (mystique->maccess_running & MACCESS_TLUTLOAD) {
+                 src_addr = mystique->dwgreg.ar[3];
+ 
+@@ -6417,7 +6421,6 @@ blit_bitblt(mystique_t *mystique)
+                 }
+                 break;
+             }
+-        case DWGCTRL_ATYPE_RSTR:
+             switch (mystique->dwgreg.dwgctrl_running & DWGCTRL_BLTMOD_MASK) {
+                 /* TODO: This isn't exactly perfect. */
+                 case DWGCTRL_BLTMOD_BPLAN:

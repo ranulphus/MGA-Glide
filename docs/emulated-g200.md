@@ -31,6 +31,12 @@ and subsystem ID 0 (the package image carries no board subsystem bytes at
 is identical under both BIOSes; the conformance suite and both game
 replays pass unchanged.
 
+Patch `0010-mga-tlut-rstr.patch` (all cards) loads the texture lookup
+table from a BITBLT with atype RSTR as well as RPL: the G200 and G400
+specifications' recipe uses RSTR, which upstream drew into VRAM instead.
+The HAL's `engine_tlut_load()` follows the specifications; DOS-GL uses the
+table for 8-bit paletted textures (TW8) on the G200.
+
 Known gap: with 8 MB configured, the genuine BIOS reports **2 MB** as VBE
 `TotalMemory` (DOS-GL's PROBE: `vram=2097152`), so it presumably sizes
 memory from something the model does not provide. MGA-Glide never

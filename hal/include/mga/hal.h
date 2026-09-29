@@ -84,6 +84,7 @@ void     engine_set_maccess_flags(uint32_t flags);     /* MACCESS_NODITHER / MAC
 void     engine_set_clip(int x0, int y0, int x1, int y1);   /* inclusive-exclusive */
 void     engine_fill(int x, int y, int w, int h, uint32_t value);
 void     engine_fill_depth(int x, int y, int w, int h, uint32_t zvalue);
+void     engine_tlut_load(uint32_t off, int first, int count);   /* G200+: texture LUT from VRAM (RGB565) */
 int      engine_vsync_wait(uint32_t timeout_us);
 int      engine_in_vblank(void);
 uint32_t engine_vcount(void);

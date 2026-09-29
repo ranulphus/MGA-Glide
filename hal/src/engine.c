@@ -216,3 +216,31 @@ int engine_vsync_wait(uint32_t timeout_us)
             return -1;
     return 0;
 }
+
+/* Load the texture lookup table that TW8 (and TW4) texels index, entries
+ * first..first+count-1, from count RGB565 values at VRAM offset off: the
+ * BITBLT recipe of the G200 and G400 specifications (atype RSTR, linear
+ * source at AR3..AR0, MACCESS.tlutload; docs/g400-dual-texture.md §6).
+ * Queued like a draw, so draws before it keep the old table. */
+void engine_tlut_load(uint32_t off, int first, int count)
+{
+    uint32_t src = off / 2;
+    if (count <= 0)
+        return;
+    fifo_reserve(9);
+    MGA_WR32(MGAREG_MACCESS, MACCESS_PW16 | MACCESS_TLUTLOAD);
+    MGA_WR32(MGAREG_PITCH, 1024);
+    if (mga.has_dstorg) {
+        MGA_WR32(MGAREG_DSTORG, 0);
+        MGA_WR32(MGAREG_SRCORG, 0);
+    } else
+        MGA_WR32(MGAREG_YDSTORG, 0);
+    MGA_WR32(MGAREG_AR0, src + (uint32_t)count - 1);
+    MGA_WR32(MGAREG_AR3, src);
+    MGA_WR32(MGAREG_FXBNDRY, 0);
+    MGA_WR32(MGAREG_DWGCTL, 0x0E0C6098u);          /* BITBLT, RSTR, linear, SRC, sgnzero, shftzero */
+    MGA_WR32(MGAREG_YDSTLEN + MGAREG_EXEC, ((uint32_t)first << 16) | (uint32_t)count);
+    fifo_reserve(1);
+    MGA_WR32(MGAREG_PITCH, (uint32_t)cur.pitch_px);
+    engine_set_target(&cur);                        /* origins, MACCESS */
+}
