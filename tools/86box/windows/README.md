@@ -45,13 +45,17 @@ it needs are next to it, and the ROMs are in its `roms\` folder.
 ## Using it
 
 - **The test machine** (`dosbench-g450-vm.zip`, or `dosbench-g450-games-vm.zip`
-  with GTA and Screamer Rally installed from your own copies, if you were given it):
+  with your own games installed, if you were given it: GTA and Screamer Rally on
+  C:, and Quake, LibreQuake and Quake 2 in DOS-GL's builds on a second disk, D:):
   unzip it, then `86Box.exe -P C:\path\to\dosbench-g450`, or add the folder
   in the 86Box manager. It is Loop A's machine: an ABIT BF6 (440BX) board,
   a Pentium II 350, 64 MB, the emulated G450 plus a Voodoo Graphics, and a
   Sound Blaster 16, booting FreeDOS. Its `README.txt` says what is on C:.
   In the games version, `SR` and `GTA` run the games on MGA-Glide on the
   Matrox card, and `SR 3DFX` or `GTA 3DFX` on 3dfx's own runtime on the Voodoo.
+  `QUAKE`, `LQ` and `QUAKE2` run the Quakes on DOS-GL on the Matrox card
+  (`QUAKE -mtex` and `QUAKE2 +set gl_ext_multitexture 1` use the G400/G450's
+  second texture unit, which needs a kit from MGA-Glide `6802a9d` or later).
 - **Your own machines**: in Settings > Display choose one of the Matrox
   Millennium G200/G400/G450 (MGA-Glide emulation) cards (or the Productiva
   G100), and tick Voodoo Graphics to have a 3dfx card alongside. The
@@ -69,3 +73,10 @@ the test harness itself (Loop A, the bench tools) stays on Linux.
 
 If the build fails, the logs are in `work\cmake.log` and `work\build.log`
 (the script prints the tail). The kit's version is in `KIT-VERSION`.
+
+## Updating to a newer kit
+
+Unzip the new kit (over the old folder or beside it) and run
+`./build-windows.sh --no-deps` in the UCRT64 shell: the packages are already
+installed, and the script starts from a fresh copy of 86Box with the new
+patches. Replace your `86Box-MGA-Glide\` folder with the new one.

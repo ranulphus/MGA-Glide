@@ -14,6 +14,11 @@ log: it is for a person at the keyboard.
       --run "CD \\DOSBENCH" --run "ECHO Type DOSBENCH for the menu" \\
       [--readme NOTES.txt] [--out dist/dosbench-g450-vm.zip]
 
+--d-file SRC=/PATH and --d-dir SRC=/PATH (a whole directory tree) fill a
+second hard disk, D: (d.img, --d-cylinders, default 1000: ~492 MB; at most
+1023, the BIOS CHS limit), for what does not fit on C:. D:\\ goes on PATH, so
+launchers can live in its root.
+
 --game KEY (gta, sr: tools/games/games.json) installs that game from the
 local fixtures (FIXTURES_DIR, as Loop A does) into C:\\GAMES\\<dir>, keeps
 its own GLIDE2X.OVL as GLIDE2X.3DF, puts --mga-ovl in C:\\GAMES\\MGAGLIDE.OVL
@@ -21,8 +26,8 @@ and writes C:\\GAMES\\<KEY>.BAT: the game on MGA-Glide (on the Matrox card),
 or with "3DFX" on 3dfx's runtime (on the Voodoo). A zip with games holds
 retail software: it is for the owner's own machine only.
 
-The zip holds <name>/86box.cfg, boot.img, c.img (sparse, 492 MB unpacked)
-and README.txt. Open it with 86Box.exe -P <folder>, or add it in the
+The zip holds <name>/86box.cfg, boot.img, c.img (sparse, 492 MB unpacked),
+d.img if asked for, and README.txt. Open it with 86Box.exe -P <folder>, or add it in the
 manager. DOS/4GW and CWSDPMI go into C:\\HX with the HX helpers. Never pass
 retail Glide runtimes, games or BIOS images to --file for a kit that will
 be shared.
@@ -93,6 +98,7 @@ hdd_01_parameters = 63, 16, 1000, 0, ide
 hdd_01_fn = c.img
 hdd_01_ide_channel = 0:0
 
+{hdd2}
 [Floppy and CD-ROM drives]
 fdd_01_type = 35_2hd
 fdd_01_fn = boot.img
@@ -106,7 +112,7 @@ README = """{name}: an 86Box machine for MGA-Glide's patched 86Box
 Machine: ABIT BF6 (440BX), Pentium II 350, 64 MB, {cardname} ({vram} MB) plus a
 Voodoo Graphics (2+2 MB), Sound Blaster 16 (A220 I5 D1 H5), PS/2 mouse.
 It boots FreeDOS 1.4 from boot.img (keep it in the floppy drive); C: is
-c.img. C:\\RUN.BAT runs at boot and sets PATH (C:\\HX has DOS4GW.EXE and
+c.img{d_note}. C:\\RUN.BAT runs at boot and sets PATH (C:\\HX has DOS4GW.EXE and
 CWSDPMI.EXE) and BLASTER.
 
 Open: 86Box.exe -P <this folder>   (or add the folder in 86Box's manager)
@@ -157,6 +163,38 @@ def install_game(d, key, games, fixtures):
 HX_TOOLS = ("UTEXIT.COM", "SERSAY.COM", "WAITSEC.COM", "REBOOT.COM", "VMODE.COM")
 
 
+def make_disk(img, tmp, cyl, label):
+    """An empty partitioned FAT16 hard-disk image (63 sectors, 16 heads), as
+    tools/games/mkimage.sh makes Loop A's game disks; returns its Disk."""
+    subprocess.run(["truncate", "-s", str(63 * 16 * cyl * 512), img], check=True)
+    d = loopa.Disk(img, tmp, "d")
+    subprocess.run(["mpartition", "-I", "d:"], env=d.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(["mpartition", "-c", "-t", str(cyl), "-h", "16", "-s", "63", "-a", "d:"], env=d.env, check=True)
+    subprocess.run(["mformat", "-t", str(cyl), "-h", "16", "-s", "63", "-v", label, "d:"], env=d.env, check=True)
+    return d
+
+
+def put_file(d, spec):
+    """--file / --d-file SRC=/DOS/PATH, making the directories on the way."""
+    src, dst = spec.split("=", 1)
+    dst = dst.replace("\\", "/")
+    parts = dst.strip("/").split("/")[:-1]
+    for i in range(1, len(parts) + 1):
+        d.mkdir("/" + "/".join(parts[:i]))
+    d.put(src, dst)
+
+
+def put_dir(d, spec):
+    """--d-dir SRC=/DOS/PATH: the directory tree SRC's contents under PATH."""
+    src, dst = spec.split("=", 1)
+    dst = dst.replace("\\", "/").rstrip("/")
+    parts = dst.strip("/").split("/")
+    for i in range(1, len(parts) + 1):
+        d.mkdir("/" + "/".join(parts[:i]))
+    subprocess.run(["mcopy", "-s", "-Q", "-o", "-D", "o"] + [os.path.join(src, f) for f in sorted(os.listdir(src))] +
+                   ["%s:%s/" % (d.letter, dst)], env=d.env, check=True, stdout=subprocess.DEVNULL)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--name", required=True)
@@ -168,8 +206,13 @@ def main():
     ap.add_argument("--game", action="append", default=[], help="install a game from the fixtures (gta, sr)")
     ap.add_argument("--mga-ovl", default=os.path.join(ROOT, "build/ow/GLIDE2X.OVL"),
                     help="MGA-Glide runtime for the games (default this checkout's build)")
+    ap.add_argument("--d-file", action="append", default=[], help="SRC=/DOS/PATH on a second disk, D:")
+    ap.add_argument("--d-dir", action="append", default=[], help="SRC=/DOS/PATH: a directory tree on D:")
+    ap.add_argument("--d-cylinders", type=int, default=1000, help="size of D: (63 x 16 x N sectors, N <= 1023)")
     ap.add_argument("--out")
     a = ap.parse_args()
+    if not 1 <= a.d_cylinders <= 1023:
+        ap.error("--d-cylinders must be 1..1023 (the BIOS CHS limit)")
     out = os.path.abspath(a.out or os.path.join(ROOT, "dist", a.name + "-vm.zip"))
     tmp = tempfile.mkdtemp(prefix="mkwinvm-")
     try:
@@ -185,13 +228,19 @@ def main():
         if os.path.exists(loopa.CWSDPMI):
             d.put(loopa.CWSDPMI, "/HX/CWSDPMI.EXE")
         for spec in a.file:
-            src, dst = spec.split("=", 1)
-            dst = dst.replace("\\", "/")
-            parts = dst.strip("/").split("/")[:-1]
-            for i in range(1, len(parts) + 1):
-                d.mkdir("/" + "/".join(parts[:i]))
-            d.put(src, dst)
+            put_file(d, spec)
         path = "C:\\HX;A:\\FREEDOS\\BIN"
+        hdd2 = d_note = ""
+        if a.d_file or a.d_dir:
+            dd = make_disk(os.path.join(vm, "d.img"), tmp, a.d_cylinders, "DATA")
+            for spec in a.d_dir:
+                put_dir(dd, spec)
+            for spec in a.d_file:
+                put_file(dd, spec)
+            hdd2 = ("hdd_02_parameters = 63, 16, %d, 0, ide\nhdd_02_fn = d.img\nhdd_02_ide_channel = 0:1\n"
+                    % a.d_cylinders)
+            d_note = " and D: is d.img"
+            path += ";D:\\"
         if a.game:
             games = json.load(open(os.path.join(ROOT, "tools/games/games.json")))
             fixtures = os.environ.get("FIXTURES_DIR", os.path.join(loopa.CACHE, "fixtures"))
@@ -211,7 +260,7 @@ def main():
         section = loopa.CARDS[a.card][1]
         vram = 16 if a.card in ("g400", "g450") else 8
         open(os.path.join(vm, "86box.cfg"), "w").write(
-            CFG.format(gfxcard=loopa.CARDS[a.card][0], gfxname=section, vram=vram, voodoo=int(a.voodoo)))
+            CFG.format(gfxcard=loopa.CARDS[a.card][0], gfxname=section, vram=vram, voodoo=int(a.voodoo), hdd2=hdd2))
         notes = open(a.readme).read() if a.readme else ""
         if a.game:
             notes += ("\nGames (C:\\\\GAMES, on PATH; retail software: for your own machine only)\n"
@@ -223,7 +272,7 @@ def main():
                       "\n  ".join("%-4s %s" % (k.upper(), json.load(open(os.path.join(ROOT, "tools/games/games.json")))[k]["title"])
                                   for k in a.game))
         open(os.path.join(vm, "README.txt"), "w", newline="\r\n").write(
-            README.format(name=a.name, cardname=section, vram=vram, notes=notes))
+            README.format(name=a.name, cardname=section, vram=vram, notes=notes, d_note=d_note))
         os.makedirs(os.path.dirname(out), exist_ok=True)
         if os.path.exists(out):
             os.remove(out)
