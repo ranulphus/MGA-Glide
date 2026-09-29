@@ -94,7 +94,8 @@ tools/bench/run.py --pc bench-g450 --file A.EXE --file B.EXE --ovl build/ow/GLID
 (DOSBench runs its OpenGL and Glide programs back to back this way): every
 EXE shipped with `--file` gets its DOS extender, and the job passes when every
 program reports `HX-DONE 0`. Loop A's `run.py --cmd` likewise waits for every
-program that reports `HX-START` to report `HX-DONE`.
+program that reports `HX-START` to report `HX-DONE` (and, for DOS-GL programs
+run with `DGL_EXIT_AFTER`, every `DGL-START` to be matched by a `DGL-EXIT`).
 
 Game jobs need a game that runs unattended: Screamer Rally's attract-mode
 race does; GTA waits at its menus for Enter, which only Loop A can press.

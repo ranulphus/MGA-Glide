@@ -4,6 +4,7 @@
 Runs inside the dev container. Example:
   run.py --name hello --exe build/ow/dos/HELLO.EXE --args "--fail"
   run.py --name t02 --exe build/ow/dos/T02.EXE --ovl build/ow/GLIDE2X.OVL
+  run.py --name q2 --games-file G.json --game quake2 --file X.DXE=D:/QUAKE2/BASEQ2/X.DXE ...
 
 Result directory out/<name>/: serial.log, 86box.log, stderr.log, files/
 (the guest's C:\\OUT), *.png, result.json, status.
@@ -174,25 +175,33 @@ def run(a):
         game = None
         extra = ""
         if a.game:
-            game = json.load(open(os.path.join(ROOT, "tools/games/games.json")))[a.game]
+            game = json.load(open(a.games_file))[a.game]
             fix = os.environ.get("FIXTURES_DIR", os.path.join(CACHE, "fixtures"))
+            # The D: image's size comes from the game (63 x 16 x cylinders, at most 1023:
+            # the BIOS CHS limit, about 504 MB).
+            cyl = int(game.get("cylinders", 406))
             gimg_src = subprocess.run([os.path.join(ROOT, "tools/games/mkimage.sh"), a.game,
-                                       os.path.join(fix, game["fixture"]), game["dir"]],
+                                       os.path.join(fix, game["fixture"]), game["dir"], str(cyl)],
                                       check=True, stdout=subprocess.PIPE, text=True).stdout.strip().splitlines()[-1]
             gimg = os.path.join(vm, "game.img")
             sh(["cp", "--sparse=always", gimg_src, gimg])
-            extra = ("hdd_02_parameters = 63, 16, 406, 0, ide\nhdd_02_fn = %s\n"
-                     "hdd_02_ide_channel = 0:1\n" % gimg)
+            extra = ("hdd_02_parameters = 63, 16, %d, 0, ide\nhdd_02_fn = %s\n"
+                     "hdd_02_ide_channel = 0:1\n" % (cyl, gimg))
             gd = Disk(gimg, tmp, "d")
             if a.sound is None:
                 a.sound = game.get("sound", "")
         for spec in a.file:
             src, dst = spec.split("=", 1) if "=" in spec else (spec, "/TEST/" + os.path.basename(spec).upper())
             dst = dst.replace("\\", "/")
+            disk = d
+            if dst[:2].upper() == "D:":             # onto the game disk (--game)
+                if not game:
+                    raise RuntimeError("--file %s: D: needs --game" % spec)
+                disk, dst = gd, dst[2:]
             parts = dst.strip("/").split("/")[:-1]
             for i in range(1, len(parts) + 1):
-                d.mkdir("/" + "/".join(parts[:i]))
-            d.put(src, dst)
+                disk.mkdir("/" + "/".join(parts[:i]))
+            disk.put(src, dst)
         if a.ovl:
             import hashlib
             dst = a.ovl_dst or ("D:\\" + game["ovl"] if game else "C:\\TEST\\GLIDE2X.OVL")
@@ -261,7 +270,8 @@ def run(a):
                 text = open(serial, "rb").read().decode("latin-1")
                 # Finished once every program started has reported HX-DONE
                 # (a --cmd job can run several programs in turn).
-                started, finished = text.count("HX-START "), text.count("HX-DONE ")
+                started = text.count("HX-START ") + text.count("DGL-START")
+                finished = text.count("HX-DONE ") + text.count("DGL-EXIT")
                 if finished and finished >= started:
                     done_at = done_at or now
                 else:
@@ -381,7 +391,9 @@ def main():
     ap.add_argument("--name", required=True)
     ap.add_argument("--exe", help="DOS program to copy to C:\\TEST and run")
     ap.add_argument("--cmd", action="append", default=[], help="RUN.BAT lines to run instead of --exe")
-    ap.add_argument("--game", help="game key from tools/games/games.json (attached as D:)")
+    ap.add_argument("--game", help="game key from the games file (attached as D:)")
+    ap.add_argument("--games-file", default=os.path.join(ROOT, "tools/games/games.json"),
+                    help="games list (default tools/games/games.json; DOS-GL has its own)")
     ap.add_argument("--ovl-dst", help="DOS path for --ovl (default C:\\TEST\\GLIDE2X.OVL, or the game's)")
     ap.add_argument("--args", default="")
     ap.add_argument("--ovl", help="GLIDE2X.OVL to install as C:\\TEST\\GLIDE2X.OVL")
