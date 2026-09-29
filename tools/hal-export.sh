@@ -27,7 +27,8 @@ for f in tests/hal/smoke.c tests/hal/probe.c tests/hal/romdump.c tests/shim/hx.c
 # Loop C rig (Linux port is part of hal/).
 for f in tests/rig/mgarig.c $(git ls-files tools/rig); do copy "$f"; done
 # Loop A harness, 86Box build and patches, setup scripts, dev container.
-for f in $(git ls-files tools/loopa tools/86box tools/setup tools/docker tools/bench) tools/dev tools/imgcmp.py; do copy "$f"; done
+for f in $(git ls-files tools/loopa tools/86box tools/setup tools/docker tools/bench) tools/dev tools/imgcmp.py \
+         tools/games/mkimage.sh; do copy "$f"; done      # mkimage.sh: run.py --game builds D: with it
 # Documents that describe the shared parts.
 for f in docs/loops.md docs/emulated-g200.md docs/emulated-g400.md docs/reference-gaps.md docs/bench.md docs/loop-c-results.md LICENSE; do copy "$f"; done
 
@@ -128,7 +129,7 @@ MGA-Glide (Open Watcom, DOS/4GW) and DOS-GL (DJGPP):
 | \`hal/\` | PCI, capabilities, VBE, FIFO pacing, engine, DAC, trapezoid setup; ports for DOS/4GW, DJGPP and the host |
 | \`tests/unit/\` | host reference rasteriser and the setup test |
 | \`tests/hal/\` | \`smoke.c\` (any toolchain), \`probe.c\`, \`romdump.c\` |
-| \`tools/loopa/\`, \`tools/86box/\` | Loop A harness and the pinned 86Box with the local patches (never upstreamed): emulated G200, G400 and G450 on Matrox's own BIOSes |
+| \`tools/loopa/\`, \`tools/86box/\` | Loop A harness and the pinned 86Box with the local patches (never upstreamed): emulated G200, G400 and G450 on Matrox's own BIOSes; \`tools/games/mkimage.sh\` builds the game disk for \`run.py --game\` (the caller supplies the games list with \`--games-file\`) |
 | \`tools/bench/\` | Loop B: bench job runner, upload sink, capture helper, the 86Box virtual bench PC |
 | \`tests/rig/\`, \`tools/rig/\` | Loop C rig for a Matrox card under Linux (\`hal/port/linux.c\`) |
 
