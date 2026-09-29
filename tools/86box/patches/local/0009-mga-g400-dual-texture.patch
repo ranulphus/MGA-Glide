@@ -1,0 +1,395 @@
+diff --git a/src/video/vid_mga.c b/src/video/vid_mga.c
+index 50adea3..458d8a1 100644
+--- a/src/video/vid_mga.c
++++ b/src/video/vid_mga.c
+@@ -230,6 +230,12 @@ mystique_unsupported(const char *fmt, ...)
+ #define REG_DSTORG     0x2cb8
+ #define TEXCTL2_DECALBLEND (1 << 0)
+ #define TEXCTL2_SPECEN     (1 << 6)
++/* MGA-Glide local patch 0009: G400 dual texturing (docs/g400-dual-texture.md). */
++#define TEXCTL2_DUALTEX    (1 << 7)
++#define REG_TEXTRANSHIGH   0x2c38
++#define REG_TEXBORDERCOL   0x2c5c
++#define REG_TDUALSTAGE0    0x2cf8
++#define REG_TDUALSTAGE1    0x2cfc
+ #define ALPHACTRL_ASTIPPLE (1 << 11)
+ #define ALPHACTRL_ATEN     (1 << 12)
+ #define REG_ALPHAXINC  0x2c74
+@@ -585,6 +591,7 @@ typedef struct mystique_t {
+          * G100 addressing and clipping paths apply unchanged. */
+         uint32_t texorgn[4], texctl2, dstorg, srcorg, dwgsync,
+             ydstorg_reg, ytop_reg, ybot_reg, dstorg_px;
++        uint32_t textranshigh, texbordercol;    /* patch 0009: stored, not used */
+         uint32_t specstart[3], specxinc[3], specyinc[3];
+ 
+         uint32_t src[4], ar[7],
+@@ -598,6 +605,16 @@ typedef struct mystique_t {
+         } sgn;
+     } dwgreg;
+ 
++    /* MGA-Glide local patch 0009 (G400 family): the second texture map's
++     * registers (dwgreg holds map 0), the combiner words, and the map1 bit
++     * last written to TEXCTL2, TEXWIDTH and TEXHEIGHT (tmap0dis is their OR). */
++    struct {
++        uint32_t tmr[9], texorg, texorgn[4], texwidth, texheight, texctl, texctl2,
++            textrans, textranshigh, texfilter, texbordercol, alphactrl;
++    } map1;
++    uint32_t tdualstage[2];
++    int      map1_tc2, map1_tw, map1_th;
++
+     struct {
+         uint8_t r, g, b;
+     } lut[256];
+@@ -1877,7 +1894,7 @@ mystique_ctrl_read_b(uint32_t addr, void *priv)
+ }
+ 
+ static void
+-mystique_accel_ctrl_write_b(uint32_t addr, uint8_t val, void *priv)
++mystique_accel_ctrl_write_b_raw(uint32_t addr, uint8_t val, void *priv)
+ {
+     mystique_t *mystique   = (mystique_t *) priv;
+     int         start_blit = 0;
+@@ -2471,7 +2488,7 @@ mystique_ctrl_read_l(uint32_t addr, void *priv)
+ }
+ 
+ static void
+-mystique_accel_ctrl_write_l(uint32_t addr, uint32_t val, void *priv)
++mystique_accel_ctrl_write_l_raw(uint32_t addr, uint32_t val, void *priv)
+ {
+     mystique_t *mystique   = (mystique_t *) priv;
+     int         start_blit = 0;
+@@ -2798,11 +2815,23 @@ mystique_accel_ctrl_write_l(uint32_t addr, uint32_t val, void *priv)
+             mystique->dwgreg.texfilter = val;
+             break;
+ 
++        /* MGA-Glide local patch 0009. */
++        case REG_TEXTRANSHIGH:
++            mystique->dwgreg.textranshigh = val;
++            break;
++        case REG_TEXBORDERCOL:
++            mystique->dwgreg.texbordercol = val;
++            break;
++        case REG_TDUALSTAGE0:
++        case REG_TDUALSTAGE1:
++            mystique->tdualstage[((addr & 0x3ffc) - REG_TDUALSTAGE0) >> 2] = val;
++            break;
++
+         default:
+-            mystique_accel_ctrl_write_b(addr, val & 0xff, priv);
+-            mystique_accel_ctrl_write_b(addr + 1, (val >> 8) & 0xff, priv);
+-            mystique_accel_ctrl_write_b(addr + 2, (val >> 16) & 0xff, priv);
+-            mystique_accel_ctrl_write_b(addr + 3, (val >> 24) & 0xff, priv);
++            mystique_accel_ctrl_write_b_raw(addr, val & 0xff, priv);
++            mystique_accel_ctrl_write_b_raw(addr + 1, (val >> 8) & 0xff, priv);
++            mystique_accel_ctrl_write_b_raw(addr + 2, (val >> 16) & 0xff, priv);
++            mystique_accel_ctrl_write_b_raw(addr + 3, (val >> 24) & 0xff, priv);
+             break;
+     }
+ 
+@@ -2810,6 +2839,98 @@ mystique_accel_ctrl_write_l(uint32_t addr, uint32_t val, void *priv)
+         mystique_start_blit(mystique);
+ }
+ 
++/* MGA-Glide local patch 0009 (G400 dual texturing). The texture registers
++ * exist once per texture map; dwgreg holds map 0. While tmap0dis is 0 a
++ * write goes to both maps, while it is 1 to map 1 only. tmap0dis is the OR
++ * of the map1 bit (31) last written to TEXCTL2, TEXWIDTH and TEXHEIGHT and
++ * "is effective on the next access" (G400 specification p.3-216), so the
++ * write that sets it still reaches both maps. A register written through
++ * its start alias (+0x100) starts the draw only after the routing. */
++static uint32_t *
++g400_map_reg(mystique_t *mystique, uint32_t reg, int map)
++{
++    if (reg >= REG_TMR0 && reg <= REG_TMR0 + 32)
++        return map ? &mystique->map1.tmr[(reg - REG_TMR0) >> 2] : &mystique->dwgreg.tmr[(reg - REG_TMR0) >> 2];
++    if (reg >= REG_TEXORG1 && reg <= REG_TEXORG1 + 12)
++        return map ? &mystique->map1.texorgn[(reg - REG_TEXORG1) >> 2] : &mystique->dwgreg.texorgn[(reg - REG_TEXORG1) >> 2];
++    switch (reg) {
++        case REG_TEXORG:       return map ? &mystique->map1.texorg : &mystique->dwgreg.texorg;
++        case REG_TEXWIDTH:     return map ? &mystique->map1.texwidth : &mystique->dwgreg.texwidth;
++        case REG_TEXHEIGHT:    return map ? &mystique->map1.texheight : &mystique->dwgreg.texheight;
++        case REG_TEXCTL:       return map ? &mystique->map1.texctl : &mystique->dwgreg.texctl;
++        case REG_TEXTRANS:     return map ? &mystique->map1.textrans : &mystique->dwgreg.textrans;
++        case REG_TEXTRANSHIGH: return map ? &mystique->map1.textranshigh : &mystique->dwgreg.textranshigh;
++        case REG_TEXCTL2:      return map ? &mystique->map1.texctl2 : &mystique->dwgreg.texctl2;
++        case REG_TEXFILTER:    return map ? &mystique->map1.texfilter : &mystique->dwgreg.texfilter;
++        case REG_TEXBORDERCOL: return map ? &mystique->map1.texbordercol : &mystique->dwgreg.texbordercol;
++        case REG_ALPHACTRL:    return map ? &mystique->map1.alphactrl : &mystique->dwgreg.alphactrl;
++        default:               return NULL;
++    }
++}
++
++static void
++g400_texreg_write(mystique_t *mystique, uint32_t addr, uint32_t val, int bytes, void *priv)
++{
++    const int      exec = (addr & 0x300) == 0x100;
++    const uint32_t a    = exec ? (addr & ~0x100) : addr;
++    const uint32_t reg  = a & 0x3ffc;
++    const uint32_t mask = bytes == 4 ? 0xffffffffu : (0xffu << (8 * (a & 3)));
++    uint32_t      *p0 = g400_map_reg(mystique, reg, 0), *p1 = g400_map_reg(mystique, reg, 1);
++    const uint32_t save = *p0;
++    const int      map1_only = mystique->map1_tc2 | mystique->map1_tw | mystique->map1_th;
++
++    if (bytes == 4)
++        mystique_accel_ctrl_write_l_raw(a, val, priv);
++    else
++        mystique_accel_ctrl_write_b_raw(a, (uint8_t) val, priv);
++    *p1 = (*p1 & ~mask) | (*p0 & mask);
++    if (map1_only) {
++        *p0 = save;
++        mystique->dwgreg.ta_key  = (mystique->dwgreg.texctl & TEXCTL_TAKEY) ? 1 : 0;
++        mystique->dwgreg.ta_mask = (mystique->dwgreg.texctl & TEXCTL_TAMASK) ? 1 : 0;
++    }
++    if (bytes == 4 || (a & 3) == 3) {
++        const int bit = bytes == 4 ? (int) (val >> 31) : (int) ((val >> 7) & 1);
++        if (reg == REG_TEXCTL2)
++            mystique->map1_tc2 = bit;
++        else if (reg == REG_TEXWIDTH)
++            mystique->map1_tw = bit;
++        else if (reg == REG_TEXHEIGHT)
++            mystique->map1_th = bit;
++    }
++    if (exec)
++        mystique_start_blit(mystique);
++}
++
++static int
++g400_routes(mystique_t *mystique, uint32_t addr)
++{
++    const uint32_t a = ((addr & 0x300) == 0x100) ? (addr & ~0x100) : addr;
++    return mystique->type >= MGA_G400 && g400_map_reg(mystique, a & 0x3ffc, 0) != NULL;
++}
++
++static void
++mystique_accel_ctrl_write_b(uint32_t addr, uint8_t val, void *priv)
++{
++    mystique_t *mystique = (mystique_t *) priv;
++
++    if (g400_routes(mystique, addr))
++        g400_texreg_write(mystique, addr, val, 1, priv);
++    else
++        mystique_accel_ctrl_write_b_raw(addr, val, priv);
++}
++
++static void
++mystique_accel_ctrl_write_l(uint32_t addr, uint32_t val, void *priv)
++{
++    mystique_t *mystique = (mystique_t *) priv;
++
++    if (g400_routes(mystique, addr))
++        g400_texreg_write(mystique, addr, val, 4, priv);
++    else
++        mystique_accel_ctrl_write_l_raw(addr, val, priv);
++}
++
+ static void
+ mystique_ctrl_write_l(uint32_t addr, uint32_t val, void *priv)
+ {
+@@ -5673,6 +5794,120 @@ texture_read(mystique_t *mystique, int *tex_r, int *tex_g, int *tex_b, int *atra
+     return ret;
+ }
+ 
++/* MGA-Glide local patch 0009 (G400 dual texturing). Exchange map 1's
++ * registers with dwgreg (map 0), so texture_read samples map 1. */
++static void
++g400_swap_map1(mystique_t *mystique)
++{
++#define G400_SWAP(f)                                 \
++    do {                                             \
++        uint32_t t_          = mystique->dwgreg.f;   \
++        mystique->dwgreg.f   = mystique->map1.f;     \
++        mystique->map1.f     = t_;                   \
++    } while (0)
++    for (int i = 0; i < 9; i++)
++        G400_SWAP(tmr[i]);
++    for (int i = 0; i < 4; i++)
++        G400_SWAP(texorgn[i]);
++    G400_SWAP(texorg);
++    G400_SWAP(texwidth);
++    G400_SWAP(texheight);
++    G400_SWAP(texctl);
++    G400_SWAP(texctl2);
++    G400_SWAP(textrans);
++    G400_SWAP(textranshigh);
++    G400_SWAP(texfilter);
++    G400_SWAP(texbordercol);
++    G400_SWAP(alphactrl);
++#undef G400_SWAP
++    mystique->dwgreg.ta_key  = (mystique->dwgreg.texctl & TEXCTL_TAKEY) ? 1 : 0;
++    mystique->dwgreg.ta_mask = (mystique->dwgreg.texctl & TEXCTL_TAMASK) ? 1 : 0;
++}
++
++static int
++g400_sat(int v)
++{
++    return v < 0 ? 0 : v > 255 ? 255 : v;
++}
++
++/* One TDUALSTAGE stage (G400 specification p.3-196..3-203, figures 3-1 and
++ * 3-2). cur: this stage's texel; prev: the previous stage (in stage 0,
++ * texture 1); prevtex: the other texture (in stage 0 the bump-map
++ * luminance, not modelled: 0); dif, spc, fc: diffuse, specular, FCOL. All
++ * RGBA 0..255. Products are (a * b) >> 8, the legacy modulate's arithmetic,
++ * so a modulating word reproduces TEXCTL.tmodulate exactly; the silicon's
++ * rounding is not known. The blend bit runs two passes: the first product
++ * is kept (TMP) and the second uses the inverted multiplier selects. */
++static void
++g400_stage(uint32_t td, const int cur[4], const int prev[4], const int prevtex[4], const int dif[4],
++           const int spc[4], const int fc[4], int out[4])
++{
++    const int *const arg2src[4] = { dif, spc, fc, prev };
++    const int *const a2 = arg2src[td & 3];
++    const int  asrc[5]  = { dif[3], fc[3], cur[3], prevtex[3], prev[3] };
++    const int  as       = asrc[((td >> 2) & 7) > 4 ? 4 : (td >> 2) & 7];
++    const int  al1      = (td & (1u << 9)) ? 255 - as : as;
++    const int  al2      = (td & (1u << 10)) ? 255 - as : as;
++    const int  mb       = (td >> 15) & 3;
++    const int  aarg2[4] = { dif[3], fc[3], prevtex[3], prev[3] };
++    int        aa1, aa2;
++
++    for (int c = 0; c < 3; c++) {
++        int arg1 = (td & (1u << 5)) ? cur[3] : cur[c];
++        int arg2 = (td & (1u << 7)) ? a2[3] : a2[c];
++        int m1, m2, mul, in1, in2, add;
++        if (td & (1u << 6))
++            arg1 = 255 - arg1;
++        if (td & (1u << 8))
++            arg2 = 255 - arg2;
++        m1  = (td & (1u << 11)) ? al1 : arg1;
++        m2  = (td & (1u << 12)) ? al2 : arg2;
++        mul = g400_sat(((m1 * m2) >> 8) << mb);
++        if (td & (1u << 20)) {
++            const int tmp = mul;
++            m1  = (td & (1u << 11)) ? arg1 : al1;
++            m2  = (td & (1u << 12)) ? arg2 : al2;
++            mul = g400_sat(((m1 * m2) >> 8) << mb);
++            in1 = (td & (1u << 13)) ? mul : arg1;
++            in2 = (td & (1u << 14)) ? tmp : arg2;
++        } else {
++            in1 = (td & (1u << 13)) ? mul : arg1;
++            in2 = (td & (1u << 14)) ? mul : arg2;
++        }
++        add = (td & (1u << 17)) ? in1 + in2 : in1 - in2;
++        if (td & (1u << 19))
++            add -= 128;
++        if (td & (1u << 18))
++            add *= 2;
++        switch ((td >> 21) & 3) {
++            case 0: out[c] = arg1; break;
++            case 1: out[c] = arg2; break;
++            case 2: out[c] = g400_sat(add); break;
++            default: out[c] = mul; break;
++        }
++    }
++    aa1 = (td & (1u << 23)) ? 255 - cur[3] : cur[3];
++    aa2 = aarg2[(td >> 24) & 3];
++    if (td & (1u << 26))
++        aa2 = 255 - aa2;
++    switch ((td >> 30) & 3) {
++        case 0: out[3] = aa1; break;
++        case 1: out[3] = aa2; break;
++        case 2: {
++            int add = (td & (1u << 27)) ? aa1 + aa2 : aa1 - aa2;
++            if (td & (1u << 28))
++                add -= 128;
++            if (td & (1u << 29))
++                add *= 2;
++            out[3] = g400_sat(add);
++            break;
++        }
++        default:
++            out[3] = g400_sat(((aa1 * aa2) >> 8) << ((td >> 28) & 3));
++            break;
++    }
++}
++
+ static void
+ blit_texture_trap(mystique_t *mystique)
+ {
+@@ -5704,6 +5939,9 @@ blit_texture_trap(mystique_t *mystique)
+                 uint32_t s_back = mystique->dwgreg.tmr[6];
+                 uint32_t t_back = mystique->dwgreg.tmr[7];
+                 uint32_t q_back = mystique->dwgreg.tmr[8];
++                uint32_t s1_back = mystique->map1.tmr[6];      /* patch 0009: map 1 */
++                uint32_t t1_back = mystique->map1.tmr[7];
++                uint32_t q1_back = mystique->map1.tmr[8];
+                 uint32_t a_back = mystique->dwgreg.alphastart;
+                 uint32_t fog_back = mystique->dwgreg.fogstart;
+                 uint32_t spec_back[3];
+@@ -5863,6 +6101,40 @@ blit_texture_trap(mystique_t *mystique)
+                                 }
+                             }
+ 
++                            if (mystique->type >= MGA_G400) {
++                                /* MGA-Glide local patch 0009: the TDUALSTAGE combiner after
++                                 * the legacy module: stage 0 always (the specification's
++                                 * single texturing), stage 1 with dualtex. Zero words pass
++                                 * the texel through. Blending keeps map 0's ALPHACTRL (the
++                                 * silicon takes map 1's in dual mode; runtimes write both). */
++                                const int dual = (mystique->dwgreg.texctl2 & TEXCTL2_DUALTEX) != 0;
++                                const uint32_t fc = mystique->dwgreg.fcol;
++                                int t0[4] = { tex_r, tex_g, tex_b, tex_a }, t1[4] = { 0, 0, 0, 255 };
++                                int dif[4] = { i_r, i_g, i_b, i_a }, spc[4] = { 0, 0, 0, 0 };
++                                int fcv[4] = { (int) ((fc >> 16) & 0xff), (int) ((fc >> 8) & 0xff), (int) (fc & 0xff), (int) (fc >> 24) };
++                                int zero[4] = { 0, 0, 0, 0 }, s0[4], s1[4];
++                                for (int c = 0; c < 3; c++)
++                                    spc[c] = (mystique->dwgreg.specstart[c] & (1 << 23)) ? 0 : ((mystique->dwgreg.specstart[c] >> 15) & 0xff);
++                                if (dual) {
++                                    int at1 = 0, ct1;
++                                    g400_swap_map1(mystique);
++                                    ct1 = texture_read(mystique, &t1[0], &t1[1], &t1[2], &at1, &t1[3]);
++                                    g400_swap_map1(mystique);
++                                    if ((mystique->map1.texctl & TEXCTL_STRANS) && (ct1 || at1))
++                                        goto skip_pixel;
++                                }
++                                g400_stage(mystique->tdualstage[0], t0, t1, zero, dif, spc, fcv, s0);
++                                if (dual) {
++                                    g400_stage(mystique->tdualstage[1], t1, s0, t0, dif, spc, fcv, s1);
++                                    memcpy(s0, s1, sizeof s0);
++                                }
++                                tex_r = s0[0];
++                                tex_g = s0[1];
++                                tex_b = s0[2];
++                                if (((mystique->dwgreg.alphactrl >> 24) & 3) == 0)
++                                    final_a = s0[3];
++                            }
++
+                             if (mystique->type >= MGA_G100 && (mystique->maccess_running & MACCESS_FOGEN))
+                             {
+                                 tex_r = (tex_r * ((i_fog) / 255.)) + (mystique->dwgreg.fogcol >> 16) * ((255 - i_fog) / 255.);
+@@ -5921,6 +6193,11 @@ skip_pixel:
+                     mystique->dwgreg.tmr[6] += mystique->dwgreg.tmr[0];
+                     mystique->dwgreg.tmr[7] += mystique->dwgreg.tmr[2];
+                     mystique->dwgreg.tmr[8] += mystique->dwgreg.tmr[4];
++                    if (mystique->type >= MGA_G400 && (mystique->dwgreg.texctl2 & TEXCTL2_DUALTEX)) {
++                        mystique->map1.tmr[6] += mystique->map1.tmr[0];
++                        mystique->map1.tmr[7] += mystique->map1.tmr[2];
++                        mystique->map1.tmr[8] += mystique->map1.tmr[4];
++                    }
+                     mystique->dwgreg.fogstart += mystique->dwgreg.fogxinc;
+                     mystique->dwgreg.alphastart += mystique->dwgreg.alphaxinc;
+                     mystique->dwgreg.fogstart &= 0xFFFFFF;
+@@ -5942,6 +6219,11 @@ skip_pixel:
+                 mystique->dwgreg.tmr[6]     = s_back + mystique->dwgreg.tmr[1];
+                 mystique->dwgreg.tmr[7]     = t_back + mystique->dwgreg.tmr[3];
+                 mystique->dwgreg.tmr[8]     = q_back + mystique->dwgreg.tmr[5];
++                if (mystique->type >= MGA_G400 && (mystique->dwgreg.texctl2 & TEXCTL2_DUALTEX)) {
++                    mystique->map1.tmr[6] = s1_back + mystique->map1.tmr[1];
++                    mystique->map1.tmr[7] = t1_back + mystique->map1.tmr[3];
++                    mystique->map1.tmr[8] = q1_back + mystique->map1.tmr[5];
++                }
+                 mystique->dwgreg.fogstart   = fog_back + mystique->dwgreg.fogyinc;
+                 mystique->dwgreg.alphastart = a_back + mystique->dwgreg.alphayinc;
+                 mystique->dwgreg.fogstart &= 0xFFFFFF;
+@@ -5975,6 +6257,11 @@ skip_pixel:
+                 mystique->dwgreg.tmr[6] += dx * mystique->dwgreg.tmr[0];
+                 mystique->dwgreg.tmr[7] += dx * mystique->dwgreg.tmr[2];
+                 mystique->dwgreg.tmr[8] += dx * mystique->dwgreg.tmr[4];
++                if (mystique->type >= MGA_G400 && (mystique->dwgreg.texctl2 & TEXCTL2_DUALTEX)) {
++                    mystique->map1.tmr[6] += dx * mystique->map1.tmr[0];   /* patch 0009: map 1 follows the left edge */
++                    mystique->map1.tmr[7] += dx * mystique->map1.tmr[2];
++                    mystique->map1.tmr[8] += dx * mystique->map1.tmr[4];
++                }
+                 mystique->dwgreg.fogstart += dx * mystique->dwgreg.fogxinc;
+                 mystique->dwgreg.alphastart += dx * mystique->dwgreg.alphaxinc;
+                 mystique->dwgreg.fogstart &= 0xFFFFFF;

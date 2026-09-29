@@ -125,9 +125,9 @@ void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, con
     int64_t area2, cross;
     int mid_right;
     double inv;
-    plane pz, pr, pg, pb, pa, pf, ps, pt, pq, psr, psg, psb;
+    plane pz, pr, pg, pb, pa, pf, ps, pt, pq, psr, psg, psb, ps1, pt1, pq1;
     double K = 1.0;
-    int k = 0;
+    int k = 0, k1 = 0, map1_sizes = 1;
     int32_t y_top, y_mid, y_bot, part;
     uint32_t flags = ctx->flags;
 
@@ -193,6 +193,25 @@ void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, con
         make_plane(&ps, v, v[0]->s * K, v[1]->s * K, v[2]->s * K, inv);
         make_plane(&pt, v, v[0]->t * K, v[1]->t * K, v[2]->t * K, inv);
         make_plane(&pq, v, v[0]->q * K, v[1]->q * K, v[2]->q * K, inv);
+    }
+    if (flags & MGA_S_TEX2) {
+        /* Map 1 (G400) gets its own prescale: its coordinates can span far
+         * more (lightmaps) or less than map 0's; q is shared. */
+        double ms = 0, mq = 0, K1;
+        int i;
+        for (i = 0; i < 3; i++) {
+            double as = v[i]->s1 < 0 ? -v[i]->s1 : v[i]->s1, at = v[i]->t1 < 0 ? -v[i]->t1 : v[i]->t1;
+            if (as > ms) ms = as;
+            if (at > ms) ms = at;
+            if (v[i]->q > mq) mq = v[i]->q;
+        }
+        k1 = 15;
+        while (k1 > -8 && ((ms * (double)(1 << (k1 + 8)) / 256.0) >= 2047.0 || (mq * (double)(1 << (k1 + 8)) / 256.0) >= 32767.0))
+            k1--;
+        K1 = (double)(1 << (k1 + 8)) / 256.0;
+        make_plane(&ps1, v, v[0]->s1 * K1, v[1]->s1 * K1, v[2]->s1 * K1, inv);
+        make_plane(&pt1, v, v[0]->t1 * K1, v[1]->t1 * K1, v[2]->t1 * K1, inv);
+        make_plane(&pq1, v, v[0]->q * K1, v[1]->q * K1, v[2]->q * K1, inv);
     }
 
     /* Per-triangle increments. */
@@ -332,6 +351,32 @@ void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, con
             MGA_WR32(MGAREG_TMR(6), (uint32_t)fx(eval(&ps, v[0], px, py), 1048576.0));
             MGA_WR32(MGAREG_TMR(7), (uint32_t)fx(eval(&pt, v[0], px, py), 1048576.0));
             MGA_WR32(MGAREG_TMR(8), (uint32_t)fx(eval(&pq, v[0], px, py), 65536.0));
+        }
+        if (flags & MGA_S_TEX2) {
+            /* The G400's second programming step (specification §4.5.5.5):
+             * everything above reached both maps; now map 1 alone, then
+             * start the engine. Its sizes and increments go with the first
+             * trapezoid drawn and stay for the second. */
+            int tw = ctx->tex_tw1, th = ctx->tex_th1;
+            fifo_reserve(1);
+            MGA_WR32(MGAREG_TEXCTL2, ctx->texctl2_1 | TEXCTL2_MAP1);
+            if (map1_sizes) {
+                fifo_reserve(8);
+                MGA_WR32(MGAREG_TEXWIDTH, TEXWH(tw, 8 - tw - k1, (1u << tw) - 1));
+                MGA_WR32(MGAREG_TEXHEIGHT, TEXWH(th, 8 - th - k1, (1u << th) - 1));
+                MGA_WR32(MGAREG_TMR(0), (uint32_t)fx(ps1.dx, 1048576.0));
+                MGA_WR32(MGAREG_TMR(1), (uint32_t)fx(ps1.dy, 1048576.0));
+                MGA_WR32(MGAREG_TMR(2), (uint32_t)fx(pt1.dx, 1048576.0));
+                MGA_WR32(MGAREG_TMR(3), (uint32_t)fx(pt1.dy, 1048576.0));
+                MGA_WR32(MGAREG_TMR(4), (uint32_t)fx(pq1.dx, 65536.0));
+                MGA_WR32(MGAREG_TMR(5), (uint32_t)fx(pq1.dy, 65536.0));
+                map1_sizes = 0;
+            }
+            fifo_reserve(4);
+            MGA_WR32(MGAREG_TMR(6), (uint32_t)fx(eval(&ps1, v[0], px, py), 1048576.0));
+            MGA_WR32(MGAREG_TMR(7), (uint32_t)fx(eval(&pt1, v[0], px, py), 1048576.0));
+            MGA_WR32(MGAREG_TMR(8), (uint32_t)fx(eval(&pq1, v[0], px, py), 65536.0));
+            MGA_WR32(MGAREG_TEXCTL2, ctx->texctl2_1);   /* map 1 only; broadcast from the next write */
         }
         fifo_reserve(1);
         MGA_WR32(MGAREG_YDSTLEN + MGAREG_EXEC, ((uint32_t)(ys & 0xFFFF) << 16) | (uint32_t)(ye - ys));

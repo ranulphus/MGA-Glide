@@ -15,6 +15,7 @@ typedef struct {
     float   fog;           /* 0..255 fog factor (255 = no fog) */
     float   sr, sg, sb;    /* 0..255 specular colour added after texturing (G200+) */
     float   s, t, q;       /* texture: s/w, t/w, 1/w, already scaled (see texture setup) */
+    float   s1, t1;        /* G400 map 1 (MGA_S_TEX2): s/w, t/w for the second texture, same q */
 } mga_svtx;
 
 enum {
@@ -26,7 +27,8 @@ enum {
     MGA_S_TEX    = 1u << 5,    /* interpolate s, t, q */
     MGA_S_AFFINE = 1u << 6,    /* q constant: texture is affine (NPCEN) */
     MGA_S_VOODOO_EDGES = 1u << 7,  /* Voodoo column rule instead of exact centres */
-    MGA_S_SPEC   = 1u << 8     /* interpolate the specular colour (G200+, TEXCTL2.specen) */
+    MGA_S_SPEC   = 1u << 8,    /* interpolate the specular colour (G200+, TEXCTL2.specen) */
+    MGA_S_TEX2   = 1u << 9     /* G400: also map 1 (s1, t1), after tex_emit_dual */
 };
 
 typedef struct {
@@ -34,6 +36,8 @@ typedef struct {
     uint32_t flags;            /* MGA_S_* */
     int      clip_y0, clip_y1; /* rows [y0, y1) that may be drawn */
     int      tex_tw, tex_th;   /* texture log2 width/height (hardware) */
+    int      tex_tw1, tex_th1; /* map 1's (MGA_S_TEX2) */
+    uint32_t texctl2_1;        /* map 1's TEXCTL2 (with TEXCTL2_DUALTEX), for the map-1 step */
 } mga_tri_ctx;
 
 /* Statistics for benchmarks and tests. */

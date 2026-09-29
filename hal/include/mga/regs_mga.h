@@ -211,6 +211,12 @@
 #define TEXCTL2_IDECAL          (1u << 1)
 #define TEXCTL2_DECALDIS        (1u << 2)
 #define TEXCTL2_SPECEN          (1u << 6)
+#define TEXCTL2_DUALTEX         (1u << 7)    /* G400: two texture maps and both combiner stages */
+#define TEXCTL2_MAP1            (1u << 31)   /* G400: the next writes reach map 1 only (tmap0dis) */
+/* G400 texture combiner (TDUALSTAGE0/1, one copy each; docs/g400-dual-texture.md). */
+#define MGAREG_TEXBORDERCOL     0x2C5C
+#define MGAREG_TDUALSTAGE0      0x2CF8
+#define MGAREG_TDUALSTAGE1      0x2CFC
 
 /* TEXWIDTH / TEXHEIGHT: tw[5:0], rfw[14:9], twmask[28:18]. */
 #define TEXWH(log2, rf, mask)   ((uint32_t)(log2) | ((uint32_t)((rf) & 63) << 9) | ((uint32_t)(mask) << 18))

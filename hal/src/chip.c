@@ -27,6 +27,7 @@ void mga_chip_caps(mga_chip *c)
         c->has_texctl2 = 1; c->has_alpha_blend = 1; c->has_alpha_test = 1;
         c->has_tlut = 1; c->has_specular = 1; c->has_decalblend = 1;
         c->g400_clip_quirk = 1;
+        c->has_dual_tex = 1;
         break;
     default:
         break;

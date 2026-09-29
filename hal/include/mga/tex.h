@@ -27,10 +27,22 @@ typedef struct {
  * and TEXTRANS. ALPHACTRL stays with the caller. */
 void tex_emit(const mga_texstate *t);
 
+/* G400 dual texturing (docs/g400-dual-texture.md): program t0 into both
+ * maps (TEXCTL2 gets TEXCTL2_DUALTEX), then map 1's sampler from t1 alone;
+ * TEXWIDTH/TEXHEIGHT and the TMRs come per triangle from setup_triangle with
+ * MGA_S_TEX2. tex_emit() with dualtex clear returns both maps to single
+ * texturing. */
+void tex_emit_dual(const mga_texstate *t0, const mga_texstate *t1);
+/* The G400 combiner: TDUALSTAGE0 and TDUALSTAGE1 (single texturing uses
+ * stage 0 and wants stage 1 equal to it; zero passes the texel through). */
+void tex_emit_combiner(uint32_t stage0, uint32_t stage1);
+
 /* Keep the engine on well-behaved inputs: in wrap mode shift each axis by
  * whole texture periods so the smallest coordinate lies in [0, 1); with
  * bilinear filtering move the sample point by half a texel so the filter
  * centres on texels. */
 void tex_adjust_coords(mga_svtx *a, mga_svtx *b, mga_svtx *c, const mga_texstate *t);
+/* The same for map 1's coordinates (s1, t1). */
+void tex_adjust_coords1(mga_svtx *a, mga_svtx *b, mga_svtx *c, const mga_texstate *t);
 
 #endif

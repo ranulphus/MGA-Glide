@@ -35,7 +35,8 @@ typedef struct {
     unsigned   has_dwgsync:1, has_dstorg:1, has_ydstorg:1, zorg_ydst_relative:1,
                has_texctl2:1, has_alpha_blend:1, has_alpha_test:1, has_tlut:1,
                has_specular:1, has_decalblend:1, fog_textrap_only:1,
-               alphasel_tex_always:1, blk_clear_ok:1, g400_clip_quirk:1;
+               alphasel_tex_always:1, blk_clear_ok:1, g400_clip_quirk:1,
+               has_dual_tex:1;  /* G400: two texture maps, TDUALSTAGE combiner */
 } mga_chip;
 
 extern mga_chip mga;                 /* the device in use */

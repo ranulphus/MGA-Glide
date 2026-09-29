@@ -11,8 +11,26 @@ runtime's G400-family path can be exercised before the physical cards
 
 Both build on the emulated G200 (`docs/emulated-g200.md`): the drawing
 engine, blending, alpha test, specular and mipmaps are the G200 model's.
-Neither models the G400's second texture unit, its new combiner
-(`TDUALSTAGE0/1`), CRTC2 or the MAVEN; the runtime does not use them.
+Patch `0009-mga-g400-dual-texture.patch` adds the second texture map and
+the combiner (below). Neither models CRTC2, the MAVEN or the WARP setup
+engine; the runtimes do not use them.
+
+## Dual texturing (patch 0009)
+
+From the G400 specification and the drivers that ran on real G400s,
+collected in `docs/g400-dual-texture.md`. MGA-Glide never uses it; DOS-GL's
+`GL_ARB_multitexture` does.
+
+| Area | Model | Basis |
+|---|---|---|
+| Map 1's registers | A second copy of TMR0-8, TEXORG and TEXORG1-4, TEXWIDTH, TEXHEIGHT, TEXCTL, TEXCTL2, TEXTRANS(HIGH), TEXFILTER, TEXBORDERCOL, ALPHACTRL | specification (the per-map table, p.3-216) |
+| Routing | `tmap0dis` is the OR of bit 31 last written to TEXCTL2, TEXWIDTH and TEXHEIGHT and applies from the next write: writes reach both maps while it is 0, map 1 only while it is 1; a register's start alias (+0x100) starts the draw after the routing | specification; **guessed:** that the write setting the bit is itself broadcast (X.org's EXA code relies on it) |
+| Sampling | With `TEXCTL2.dualtex`, map 1's coordinates step like map 0's (per pixel, per line, and with the left edge) and it is sampled with its own registers | specification |
+| Combiner | TDUALSTAGE0 always (single texturing too), TDUALSTAGE1 with dualtex, after the legacy module (`TEXCTL.tmodulate`, decal blend, specular); zero words pass the texel through, so everything drawn before is unchanged. Products `(a*b)>>8` as the legacy modulate; the blend mode's two passes as the specification's datapath | specification (fields and datapath); **guessed:** rounding, the legacy module's place before the combiner, add2x/addbias order |
+| Alpha | ALPHACTRL alphasel "from texture" takes the combiner's alpha | Mesa programs it this way |
+| Blending in dual mode | Map 0's ALPHACTRL | **differs:** the silicon takes map 1's; runtimes write both the same |
+| Not modelled | TEXBORDERCOL (stored), bump mapping, table fog, Rev A's zero-TDUALSTAGE rule, TEXCTL2 bit 15 | |
+
 
 ## What differs from the G200 model
 
