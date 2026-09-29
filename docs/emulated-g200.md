@@ -31,6 +31,13 @@ and subsystem ID 0 (the package image carries no board subsystem bytes at
 is identical under both BIOSes; the conformance suite and both game
 replays pass unchanged.
 
+Known gap: with 8 MB configured, the genuine BIOS reports **2 MB** as VBE
+`TotalMemory` (DOS-GL's PROBE: `vram=2097152`), so it presumably sizes
+memory from something the model does not provide. MGA-Glide never
+noticed, because it sizes VRAM with `mga_probe_vram()`; DOS-GL did (a 248 KB
+texture heap) and now probes too. Check what the real G200 BIOS reports at
+milestone S before changing the model.
+
 Patch `0005-mga-texel-alpha.patch` (both cards) gives TW15 texels their
 1-bit alpha and expands TW12 fields by bit replication; patch
 `0006-mga-measured-texturing.patch` makes the larger-weight texel decide
