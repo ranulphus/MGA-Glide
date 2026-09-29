@@ -11,6 +11,7 @@ const mga_target *engine_target = &cur;
 static uint32_t cur_maccess;
 static int cur_ydstorg_px;
 static int clip_x0, clip_y0, clip_x1 = 0x7FFF, clip_y1 = 0x7FFF;
+static int opmode_blit;            /* OPMODE set for ILOAD through the DMA window */
 
 static void emit_clip(void)
 {
@@ -73,6 +74,7 @@ void engine_init(int pitch_px, int bpp)
     cur.zbits = 16;
     cur.color_off = cur.z_off = 0;
     cur_ydstorg_px = 0;
+    opmode_blit = 0;
 }
 
 int engine_sync(uint32_t timeout_us)
@@ -243,4 +245,70 @@ void engine_tlut_load(uint32_t off, int first, int count)
     fifo_reserve(1);
     MGA_WR32(MGAREG_PITCH, (uint32_t)cur.pitch_px);
     engine_set_target(&cur);                        /* origins, MACCESS */
+}
+
+/* ILOAD (G400 specification §4.5.8): full-colour data in the destination
+ * format, an xy source (each row padded to a dword), written through the
+ * DMA window in blit mode. The engine takes exactly the pixels it expects;
+ * fewer would hang it and more would be read as register writes, so
+ * engine_iload_end pads any rows the caller did not send. Clipping is off
+ * (clipdis, and the clip registers opened for chips that ignore it): the
+ * clip registers are linear addresses in the render target's pitch. */
+static int iload_row_dw, iload_rows;
+static uint32_t dmawin_pos;
+
+int engine_iload_begin(uint32_t off, int pitch_px, int bpp, int x, int y, int w, int h)
+{
+    int align = bpp == 8 ? 63 : 31;
+    if (!mga.has_dstorg || (bpp != 8 && bpp != 16) || w <= 0 || h <= 0 || (off & 63) ||
+        pitch_px <= 0 || pitch_px > 4096 || (pitch_px & align) || x < 0 || x + w > pitch_px)
+        return 0;
+    if (!opmode_blit) {
+        engine_sync(200000);                         /* OPMODE is not queued behind drawing */
+        MGA_WR32(MGAREG_OPMODE, OPMODE_DMAMOD_BLIT);
+        opmode_blit = 1;
+    }
+    fifo_reserve(12);
+    MGA_WR32(MGAREG_DSTORG, off);
+    MGA_WR32(MGAREG_PITCH, (uint32_t)pitch_px);
+    MGA_WR32(MGAREG_MACCESS, bpp == 8 ? MACCESS_PW8 : MACCESS_PW16);
+    MGA_WR32(MGAREG_CXBNDRY, 0x0FFF0000u);
+    MGA_WR32(MGAREG_YTOP, 0);
+    MGA_WR32(MGAREG_YBOT, 0x00FFFFFFu);
+    MGA_WR32(MGAREG_AR0, (uint32_t)w - 1);
+    MGA_WR32(MGAREG_AR3, 0);
+    MGA_WR32(MGAREG_AR5, 0);
+    MGA_WR32(MGAREG_FXBNDRY, ((uint32_t)(x + w - 1) << 16) | (uint32_t)x);
+    MGA_WR32(MGAREG_DWGCTL, DWG_OPCOD_ILOAD | DWG_ATYPE_RPL | DWG_SGNZERO | DWG_SHFTZERO | DWG_BOP_COPY |
+                            DWG_BLTMOD_BFCOL | DWG_CLIPDIS);
+    MGA_WR32(MGAREG_YDSTLEN + MGAREG_EXEC, ((uint32_t)y << 16) | (uint32_t)h);
+    iload_row_dw = (w * bpp + 31) / 32;
+    iload_rows = h;
+    return iload_row_dw;
+}
+
+void engine_iload_row(const uint32_t *d)
+{
+    int i = 0, n = iload_row_dw;
+    if (iload_rows <= 0)
+        return;
+    iload_rows--;
+    while (i < n) {
+        int k = n - i < mga.fifo_depth ? n - i : mga.fifo_depth;
+        fifo_reserve(k);
+        for (; k > 0; k--, i++) {
+            MGA_WR32(MGAREG_DMAWIN + dmawin_pos, d ? d[i] : 0);
+            dmawin_pos = dmawin_pos + 4 < MGA_DMAWIN_SIZE ? dmawin_pos + 4 : 0;
+        }
+    }
+}
+
+void engine_iload_end(void)
+{
+    while (iload_rows > 0)
+        engine_iload_row(NULL);
+    fifo_reserve(1);
+    MGA_WR32(MGAREG_PITCH, (uint32_t)cur.pitch_px);
+    engine_set_target(&cur);                        /* DSTORG, ZORG, MACCESS */
+    emit_clip();
 }

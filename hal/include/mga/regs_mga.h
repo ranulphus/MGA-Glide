@@ -60,6 +60,8 @@
 #define MGAREG_DR14         0x1CF8
 #define MGAREG_DR15         0x1CFC
 #define MGAREG_EXEC         0x0100      /* add to a drawing register to start the engine */
+#define MGAREG_DMAWIN       0x0000      /* 0000h-1BFFh: ILOAD data (pseudo-DMA window) */
+#define MGA_DMAWIN_SIZE     0x1C00
 
 #define MGAREG_FIFOSTATUS   0x1E10
 #define MGAREG_STATUS       0x1E14
@@ -68,6 +70,7 @@
 #define MGAREG_VCOUNT       0x1E20
 #define MGAREG_RST          0x1E40
 #define MGAREG_OPMODE       0x1E54
+#define OPMODE_DMAMOD_BLIT  (1u << 2)   /* DMA window writes are ILOAD data */
 #define MGAREG_PRIMADDRESS  0x1E58
 #define MGAREG_PRIMEND      0x1E5C
 

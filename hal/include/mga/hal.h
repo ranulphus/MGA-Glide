@@ -85,6 +85,16 @@ void     engine_set_clip(int x0, int y0, int x1, int y1);   /* inclusive-exclusi
 void     engine_fill(int x, int y, int w, int h, uint32_t value);
 void     engine_fill_depth(int x, int y, int w, int h, uint32_t zvalue);
 void     engine_tlut_load(uint32_t off, int first, int count);   /* G200+: texture LUT from VRAM (RGB565) */
+/* G200+: write a w x h rectangle at (x, y) of the surface at VRAM offset off
+ * (pitch_px pixels a line, bpp 8 or 16) through the engine (ILOAD), queued in
+ * order with drawing. begin returns the dwords per row (pixels in the
+ * surface's format, first pixel in the low bits, each row padded to a
+ * dword), or 0 when the surface can't be loaded so (pitch not a multiple of
+ * 32 pixels, or 64 at 8 bpp; origin not 64-byte aligned); then exactly h
+ * calls of engine_iload_row, then engine_iload_end. */
+int      engine_iload_begin(uint32_t off, int pitch_px, int bpp, int x, int y, int w, int h);
+void     engine_iload_row(const uint32_t *d);
+void     engine_iload_end(void);
 int      engine_vsync_wait(uint32_t timeout_us);
 int      engine_in_vblank(void);
 uint32_t engine_vcount(void);

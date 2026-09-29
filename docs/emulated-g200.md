@@ -37,6 +37,19 @@ specifications' recipe uses RSTR, which upstream drew into VRAM instead.
 The HAL's `engine_tlut_load()` follows the specifications; DOS-GL uses the
 table for 8-bit paletted textures (TW8) on the G200.
 
+ILOAD (`engine_iload_begin/row/end`, G200 and later; DOS-GL writes
+`glTexSubImage2D` rectangles with it) works in the unpatched model, with two
+conditions:
+
+- The data goes through the DMA window, and the model accepts it only while
+  `OPMODE.dmamod` is BLIT, as the specification requires. The HAL sets that
+  once.
+- The model ignores `DWGCTL.clipdis`, so the HAL also opens the clip
+  registers for the load and restores them after it.
+
+Whether the texture cache sees texels written by ILOAD is silicon
+experiment E6 (DOS-GL `docs/silicon-experiments.md`).
+
 Known gap: with 8 MB configured, the genuine BIOS reports **2 MB** as VBE
 `TotalMemory` (DOS-GL's PROBE: `vram=2097152`), so it presumably sizes
 memory from something the model does not provide. MGA-Glide never
