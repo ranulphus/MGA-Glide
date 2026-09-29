@@ -72,7 +72,7 @@ From `abi/glide2x.api`:
 | `hal-ow`, `hal-djgpp`, `hal-host` | the HAL on each toolchain |
 | `86box` | the pinned, patched emulator |
 | `loopa TEST=` | one program in 86Box |
-| `loopa-selftest` | the harness's own statuses, and the fault / exit hooks |
+| `loopa-selftest` | the harness's own statuses, the fault / exit hooks, and the emulator's DPMI stack check (`STACKPG`) |
 | `conform`, `conform-ref` | the conformance suite, and its Voodoo references |
 
 Header dependencies are tracked (`-ad` with the real object and source

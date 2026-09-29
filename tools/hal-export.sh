@@ -23,7 +23,7 @@ for f in $(git ls-files hal); do copy "$f"; done
 # Host reference rasteriser and the setup unit test.
 for f in tests/unit/unit.c tests/unit/unit.h tests/unit/refrast.c tests/unit/refrast.h tests/unit/test_trap.c; do copy "$f"; done
 # Smoke and bring-up programs, the guest shim and DOS helpers.
-for f in tests/hal/smoke.c tests/hal/probe.c tests/hal/romdump.c tests/shim/hx.c tests/shim/hx.h tests/shim/hello.c $(git ls-files tools/dos); do copy "$f"; done
+for f in tests/hal/smoke.c tests/hal/probe.c tests/hal/romdump.c tests/shim/hx.c tests/shim/hx.h tests/shim/hello.c tests/shim/stackpg.c $(git ls-files tools/dos); do copy "$f"; done
 # Loop C rig (Linux port is part of hal/).
 for f in tests/rig/mgarig.c $(git ls-files tools/rig); do copy "$f"; done
 # Loop A harness, 86Box build and patches, setup scripts, dev container.
@@ -74,7 +74,10 @@ build/djgpp/HELLO.EXE: tests/shim/hello.c tests/shim/hx.c build/djgpp/libmgahal.
 	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^
 build/djgpp/PROBE.EXE: tests/hal/probe.c tests/shim/hx.c build/djgpp/libmgahal.a
 	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^
-dostests-djgpp: build/djgpp/HELLO.EXE build/djgpp/PROBE.EXE
+# The emulator's DPMI stack check (docs/loops.md): must PASS in Loop A.
+build/djgpp/STACKPG.EXE: tests/shim/stackpg.c tests/shim/hx.c build/djgpp/libmgahal.a
+	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^
+dostests-djgpp: build/djgpp/HELLO.EXE build/djgpp/PROBE.EXE build/djgpp/STACKPG.EXE
 
 build/host/%.o: %.c
 	@mkdir -p $(dir $@)

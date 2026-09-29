@@ -27,8 +27,10 @@ or with "3DFX" on 3dfx's runtime (on the Voodoo). A zip with games holds
 retail software: it is for the owner's own machine only.
 
 The zip holds <name>/86box.cfg, boot.img, c.img (sparse, 492 MB unpacked),
-d.img if asked for, and README.txt. Open it with 86Box.exe -P <folder>, or add it in the
-manager. DOS/4GW and CWSDPMI go into C:\\HX with the HX helpers. Never pass
+d.img if asked for, nvr/ (Loop A's saved BIOS settings, so the first boot
+does not stop at a CMOS checksum error) and README.txt. Open it with
+86Box.exe -P <folder>, or unzip it into the 86Box manager's system directory
+(its "Use existing configuration" copies only 86box.cfg, not the images). DOS/4GW and CWSDPMI go into C:\\HX with the HX helpers. Never pass
 retail Glide runtimes, games or BIOS images to --file for a kit that will
 be shared.
 """
@@ -115,7 +117,12 @@ It boots FreeDOS 1.4 from boot.img (keep it in the floppy drive); C: is
 c.img{d_note}. C:\\RUN.BAT runs at boot and sets PATH (C:\\HX has DOS4GW.EXE and
 CWSDPMI.EXE) and BLASTER.
 
-Open: 86Box.exe -P <this folder>   (or add the folder in 86Box's manager)
+Open: unzip this folder into the 86Box manager's system directory (shown in
+the manager's Preferences; by default %USERPROFILE%\\86Box VMs) and start
+the manager: it lists every folder there that holds an 86box.cfg. Or run
+86Box.exe -P <this folder>. The disk images must stay beside 86box.cfg:
+the manager's "Use existing configuration" copies only the configuration
+text, so a machine added that way boots with no disks ("DISK BOOT FAILURE").
 To copy files in or out, attach c.img to another tool that reads FAT16
 partitioned images, or add your own second disk in Settings > Storage.
 
@@ -221,6 +228,9 @@ def main():
         gold = loopa.golden()
         shutil.copyfile(os.path.join(gold, "boot.img"), os.path.join(vm, "boot.img"))
         subprocess.run(["cp", "--sparse=always", os.path.join(gold, "c.img"), os.path.join(vm, "c.img")], check=True)
+        nvr = os.path.join(loopa.CACHE, "loopa", "nvr-bf6")  # saved by Loop A's first passing run
+        if os.path.isdir(nvr):
+            shutil.copytree(nvr, os.path.join(vm, "nvr"))
         d = loopa.Disk(os.path.join(vm, "c.img"), tmp)
         for t in HX_TOOLS:
             d.put(os.path.join(ROOT, "build/ow/dos", t), "/HX/" + t)
@@ -277,8 +287,10 @@ def main():
         if os.path.exists(out):
             os.remove(out)
         with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
-            for fn in sorted(os.listdir(vm)):
-                z.write(os.path.join(vm, fn), os.path.join(a.name, fn))
+            for dirpath, _, files in sorted(os.walk(vm)):
+                for fn in sorted(files):
+                    path = os.path.join(dirpath, fn)
+                    z.write(path, os.path.join(a.name, os.path.relpath(path, vm)))
         print("mkwinvm: %s (%.1f MB)" % (out, os.path.getsize(out) / 1e6))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

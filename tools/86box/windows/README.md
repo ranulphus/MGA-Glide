@@ -47,8 +47,14 @@ it needs are next to it, and the ROMs are in its `roms\` folder.
 - **The test machine** (`dosbench-g450-vm.zip`, or `dosbench-g450-games-vm.zip`
   with your own games installed, if you were given it: GTA and Screamer Rally on
   C:, and Quake, LibreQuake and Quake 2 in DOS-GL's builds on a second disk, D:):
-  unzip it, then `86Box.exe -P C:\path\to\dosbench-g450`, or add the folder
-  in the 86Box manager. It is Loop A's machine: an ABIT BF6 (440BX) board,
+  unzip it into the 86Box manager's system directory (shown in the manager's
+  Preferences; by default `%USERPROFILE%\86Box VMs`), so that
+  `86Box VMs\dosbench-g450\86box.cfg` sits beside `boot.img` and `c.img`, and
+  start the manager: it lists every folder there that holds an `86box.cfg`.
+  Or run `86Box.exe -P C:\path\to\dosbench-g450`. Don't use the manager's
+  "Use existing configuration": it copies only the configuration text into a
+  new folder, so the machine starts without its floppy and hard disks and the
+  BIOS stops at "DISK BOOT FAILURE". It is Loop A's machine: an ABIT BF6 (440BX) board,
   a Pentium II 350, 64 MB, the emulated G450 plus a Voodoo Graphics, and a
   Sound Blaster 16, booting FreeDOS. Its `README.txt` says what is on C:.
   In the games version, `SR` and `GTA` run the games on MGA-Glide on the

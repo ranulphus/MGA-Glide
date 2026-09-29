@@ -121,11 +121,14 @@ DJ_SRC_HELLO := tests/shim/hello.c
 DJ_SRC_PROBE := tests/hal/probe.c
 DJ_SRC_HOOKS := tests/hal/hooks.c
 DJ_SRC_SCALE := tests/hal/scale.c
+DJ_SRC_STACKPG := tests/shim/stackpg.c
 build/djgpp/HOOKS.EXE: tests/hal/hooks.c
 build/djgpp/SCALE.EXE: tests/hal/scale.c
 build/djgpp/HELLO.EXE: tests/shim/hello.c
 build/djgpp/PROBE.EXE: tests/hal/probe.c
-dostests-djgpp: build/djgpp/HELLO.EXE build/djgpp/PROBE.EXE build/djgpp/HOOKS.EXE build/djgpp/SCALE.EXE
+build/djgpp/STACKPG.EXE: tests/shim/stackpg.c
+dostests-djgpp: build/djgpp/HELLO.EXE build/djgpp/PROBE.EXE build/djgpp/HOOKS.EXE build/djgpp/SCALE.EXE \
+                build/djgpp/STACKPG.EXE
 .PHONY: dostests-djgpp
 
 # ---- Host trace replay (tools/hreplay) --------------------------------------
@@ -167,7 +170,7 @@ loopa: dostests
 	$(DEV) $(PYTHON) tools/loopa/run.py --name $(TEST) --exe build/ow/dos/$(shell echo $(TEST) | tr a-z A-Z).EXE \
 	  $(if $(ARGS),--args="$(ARGS)") $(if $(OVL),--ovl $(OVL))
 
-loopa-selftest: dostests runtime
+loopa-selftest: dostests runtime build/djgpp/STACKPG.EXE
 	@set -e; \
 	check() { $(DEV) $(PYTHON) tools/loopa/run.py --name selftest-$$1 --exe build/ow/dos/HELLO.EXE \
 	            --idle 25 --boot-grace 20 $${3:+--args=$$3} >/dev/null || true; \
@@ -181,7 +184,12 @@ loopa-selftest: dostests runtime
 	            grep -q "HX-VMODE bios=03" out/selftest-hook-$$1/serial.log; then \
 	           echo "  selftest hook-$$1: $$2, text mode restored (ok)"; \
 	         else echo "  selftest hook-$$1: expected $$2 and text mode"; exit 1; fi; }; \
-	hook x01 MGL-EXC; hook x02 MGL-EXIT-HOOK
+	hook x01 MGL-EXC; hook x02 MGL-EXIT-HOOK; \
+	$(DEV) $(PYTHON) tools/loopa/run.py --name selftest-stackpg --exe build/djgpp/STACKPG.EXE \
+	  --idle 30 --timeout 90 >/dev/null || true; \
+	got=$$(cat out/selftest-stackpg/status); \
+	if [ "$$got" = PASS ]; then echo "  selftest stackpg: PASS (ok)"; \
+	else echo "  selftest stackpg: got $$got, want PASS (an 86Box without local patch 0103?)"; exit 1; fi
 
 # Conformance suite (tools/conform/run.py). References come from a retail
 # OVL on the emulated Voodoo and are committed; checks run MGA-Glide.

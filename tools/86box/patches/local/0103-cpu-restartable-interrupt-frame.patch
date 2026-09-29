@@ -1,0 +1,41 @@
+diff --git a/src/cpu/x86seg.c b/src/cpu/x86seg.c
+index 270333b..e690031 100644
+--- a/src/cpu/x86seg.c
++++ b/src/cpu/x86seg.c
+@@ -1540,6 +1540,7 @@ pmodeint(int num, int soft)
+     uint32_t      oldss;
+     uint32_t      oldsp;
+     uint32_t      newsp;
++    uint32_t      frame_esp;
+     uint32_t     *segdat32  = (uint32_t *) segdat;
+     uint32_t     *segdat232 = (uint32_t *) segdat2;
+     uint32_t     *segdat332 = (uint32_t *) segdat3;
+@@ -1759,18 +1760,24 @@ pmodeint(int num, int soft)
+                         x86gpf("pmodeint(): DPL < CPL in V86 mode", seg & ~0xfffc);
+                         return;
+                     }
++                    /* MGA-Glide local patch: each push lowers ESP as it goes,
++                       so a fault on a later one (a frame straddling into a
++                       not-present stack page) must leave ESP as the
++                       interrupted instruction had it, or the restarted INT
++                       builds its frame, and returns, 4 or 8 bytes low. */
++                    frame_esp = ESP;
+                     if (type > 0x0800) {
+                         PUSHL(cpu_state.flags | (cpu_state.eflags << 16));
+                         is586 ? PUSHL(CS) : PUSHL_SEL(CS);
+                         PUSHL(cpu_state.pc);
+-                        if (cpu_state.abrt)
+-                            return;
+                     } else {
+                         PUSHW(cpu_state.flags);
+                         PUSHW(CS);
+                         PUSHW(cpu_state.pc);
+-                        if (cpu_state.abrt)
+-                            return;
++                    }
++                    if (cpu_state.abrt) {
++                        ESP = frame_esp;
++                        return;
+                     }
+                     new_cpl = CS & 3;
+                     break;

@@ -22,6 +22,20 @@ the idle time), `GUEST-EXC` (the program died and RUN.BAT carried on),
 After every program RUN.BAT runs `VMODE`, which reports the video mode
 (`HX-VMODE`), so a run shows whether the display was left in text mode.
 
+Besides the Matrox work, the patch series fixes one CPU fault in the
+emulator. Local patch `0103-cpu-restartable-interrupt-frame.patch` covers
+interrupts taken at the same privilege level, as CWSDPMI's DPMI calls are:
+86Box lowered ESP after each of the frame's three pushes, so a page fault
+on the second or third push left ESP 4 or 8 bytes low when the INT
+restarted. That happened when the frame straddled into a stack page the
+program had not yet touched. DJGPP's `__dpmi_int` then popped the saved CS
+into SS and died with a #GP. Whether a program hit it depended only on
+where its stack happened to sit (DOS-GL's conformance tests t13 and t15
+did). Real processors restore ESP. `STACKPG.EXE`
+(`tests/shim/stackpg.c`, DJGPP) makes DPMI calls with ESP at every offset
+around fresh page boundaries, and `make loopa-selftest` fails without the
+patch.
+
 ### Conformance (`tools/conform/run.py`)
 
 `ref` runs a test on the retail runtime and the emulated Voodoo and stores
