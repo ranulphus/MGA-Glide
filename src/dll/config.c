@@ -42,6 +42,9 @@ static void set_opt(const char *key, const char *val)
     else if (!strcmp(key, "bpp")) mg_config.bpp = to_int(val);
     else if (!strcmp(key, "trilinear")) mg_config.trilinear = to_int(val);
     else if (!strcmp(key, "hwmip")) mg_config.hwmip = to_int(val);
+    else if (!strcmp(key, "scale")) mg_config.scale = !strcmp(val, "force") ? 2 : to_int(val);
+    else if (!strcmp(key, "scale_filter")) mg_config.scale_filter = !strcmp(val, "bilinear") || !strcmp(val, "1");
+    else if (!strcmp(key, "zoom")) mg_config.zoom = to_int(val);
     else if (!strcmp(key, "res")) {
         const char *xp = val;
         mg_config.res_w = to_int(val);
@@ -97,6 +100,7 @@ void mg_config_load(void)
     mg_config.gamma_enable = 1;         /* 0: keep a linear ramp whatever the game asks */
     mg_config.hooks = 1;
     mg_config.bpp = 16;
+    mg_config.scale = 1;
     strcpy(mg_config.trace_path, "MGTRACE.BIN");
     strcpy(mg_config.retail_path, "GLIDE2X.3DF");
     mg_config.trace_to = 0x7FFFFFFF;

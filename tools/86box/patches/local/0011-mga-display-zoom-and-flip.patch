@@ -1,0 +1,132 @@
+diff --git a/src/video/vid_mga.c b/src/video/vid_mga.c
+index b32eda5..2963a23 100644
+--- a/src/video/vid_mga.c
++++ b/src/video/vid_mga.c
+@@ -878,6 +878,10 @@ mystique_out(uint16_t addr, uint8_t val, void *priv)
+                         svga->memaddr_backup = (svga->memaddr_backup - (mystique->ma_latch_old << 2)) +
+                                        (svga->memaddr_latch << 2);
+                     mystique->ma_latch_old = svga->memaddr_latch;
++                    /* MGA-Glide local patch: a flip that changes only the
++                     * start address's high bits (CRTCEXT0) must redraw the
++                     * whole screen too, as a CRTC 0Ch/0Dh change does. */
++                    svga->fullchange = 3;
+                 }
+             }
+ 
+@@ -1032,6 +1036,49 @@ mystique_getclock(int clock, void *priv)
+     return fo;
+ }
+ 
++/* MGA-Glide local patch: XZOOMCTRL hzoom 2x in MGA mode. hdisp stays the
++ * displayed width; each of the hdisp/2 memory pixels is shown twice. */
++static void
++mystique_render_zoom2(svga_t *svga, int bytes)
++{
++    uint32_t *p;
++    uint32_t  changed_addr;
++    int       x;
++
++    if (((svga->displine + svga->y_add) < 0) || (svga->monitor->target_buffer == NULL) ||
++        (svga->monitor->target_buffer->line[svga->displine + svga->y_add] == NULL))
++        return;
++    changed_addr = svga->remap_func(svga, svga->memaddr);
++    if (!(svga->changedvram[changed_addr >> 12] || svga->changedvram[(changed_addr >> 12) + 1] || svga->fullchange))
++        return;
++    p = &svga->monitor->target_buffer->line[svga->displine + svga->y_add][svga->x_add];
++    if (svga->firstline_draw == 2000)
++        svga->firstline_draw = svga->displine;
++    svga->lastline_draw = svga->displine;
++    for (x = 0; x < svga->hdisp; x += 2) {
++        uint32_t a = (svga->memaddr + (uint32_t) (x >> 1) * (uint32_t) bytes) & svga->vram_display_mask;
++        uint32_t c;
++        if (bytes == 4)
++            c = svga_lookup_lut_ram(svga, *(uint32_t *) &svga->vram[a] & 0xffffff);
++        else
++            c = svga->conv_16to32(svga, *(uint16_t *) &svga->vram[a], (svga->bpp == 15) ? 15 : 16);
++        p[x] = p[x + 1] = c;
++    }
++    svga->memaddr = (svga->memaddr + (uint32_t) (svga->hdisp >> 1) * (uint32_t) bytes) & svga->vram_display_mask;
++}
++
++static void
++mystique_render_16bpp_zoom2(svga_t *svga)
++{
++    mystique_render_zoom2(svga, 2);
++}
++
++static void
++mystique_render_32bpp_zoom2(svga_t *svga)
++{
++    mystique_render_zoom2(svga, 4);
++}
++
+ void
+ mystique_recalctimings(svga_t *svga)
+ {
+@@ -1045,7 +1092,9 @@ mystique_recalctimings(svga_t *svga)
+         svga->htotal += 0x100;
+     svga->htotal += 5;
+ 
+-    uint32_t hblankstart = (((mystique->crtcext_regs[1] & 0x02) >> 2) << 8) + svga->crtc[2];
++    /* MGA-Glide local patch: CRTCEXT1 bit 1 is hblkstr<8> (was shifted by 2,
++     * so always 0). */
++    uint32_t hblankstart = (((mystique->crtcext_regs[1] & 0x02) >> 1) << 8) + svga->crtc[2];
+     svga->hblankstart    = (int) hblankstart;
+ 
+     if (mystique->crtcext_regs[2] & CRTCX_R2_VTOTAL10)
+@@ -1082,6 +1131,13 @@ mystique_recalctimings(svga_t *svga)
+         svga->hblank_end_val  = (int) (((uint32_t) svga->crtc[3] & 0x1f) | ((((uint32_t) svga->crtc[5] & 0x80) >> 7) << 5) |
+                                       ((((uint32_t) mystique->crtcext_regs[1] & 0x40) >> 6) << 6));
+         svga->hblank_end_mask = 0x0000007f;
++        /* MGA-Glide local patch: the Matrox blanking end is always 7 bits
++         * (CRTC3, CRTC5 bit 7, CRTCEXT1 bit 6). The generic code compares 7
++         * bits only when the value has a bit above bit 5 set, else 6, which
++         * ends 1600x1200's blanking 64 clocks early (a 512-pixel phantom left
++         * border). A bit above the mask selects the 7-bit compare without
++         * changing the compared value. */
++        svga->hblank_end_val |= 0x100;
+ 
+         if (mystique->type != MGA_2164W && mystique->type != MGA_2064W)
+             svga->lut_map = !!(mystique->xmiscctrl & XMISCCTRL_RAMCS);
+@@ -1190,6 +1246,27 @@ mystique_recalctimings(svga_t *svga)
+                     break;
+             }
+         }
++        /* MGA-Glide local patch: XZOOMCTRL hzoom 2x (G400 spec, XZOOMCTRL:
++         * "replicate pixels in the horizontal display line"): each pixel
++         * is shown twice and the memory address counter runs at half rate.
++         * The line doubling comes from CRTC9's maxscan (generic svga). The
++         * generic low-res renderers do not double pixels on this path, so
++         * the card has its own; 8 and 24 bpp zoom and 4x are logged once. */
++        if ((mystique->xzoomctrl & 3) == 1) {
++            if (svga->render == svga_render_15bpp_highres || svga->render == svga_render_16bpp_highres)
++                svga->render = mystique_render_16bpp_zoom2;
++            else if (svga->render == svga_render_32bpp_highres)
++                svga->render = mystique_render_32bpp_zoom2;
++            else {
++                static int warned;
++                if (!warned++)
++                    pclog("MGA-UNSUPPORTED: XZOOMCTRL hzoom 2x at this depth shown at 1x\n");
++            }
++        } else if ((mystique->xzoomctrl & 3) == 3) {
++            static int warned;
++            if (!warned++)
++                pclog("MGA-UNSUPPORTED: XZOOMCTRL hzoom 4x shown at 1x\n");
++        }
+         svga->packed_chain4 = 1;
+         svga->line_compare = mystique_line_compare;
+         if (mystique->type < MGA_1064SG)
+@@ -1560,7 +1637,12 @@ mystique_write_xreg(mystique_t *mystique, int reg, uint8_t val)
+             break;
+ 
+         case XREG_XZOOMCTRL:
+-            mystique->xzoomctrl = val & 3;
++            /* MGA-Glide local patch: the horizontal zoom takes effect (it
++             * was stored only). */
++            if (mystique->xzoomctrl != (val & 3)) {
++                mystique->xzoomctrl = val & 3;
++                svga_recalctimings(&mystique->svga);
++            }
+             break;
+ 
+         case XREG_XSENSETEST:

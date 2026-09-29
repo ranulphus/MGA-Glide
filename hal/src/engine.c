@@ -12,6 +12,7 @@ static uint32_t cur_maccess;
 static int cur_ydstorg_px;
 static int clip_x0, clip_y0, clip_x1 = 0x7FFF, clip_y1 = 0x7FFF;
 static int opmode_blit;            /* OPMODE set for ILOAD through the DMA window */
+static int pitch_reg = -1;         /* the value in PITCH: targets may differ in pitch */
 
 static void emit_clip(void)
 {
@@ -70,6 +71,7 @@ void engine_init(int pitch_px, int bpp)
         MGA_WR32(MGAREG_TEXCTL2, 0);
     }
     cur.pitch_px = pitch_px;
+    pitch_reg = pitch_px;
     cur.bpp = bpp;
     cur.zbits = 16;
     cur.color_off = cur.z_off = 0;
@@ -133,11 +135,34 @@ static void write_origin(uint32_t color_off, int bpp, uint32_t z_off, int zbits)
 
 void engine_set_target(const mga_target *t)
 {
+    int repitch = t->pitch_px != pitch_reg;
     cur = *t;
     cur_maccess = maccess_for(t->bpp, t->zbits);
+    if (repitch) {
+        fifo_reserve(1);
+        MGA_WR32(MGAREG_PITCH, (uint32_t)t->pitch_px);
+        pitch_reg = t->pitch_px;
+    }
     write_origin(t->color_off, t->bpp, t->z_off, t->zbits);
     fifo_reserve(1);
     MGA_WR32(MGAREG_MACCESS, cur_maccess);
+    if (repitch && mga.has_dstorg)
+        emit_clip();        /* YTOP/YBOT are y * pitch (write_origin does it for YDSTORG chips) */
+}
+
+void engine_save(mga_engine_state *s)
+{
+    s->t = cur;
+    s->clip[0] = clip_x0; s->clip[1] = clip_y0; s->clip[2] = clip_x1; s->clip[3] = clip_y1;
+    s->maccess_flags = maccess_extra;
+}
+
+void engine_restore(const mga_engine_state *s)
+{
+    maccess_extra = s->maccess_flags;               /* engine_set_target writes MACCESS with it */
+    clip_x0 = s->clip[0]; clip_y0 = s->clip[1]; clip_x1 = s->clip[2]; clip_y1 = s->clip[3];
+    engine_set_target(&s->t);
+    emit_clip();
 }
 
 /* Extra MACCESS bits kept across retargets and depth fills; written only
@@ -244,6 +269,7 @@ void engine_tlut_load(uint32_t off, int first, int count)
     MGA_WR32(MGAREG_YDSTLEN + MGAREG_EXEC, ((uint32_t)first << 16) | (uint32_t)count);
     fifo_reserve(1);
     MGA_WR32(MGAREG_PITCH, (uint32_t)cur.pitch_px);
+    pitch_reg = cur.pitch_px;
     engine_set_target(&cur);                        /* origins, MACCESS */
 }
 
@@ -271,6 +297,7 @@ int engine_iload_begin(uint32_t off, int pitch_px, int bpp, int x, int y, int w,
     fifo_reserve(12);
     MGA_WR32(MGAREG_DSTORG, off);
     MGA_WR32(MGAREG_PITCH, (uint32_t)pitch_px);
+    pitch_reg = pitch_px;
     MGA_WR32(MGAREG_MACCESS, bpp == 8 ? MACCESS_PW8 : MACCESS_PW16);
     MGA_WR32(MGAREG_CXBNDRY, 0x0FFF0000u);
     MGA_WR32(MGAREG_YTOP, 0);
@@ -309,6 +336,7 @@ void engine_iload_end(void)
         engine_iload_row(NULL);
     fifo_reserve(1);
     MGA_WR32(MGAREG_PITCH, (uint32_t)cur.pitch_px);
+    pitch_reg = cur.pitch_px;
     engine_set_target(&cur);                        /* DSTORG, ZORG, MACCESS */
     emit_clip();
 }

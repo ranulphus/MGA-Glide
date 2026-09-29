@@ -127,28 +127,24 @@ static const struct { int res, w, h; } resolutions[] = {
     { GR_RESOLUTION_1600x1200, 1600, 1200 }, { GR_RESOLUTION_400x300, 400, 300 },
 };
 
-/* Choose the smallest 16-bit 565 VBE mode that can hold w x h. The game
- * draws at its own size; a larger mode shows it in the top-left corner
- * (centring is a later refinement). */
-static int pick_mode(int w, int h, int bpp, mga_vbe_mode *m)
+/* Clear the rw x rh drawable area of a buffer at pitch (and, for the
+ * display buffers, the whole mode). */
+static void clear_buffer(uint32_t off, int pitch, int w, int h)
 {
-    static const int sizes[][2] = { { 640, 480 }, { 800, 600 }, { 1024, 768 }, { 1280, 1024 }, { 1600, 1200 } };
-    unsigned i;
-    if (vbe_find_mode(w, h, bpp, m) == 0)
-        return 0;
-    for (i = 0; i < MGA_ARRAY_LEN(sizes); i++)
-        if (sizes[i][0] >= w && sizes[i][1] >= h && vbe_find_mode(sizes[i][0], sizes[i][1], bpp, m) == 0)
-            return 0;
-    return -1;
+    mga_target t;
+    t.color_off = off; t.z_off = mg.aux_off; t.pitch_px = pitch; t.bpp = mg.bpp; t.zbits = mg.zbits;
+    engine_set_target(&t);
+    engine_set_clip(0, 0, w, h);
+    engine_fill(0, 0, w, h, 0);
 }
 
 GR_ENTRY(FxBool, grSstWinOpen, (FxU32 hWnd, GrScreenResolution_t screen_resolution,
                                 GrScreenRefresh_t refresh_rate, GrColorFormat_t color_format,
                                 GrOriginLocation_t origin_location, int nColBuffers, int nAuxBuffers))
 {
-    int w = 640, h = 480, pitch = 0, i;
-    unsigned r;
-    uint32_t off, bytes;
+    int w = 640, h = 480, pitch = 0, want, i, direct, bpp_bytes;
+    unsigned r, flags;
+    uint32_t off, bytes, zbytes32;
     MGA_UNUSED(hWnd);
     MGA_UNUSED(refresh_rate);
     if (!mg.initialised)
@@ -163,22 +159,30 @@ GR_ENTRY(FxBool, grSstWinOpen, (FxU32 hWnd, GrScreenResolution_t screen_resoluti
             h = resolutions[r].h;
         }
     mg.bpp = mg_config.bpp == 32 ? 32 : 16;
+    /* How the game's size is shown (hal.h, vbe_plan_mode): natively,
+     * zoomed, scaled by the engine into a BIOS mode, or top-left. */
+    flags = (mg_config.zoom ? MGA_PLAN_ZOOM : 0) | (mg_config.scale == 0 ? MGA_PLAN_TOPLEFT : 0) |
+            (mg_config.scale == 2 ? MGA_PLAN_FORCE : 0);
     {
         /* Resolution override: the game keeps its size, the card renders
          * at res_w x res_h and everything in between is scaled. */
-        int hw = w, hh = h;
+        int hw = w, hh = h, ok;
         mg.scaled = 0;
         mg.sx = mg.sy = 1.0;
         if (mg_config.res_w > 0 && mg_config.res_h > 0 && (mg_config.res_w != w || mg_config.res_h != h)) {
             hw = mg_config.res_w;
             hh = mg_config.res_h;
         }
-        if (pick_mode(hw, hh, mg.bpp, &mg.mode) < 0 && mg.bpp == 32) {
-            mg_log(MG_LOG_WARN, "no 32-bit VBE mode for %dx%d: using 16-bit", hw, hh);
+        ok = vbe_plan_mode(hw, hh, mg.bpp, flags, &mg.plan) == 0;
+        if (mg.bpp == 32 && (!ok || (mg.plan.fit != MGA_FIT_NATIVE && mg.plan.fit != MGA_FIT_ZOOM &&
+                                     mg.plan.fit != MGA_FIT_TOPLEFT))) {
+            /* The engine scales 16-bit pictures only. */
+            mg_log(MG_LOG_WARN, "no 32-bit mode shows %dx%d unscaled: using 16-bit", hw, hh);
             mg.bpp = 16;
+            ok = vbe_plan_mode(hw, hh, 16, flags, &mg.plan) == 0;
         }
-        if (mg.bpp == 16 && pick_mode(hw, hh, 16, &mg.mode) < 0) {
-            mg_log(MG_LOG_ERROR, "no VBE mode for %dx%d", hw, hh);
+        if (!ok) {
+            mg_log(MG_LOG_ERROR, "no VBE mode can show %dx%d", hw, hh);
             return FXFALSE;
         }
         if (hw != w || hh != h) {
@@ -187,41 +191,62 @@ GR_ENTRY(FxBool, grSstWinOpen, (FxU32 hWnd, GrScreenResolution_t screen_resoluti
             mg.sy = (double)hh / h;
         }
     }
-    if (vbe_set_mode(&mg.mode, 1024, &pitch) < 0) {
-        mg_log(MG_LOG_ERROR, "VBE mode %03x failed", mg.mode.mode);
+    mg.mode = mg.plan.disp;
+    direct = mg.plan.fit == MGA_FIT_NATIVE || mg.plan.fit == MGA_FIT_ZOOM || mg.plan.fit == MGA_FIT_TOPLEFT;
+    mg.present_scaled = !direct;
+    /* Display pitch 1024 while the mode fits it (the Voodoo's 2048-byte LFB
+     * stride), else the width rounded up to 32 pixels. */
+    want = mg.mode.width <= 1024 ? 1024 : (mg.mode.width + 31) & ~31;
+    if (vbe_set_mode(&mg.mode, want, &pitch) < 0 || pitch < mg.mode.width || (pitch & 31)) {
+        mg_log(MG_LOG_ERROR, "VBE mode %03x failed (pitch %d)", mg.mode.mode, pitch);
         return FXFALSE;
     }
+    vbe_set_zoom(mg.plan.zoom);
     if (!mga.vram_bytes)
         mga.vram_bytes = mga_probe_vram();
     mg.width = w;
     mg.height = h;
-    mg.pitch_px = pitch;
     mg.nbuffers = nColBuffers < 2 ? 2 : (nColBuffers > MG_MAX_BUFFERS ? MG_MAX_BUFFERS : nColBuffers);
     mg.has_aux = nAuxBuffers > 0;
-    /* 32-bit depth keeps W-buffering precise; use it whenever the colour
-     * buffers, a 32-bit aux buffer and a 2 MB texture heap fit. */
-    {
-        uint32_t screen = (uint32_t)pitch * (uint32_t)(mg.bpp / 8) * mg.mode.height;
-        uint32_t aux32 = (uint32_t)pitch * 4u * mg.mode.height;
-        uint32_t need32 = (screen + 0x1000) * (uint32_t)mg.nbuffers + aux32 + (2u << 20);
-        if (mg_config.force_z32 >= 0)
-            mg.zbits = mg_config.force_z32 ? 32 : 16;
-        else
-            mg.zbits = (mga.vram_bytes >= need32) ? 32 : 16;
-    }
     mg.color_format = color_format;
     mg.st.origin = origin_location == GR_ORIGIN_LOWER_LEFT ? GR_ORIGIN_LOWER_LEFT : GR_ORIGIN_UPPER_LEFT;
-    /* Buffers are whole screens of the display mode so page flips land on
-     * line boundaries; each is 4 KB aligned. */
-    bytes = (uint32_t)pitch * (uint32_t)(mg.bpp / 8) * mg.mode.height;
+    bpp_bytes = mg.bpp / 8;
     off = 0;
+    if (direct) {
+        /* The game draws into the display buffers: whole screens of the
+         * mode so page flips land on line boundaries (a zoomed mode shows
+         * half as many rows, doubled). */
+        mg.pitch_px = pitch;
+        mg.rw = mg.plan.fit == MGA_FIT_ZOOM ? mg.plan.w : mg.mode.width;
+        mg.rh = mg.plan.fit == MGA_FIT_ZOOM ? mg.plan.h : mg.mode.height;
+    } else {
+        /* Two display buffers, then render buffers at a power-of-two pitch
+         * (at least 1024, the Voodoo's stride) that engine_present samples. */
+        bytes = (uint32_t)pitch * (uint32_t)bpp_bytes * mg.mode.height;
+        mg.disp_pitch_px = pitch;
+        mg.disp_off[0] = 0;
+        mg.disp_off[1] = (bytes + 0xFFF) & ~0xFFFu;
+        off = (mg.disp_off[1] + bytes + 0xFFF) & ~0xFFFu;
+        mg.pitch_px = mga_pow2_pitch(mg.plan.w) < 1024 ? 1024 : mga_pow2_pitch(mg.plan.w);
+        mg.rw = mg.plan.w;
+        mg.rh = mg.plan.h;
+    }
+    mg.disp_front = 0;
+    bytes = (uint32_t)mg.pitch_px * (uint32_t)bpp_bytes * (uint32_t)mg.rh;
     for (i = 0; i < mg.nbuffers; i++) {
         mg.buf_off[i] = off;
         off = (off + bytes + 0xFFF) & ~0xFFFu;
     }
+    /* 32-bit depth keeps W-buffering precise; use it whenever the buffers,
+     * a 32-bit aux buffer and a 2 MB texture heap fit. */
+    zbytes32 = (uint32_t)mg.pitch_px * 4u * (uint32_t)mg.rh;
+    if (mg_config.force_z32 >= 0)
+        mg.zbits = mg_config.force_z32 ? 32 : 16;
+    else
+        mg.zbits = mga.vram_bytes >= off + zbytes32 + (2u << 20) ? 32 : 16;
     if (mg.has_aux) {
         mg.aux_off = off;
-        off = (off + (uint32_t)pitch * (mg.zbits / 8u) * mg.mode.height + 0xFFF) & ~0xFFFu;
+        off = (off + (uint32_t)mg.pitch_px * (mg.zbits / 8u) * (uint32_t)mg.rh + 0xFFF) & ~0xFFFu;
     }
     mg.heap_off = off;
     mg.heap_end = mga.vram_bytes;
@@ -234,29 +259,32 @@ GR_ENTRY(FxBool, grSstWinOpen, (FxU32 hWnd, GrScreenResolution_t screen_resoluti
     mg.front = 0;
     mg.back = 1;
     mg.render_buffer = GR_BUFFER_BACKBUFFER;
-    engine_init(pitch, mg.bpp);
+    engine_init(mg.pitch_px, mg.bpp);
     mg.open = 1;
     mg.dirty = ~0u;
     mg.st.clip_x0 = 0; mg.st.clip_y0 = 0; mg.st.clip_x1 = w; mg.st.clip_y1 = h;
     mg_validate();
-    for (i = 0; i < mg.nbuffers; i++) {
-        mga_target t;
-        t.color_off = mg.buf_off[i]; t.z_off = mg.aux_off; t.pitch_px = pitch; t.bpp = mg.bpp; t.zbits = mg.zbits;
-        engine_set_target(&t);
-        engine_set_clip(0, 0, mg.mode.width, mg.mode.height);
-        engine_fill(0, 0, mg.mode.width, mg.mode.height, 0);
-    }
+    if (mg.present_scaled)
+        for (i = 0; i < 2; i++)
+            clear_buffer(mg.disp_off[i], mg.disp_pitch_px, mg.mode.width, mg.mode.height);
+    for (i = 0; i < mg.nbuffers; i++)
+        clear_buffer(mg.buf_off[i], mg.pitch_px, mg.rw, mg.rh);
     if (mg.has_aux)
-        engine_fill_depth(0, 0, mg.mode.width, mg.mode.height, 0);
+        engine_fill_depth(0, 0, mg.rw, mg.rh, 0);
     mg.dirty = ~0u;
     engine_sync(200000);
-    vbe_set_display_start(mg.buf_off[mg.front], pitch * (mg.bpp / 8), mg.bpp);
+    if (mg.present_scaled)
+        vbe_set_display_start(mg.disp_off[0], mg.disp_pitch_px * bpp_bytes, mg.bpp);
+    else
+        vbe_set_display_start(mg.buf_off[mg.front], mg.pitch_px * bpp_bytes, mg.bpp);
     mg_gamma_apply();
     mg.fogcol_valid = 0;
     mg_hooks_install();
-    mg_line("MGL-WINOPEN %dx%d mode=%03x bpp=%d scale=%dx%d pitch=%d buffers=%d aux=%d z%d vram=%u heap=%u",
-            w, h, mg.mode.mode, mg.bpp, mg_hx(w), mg_hy(h), pitch, mg.nbuffers, mg.has_aux, mg.zbits, mga.vram_bytes,
-            mg.heap_end - mg.heap_off);
+    mg_line("MGL-WINOPEN %dx%d mode=%03x bpp=%d scale=%dx%d pitch=%d buffers=%d aux=%d z%d vram=%u heap=%u "
+            "display=%dx%d fit=%s dpitch=%d filter=%s",
+            w, h, mg.mode.mode, mg.bpp, mg_hx(w), mg_hy(h), mg.pitch_px, mg.nbuffers, mg.has_aux, mg.zbits,
+            mga.vram_bytes, mg.heap_end - mg.heap_off, mg.mode.width, mg.mode.height, mga_fit_name(mg.plan.fit),
+            mg.present_scaled ? mg.disp_pitch_px : pitch, mg_config.scale_filter ? "bilinear" : "nearest");
     return FXTRUE;
 }
 

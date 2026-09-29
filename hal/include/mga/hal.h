@@ -67,6 +67,45 @@ void vbe_set_text_mode(void);
 int  vbe_version(void);
 uint32_t vbe_total_memory(void);   /* bytes, from the VBE info block (0 if unknown) */
 
+/* The mode planner: how a requested size is shown with the modes this
+ * card's BIOS offers (16 bpp means RGB565; only modes on the card's own
+ * aperture). In order of preference:
+ *   NATIVE   the BIOS has the size: draw straight into the display buffers;
+ *   ZOOM     (MGA_PLAN_ZOOM) the BIOS has twice the size: draw into the
+ *            display buffers at the BIOS pitch and turn on the chip's line
+ *            and pixel doubling (vbe_set_zoom), same monitor signal;
+ *   INTEGER  2x, 3x or 4x the size is a BIOS mode: draw into a render
+ *            buffer and scale it up at every swap (engine_present);
+ *   FILL     a CRT-era size (320x200, 640x200, 640x350, 640x400, 400x256,
+ *            512x256): stretched to fill the smallest 4:3 mode, as a CRT
+ *            showed it;
+ *   ASPECT   anything else: the smallest mode that holds it, scaled
+ *            evenly, centred with black bars;
+ *   TOPLEFT  (MGA_PLAN_TOPLEFT, instead of scaling) the smallest mode that
+ *            holds it, drawn 1:1 in its top-left corner.
+ * MGA_PLAN_FORCE takes the scaled path (INTEGER at 1x) even when the BIOS
+ * has the size: a test switch. dx, dy, dw, dh is where the picture lands
+ * in the display mode. */
+enum { MGA_FIT_NATIVE, MGA_FIT_ZOOM, MGA_FIT_INTEGER, MGA_FIT_FILL, MGA_FIT_ASPECT, MGA_FIT_TOPLEFT };
+#define MGA_PLAN_ZOOM    1u
+#define MGA_PLAN_TOPLEFT 2u
+#define MGA_PLAN_FORCE   4u
+typedef struct {
+    int          w, h;             /* the requested size: what the program draws */
+    mga_vbe_mode disp;             /* the BIOS mode shown */
+    int          fit;              /* MGA_FIT_* */
+    int          zoom;             /* 2 for MGA_FIT_ZOOM, else 1 */
+    int          dx, dy, dw, dh;   /* the picture's rectangle in the display mode */
+} mga_mode_plan;
+int  mga_plan_from_list(const mga_vbe_mode *list, int n, int w, int h, int bpp, unsigned flags, mga_mode_plan *p);
+int  vbe_plan_mode(int w, int h, int bpp, unsigned flags, mga_mode_plan *p);   /* 0, or -1: nothing fits */
+const char *mga_fit_name(int fit);
+int  mga_pow2_pitch(int w);        /* a render surface's pitch: the next power of two, at least 32 */
+/* Line and pixel doubling for MGA_FIT_ZOOM: CRTC9's maxscan repeats lines
+ * and XZOOMCTRL repeats pixels (factor 1, 2 or 4), after vbe_set_mode.
+ * Undone by vbe_set_zoom(1) and before text mode. */
+void vbe_set_zoom(int factor);
+
 /* engine.c */
 typedef struct {
     uint32_t color_off;    /* byte offset of the colour buffer in VRAM */
@@ -100,6 +139,31 @@ int      engine_in_vblank(void);
 uint32_t engine_vcount(void);
 extern const mga_target *engine_target;
 extern uint32_t engine_resets, engine_timeouts;
+/* The engine state the HAL owns (target, clip, MACCESS flags), saved and
+ * restored around work that borrows the engine, such as engine_present. */
+typedef struct { mga_target t; int clip[4]; uint32_t maccess_flags; } mga_engine_state;
+void     engine_save(mga_engine_state *s);
+void     engine_restore(const mga_engine_state *s);
+
+/* present.c: draw a 16-bit render surface onto a display surface, scaled
+ * to the rectangle (dx, dy, dw, dh), for the scaled fits of the mode
+ * planner. The render surface is sampled as one TW16 texture, so its pitch
+ * must be a power of two, a multiple of 32 and at most 2048 texels, its
+ * height at most 2048 and its offset 64-byte aligned (mga_present_ok).
+ * Nearest filtering gives exact pixel repetition at 2x (texel = floor of
+ * (pixel centre x source/destination + 1/64)); bilinear maps the
+ * first and last pixel centres to the first and last texel centres. The
+ * caller has finished drawing the render surface (engine drained) and runs
+ * inside its FPU guard. Overwritten and not restored, so the caller must
+ * re-emit them before its next draw: DWGCTL, TEXORG, TEXCTL, TEXCTL2,
+ * TEXFILTER, TEXTRANS, TEXWIDTH, TEXHEIGHT, TMR0-8, the DR registers,
+ * ALPHACTRL, PLNWT and, on the G400, TDUALSTAGE0/1. Target, clip and MACCESS
+ * flags are restored; setup_stats is left as it was. */
+typedef struct { uint32_t off; int w, h, pitch_px; } mga_surface;
+enum { MGA_PRESENT_NEAREST, MGA_PRESENT_BILINEAR };
+int      mga_present_ok(const mga_surface *src);
+void     engine_present(const mga_surface *src, const mga_surface *dst, int dx, int dy, int dw, int dh,
+                        int filter);
 
 /* dac.c */
 void dac_set_ramp(const uint8_t ramp[256]);

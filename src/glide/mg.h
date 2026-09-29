@@ -63,6 +63,15 @@ typedef struct {
     uint32_t    aux_off;
     int         zbits;               /* 16 or 32 */
     int         front, back;         /* indices into buf_off */
+    /* How the mode planner shows the game (hal.h, vbe_plan_mode). For a
+     * scaled fit, buf_off[] are render buffers at pitch_px and each swap
+     * scales the finished one into the hidden display buffer, then flips
+     * the display. rw x rh is the drawable area of the buffers. */
+    mga_mode_plan plan;
+    int         present_scaled;
+    uint32_t    disp_off[2];
+    int         disp_front, disp_pitch_px;
+    int         rw, rh;
     GrBuffer_t  render_buffer;
     uint32_t    heap_off, heap_end;  /* texture heap in VRAM */
     GrColorFormat_t color_format;
@@ -78,6 +87,7 @@ typedef struct {
 } mg_ctx;
 
 extern mg_ctx mg;
+void mg_present_front(void);          /* buffer.c: show the front render buffer (scaled fits) */
 
 enum { MG_DIRTY_TARGET = 1u << 0, MG_DIRTY_CLIP = 1u << 1, MG_DIRTY_RASTER = 1u << 2 };
 

@@ -36,6 +36,21 @@ dependencies); it passes through the `BOX86_*`, `LOOPA_*`, `VOODOO_*`,
 - `make check-exports` verifies the module name, the flags and every name
   the two acceptance games import.
 
+**Known Open Watcom bug (the pinned 2026-09-01 snapshot, at `-oxt`).** A
+condition that bounds a variable, directly guarding a `for` loop that
+assigns that variable, leaves the variable at its guarded value after the
+loop, although the loop body runs:
+
+```
+if (!n) for (n = 0; n < 10; n++) out[n] = tab[n];    /* n reads 0 afterwards */
+```
+
+`n == 0` and `n < 1` as the guard fail the same way; a `while` loop, a
+separate counter, or `-od` are correct. Found in `tests/hal/scale.c`
+(2026-09-29) by building the reduced case for Linux with the same flags.
+`tools/ci/ow_loops.py` (run by `make tests-host` and CI) rejects the shape
+anywhere Open Watcom compiles.
+
 ## Generated code (`build/gen/`)
 
 From `abi/glide2x.api`:

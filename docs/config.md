@@ -21,6 +21,32 @@ draw what a Voodoo Graphics board would.
 | `trilinear` | `0`, `1` | G200 and later: blend between mip levels (implies `hwmip`) |
 | `bilinear` | `0`, `1` | Filter every texture bilinearly |
 | `z32` | `-1` auto (default), `0`, `1` | 32-bit depth buffer. Auto uses it when VRAM allows (it makes W-buffering more precise than the Voodoo's) |
+| `zoom` | `0` (default), `1` | Show 320x240, 400x300, 512x384 and 640x512 (the latter through `res=640x512`) in the BIOS mode twice the size with the chip's line and pixel doubling: the same monitor signal, no scaling cost. Off until the bench confirms it on each card |
+| `scale_filter` | `nearest` (default), `bilinear` | How sizes the BIOS lacks are scaled into a BIOS mode (see Resolutions) |
+
+## Resolutions
+
+The Matrox BIOSes offer 16-bit 640x480, 800x600, 1024x768 and 1280x1024 (the
+G100's also 1600x1200). A Glide resolution the BIOS has is shown as it is.
+Any other is drawn at its own size into render buffers and scaled by the
+drawing engine into a BIOS mode at every swap (`scale=1`, the default):
+
+| Glide resolution | Shown in | How |
+|---|---|---|
+| 320x240, 400x300, 512x384 | 640x480, 800x600, 1024x768 | exactly 2x (with `zoom=1`: the chip's doubling instead) |
+| 320x200, 640x200, 640x350, 640x400, 400x256, 512x256 | 640x480 | stretched to fill 4:3, as a CRT showed them |
+| 960x720, 856x480 | 1024x768 | scaled evenly and centred (856x480 with black bars) |
+| 640x480, 800x600, 1024x768, 1280x1024 | the same | native |
+| 1600x1200 | 1600x1200 where the BIOS offers it (G100) | native; otherwise the window does not open |
+
+`res=640x512` (with the game at 640x480, or any size) renders at 640x512,
+shown 2x in 1280x1024. Scaled modes keep 32-bit colour off (the engine
+scales 16-bit pictures), use two display buffers besides the render buffers
+(1280x1024 needs about 7 MB of VRAM with 640x512 rendering), and include the
+scaling in every frame's time. `scale=0` restores the old behaviour (the
+smallest larger mode, drawn 1:1 in its top-left corner); `scale=force` takes
+the scaled path even for native sizes (a test switch). `MGL-WINOPEN` reports
+the display mode and how the picture is shown (`display=`, `fit=`).
 
 ## What the game is told
 

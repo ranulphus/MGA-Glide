@@ -234,7 +234,7 @@ FxBool px_lfb_lock(GrLock_t type, GrBuffer_t buffer, GrLfbWriteMode_t writeMode,
     lk.w = px.grSstScreenWidth ? (int)px.grSstScreenWidth() : 640;
     lk.h = px.grSstScreenHeight ? (int)px.grSstScreenHeight() : 480;
     lk.seed = lk.seed * 1664525u + 1013904223u + mg.frame;
-    stride = lk.bpp == 4 ? 4096u : 2048u;
+    stride = (lk.w <= 1024 ? 2048u : (uint32_t)mga_pow2_pitch(lk.w) * 2u) * (lk.bpp == 4 ? 2u : 1u);
     need = stride * (uint32_t)lk.h;
     if (need > shadow_size) {
         sys_free(shadow);
@@ -255,7 +255,7 @@ void px_lfb_unlock(GrLock_t type, GrBuffer_t buffer)
 {
     static uint8_t *sp;
     static uint32_t sp_cap;
-    uint32_t n = 0, args[3], stride = lk.bpp == 4 ? 4096u : 2048u;
+    uint32_t n = 0, args[3], stride = (lk.w <= 1024 ? 2048u : (uint32_t)mga_pow2_pitch(lk.w) * 2u) * (lk.bpp == 4 ? 2u : 1u);
     int x, y;
     MGA_UNUSED(buffer);
     if (!lk.active || (type & 1) != GR_LFB_WRITE_ONLY)

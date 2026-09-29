@@ -28,6 +28,9 @@ typedef struct {
     int  trilinear;            /* enhancement: G200+ blends mip levels (default 0) */
     int  hwmip;                /* enhancement: G200+ picks mip levels per pixel (default 0) */
     int  res_w, res_h;         /* enhancement: render at this size instead of the game's (res=WxH) */
+    int  scale;                /* sizes the BIOS lacks: 1 scale into a BIOS mode (default), 0 top-left, 2 force */
+    int  scale_filter;         /* 0 nearest (default), 1 bilinear */
+    int  zoom;                 /* 1: half-size modes by the chip's line and pixel doubling */
 } mg_config_t;
 
 extern mg_config_t mg_config;

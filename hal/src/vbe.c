@@ -1,5 +1,7 @@
 /* vbe.c - mode setting through the card's VBE BIOS (PRD §7.7). */
 #include "mga/hal.h"
+#include "mga/mmio.h"
+#include "mga/regs_mga.h"
 #include "mga/sys.h"
 #include <string.h>
 
@@ -147,9 +149,160 @@ int vbe_set_display_start(uint32_t byte_offset, int pitch_bytes, int bpp)
     return vbe_call(&r);
 }
 
+/* ---- The mode planner ---------------------------------------------------- */
+
+static const struct { int w, h; } crt_sizes[] = {
+    { 320, 200 }, { 640, 200 }, { 640, 350 }, { 640, 400 }, { 400, 256 }, { 512, 256 },
+};
+
+const char *mga_fit_name(int fit)
+{
+    static const char *const n[] = { "native", "zoom", "integer", "fill", "aspect", "topleft" };
+    return fit >= 0 && fit <= MGA_FIT_TOPLEFT ? n[fit] : "?";
+}
+
+int mga_pow2_pitch(int w)
+{
+    int p = 32;
+    while (p < w)
+        p <<= 1;
+    return p;
+}
+
+static int usable(const mga_vbe_mode *m, int bpp)
+{
+    if (m->bpp != bpp)
+        return 0;
+    return bpp != 16 || (m->red_size == 5 && m->green_size == 6 && m->blue_size == 5);
+}
+
+/* The smallest usable mode (by area) at least w x h, and 4:3 if asked. */
+static const mga_vbe_mode *smallest(const mga_vbe_mode *l, int n, int w, int h, int bpp, int four_three)
+{
+    const mga_vbe_mode *best = NULL;
+    int i;
+    for (i = 0; i < n; i++) {
+        const mga_vbe_mode *m = &l[i];
+        if (!usable(m, bpp) || m->width < w || m->height < h || (four_three && m->width * 3 != m->height * 4))
+            continue;
+        if (!best || (long)m->width * m->height < (long)best->width * best->height)
+            best = m;
+    }
+    return best;
+}
+
+static const mga_vbe_mode *exact(const mga_vbe_mode *l, int n, int w, int h, int bpp)
+{
+    int i;
+    for (i = 0; i < n; i++)
+        if (usable(&l[i], bpp) && l[i].width == w && l[i].height == h)
+            return &l[i];
+    return NULL;
+}
+
+int mga_plan_from_list(const mga_vbe_mode *l, int n, int w, int h, int bpp, unsigned flags, mga_mode_plan *p)
+{
+    const mga_vbe_mode *m;
+    int k, i;
+    if (w <= 0 || h <= 0)
+        return -1;
+    memset(p, 0, sizeof *p);
+    p->w = w; p->h = h; p->zoom = 1;
+    if ((m = exact(l, n, w, h, bpp)) != NULL) {
+        p->disp = *m;
+        p->fit = (flags & MGA_PLAN_FORCE) ? MGA_FIT_INTEGER : MGA_FIT_NATIVE;
+        p->dw = w; p->dh = h;
+        return 0;
+    }
+    if ((flags & MGA_PLAN_ZOOM) && (m = exact(l, n, 2 * w, 2 * h, bpp)) != NULL) {
+        p->disp = *m;
+        p->fit = MGA_FIT_ZOOM;
+        p->zoom = 2;
+        p->dw = 2 * w; p->dh = 2 * h;
+        return 0;
+    }
+    if (flags & MGA_PLAN_TOPLEFT) {
+        if ((m = smallest(l, n, w, h, bpp, 0)) == NULL)
+            return -1;
+        p->disp = *m;
+        p->fit = MGA_FIT_TOPLEFT;
+        p->dw = w; p->dh = h;
+        return 0;
+    }
+    for (k = 2; k <= 4; k++)
+        if ((m = exact(l, n, k * w, k * h, bpp)) != NULL) {
+            p->disp = *m;
+            p->fit = MGA_FIT_INTEGER;
+            p->dw = k * w; p->dh = k * h;
+            return 0;
+        }
+    for (i = 0; i < (int)(sizeof crt_sizes / sizeof crt_sizes[0]); i++)
+        if (crt_sizes[i].w == w && crt_sizes[i].h == h && (m = smallest(l, n, w, h, bpp, 1)) != NULL) {
+            p->disp = *m;
+            p->fit = MGA_FIT_FILL;
+            p->dw = m->width; p->dh = m->height;
+            return 0;
+        }
+    if ((m = smallest(l, n, w, h, bpp, 0)) == NULL)
+        return -1;
+    p->disp = *m;
+    p->fit = MGA_FIT_ASPECT;
+    /* Scale evenly by the smaller ratio; centre on even pixels. */
+    if ((long)m->width * h <= (long)m->height * w) {
+        p->dw = m->width;
+        p->dh = (int)(((long)h * m->width + w / 2) / w);
+    } else {
+        p->dh = m->height;
+        p->dw = (int)(((long)w * m->height + h / 2) / h);
+    }
+    p->dx = ((m->width - p->dw) / 2) & ~1;
+    p->dy = ((m->height - p->dh) / 2) & ~1;
+    return 0;
+}
+
+typedef struct { mga_vbe_mode list[64]; int n; } list_ctx;
+
+static void list_cb(const mga_vbe_mode *m, void *ctx)
+{
+    list_ctx *l = (list_ctx *)ctx;
+    if (l->n < 64 && (!mga.fb_phys || m->lfb_phys == mga.fb_phys))
+        l->list[l->n++] = *m;
+}
+
+int vbe_plan_mode(int w, int h, int bpp, unsigned flags, mga_mode_plan *p)
+{
+    static list_ctx l;
+    l.n = 0;
+    if (vbe_enumerate(list_cb, &l) < 0)
+        return -1;
+    return mga_plan_from_list(l.list, l.n, w, h, bpp, flags, p);
+}
+
+/* ---- Zoom ---------------------------------------------------------------- */
+
+static int zoom_on;
+
+void vbe_set_zoom(int factor)
+{
+    uint8_t c9;
+    if (!mga_mmio || (factor <= 1 && !zoom_on))
+        return;
+    if (factor != 2 && factor != 4)
+        factor = 1;
+    /* In power-graphics mode CRTC9's maxscan repeats each line maxscan+1
+     * times; its top bits (line compare, vertical blank bit 9) stay. */
+    MGA_WR8(MGAREG_CRTC_INDEX, 0x09);
+    c9 = MGA_RD8(MGAREG_CRTC_DATA);
+    MGA_WR8(MGAREG_CRTC_DATA, (uint8_t)((c9 & 0xE0) | (factor - 1)));
+    MGA_WR8(MGAREG_PALWTADD, 0x38);                 /* XZOOMCTRL: hzoom 00 1x, 01 2x, 11 4x */
+    MGA_WR8(MGAREG_X_DATAREG, (uint8_t)(factor == 4 ? 3 : factor == 2 ? 1 : 0));
+    zoom_on = factor > 1;
+}
+
 void vbe_set_text_mode(void)
 {
     sys_rmregs r;
+    vbe_set_zoom(1);                                /* the BIOS's text mode set leaves XZOOMCTRL alone */
     memset(&r, 0, sizeof r);
     r.eax = 0x0003;
     sys_rm_int(0x10, &r);

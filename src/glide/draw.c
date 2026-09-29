@@ -347,7 +347,7 @@ static void draw_band(const mga_svtx *a0, const mga_svtx *b0, const mga_svtx *c0
     ctx->tex_tw = hw.w_log2;
     ctx->tex_th = hw.h_log2;
     ctx->clip_y0 = row0 < 0 ? 0 : row0;
-    ctx->clip_y1 = row1 > mg.mode.height ? mg.mode.height : row1;
+    ctx->clip_y1 = row1 > mg.rh ? mg.rh : row1;
     if (mg_log_level() >= MG_LOG_TRACE)
         mg_log(MG_LOG_TRACE, "band lod=%d rows=%d..%d org=%x tw=%d th=%d fmt=%d mod=%d", lod, ctx->clip_y0,
                ctx->clip_y1, hw.org, hw.w_log2, hw.h_log2, hw.hwfmt, plan->modulate);
@@ -388,7 +388,7 @@ static void draw_textured(const GrVertex *a, const GrVertex *b, const GrVertex *
         }
     }
     if (!need_lod && !F.on) {
-        draw_band(sa, sb, sc, ctx, plan, o, tmu0.large, 0, mg.mode.height, NULL);
+        draw_band(sa, sb, sc, ctx, plan, o, tmu0.large, 0, mg.rh, NULL);
         return;
     }
     if (need_lod)
@@ -407,7 +407,7 @@ static void draw_textured(const GrVertex *a, const GrVertex *b, const GrVertex *
         l = level_for(lod_at(&L, c->x, c->y)); if (l < l0) l0 = l;
         l = level_for(lod_at(&L, cxm, cym)); if (l < l0) l0 = l;
         mo.mip_n = mga.max_mip_levels > 5 ? 5 : mga.max_mip_levels;
-        draw_band(sa, sb, sc, ctx, plan, &mo, l0, 0, mg.mode.height, NULL);
+        draw_band(sa, sb, sc, ctx, plan, &mo, l0, 0, mg.rh, NULL);
         return;
     }
     cx = (a->x + b->x + c->x) / 3.0;
@@ -740,7 +740,7 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
         ctx.dwgctl |= DWG_ATYPE_I | DWG_ZMODE_NOZCMP;
     }
     ctx.clip_y0 = 0;
-    ctx.clip_y1 = mg.mode.height;
+    ctx.clip_y1 = mg.rh;
     if (opts.vertex_alpha)
         ctx.flags |= MGA_S_ALPHA;
     if (plan.spec) {

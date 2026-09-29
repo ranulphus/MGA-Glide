@@ -1,16 +1,21 @@
 /* lfb.c - linear framebuffer access (PRD §7.8).
  *
  * Read locks and 565 upper-left write locks get a pointer straight into
- * VRAM. Everything else gets a shadow buffer at the Voodoo's stride,
- * pre-filled with a per-lock sentinel so that unlock writes back only the
- * pixels the game touched, converted to 565. */
+ * VRAM. Everything else gets a shadow buffer at the Voodoo's stride (wider
+ * for games wider than 1024 pixels), pre-filled with a per-lock sentinel so
+ * that unlock writes back only the pixels the game touched, converted to
+ * 565. In scaled modes (mg.present_scaled) writes to the front buffer are
+ * shown once they are done. */
 #include "glide/mg.h"
 #include "trace/trace.h"
 #include "mga/sys.h"
 #include <string.h>
 
-#define SHADOW_STRIDE16 2048u
-#define SHADOW_STRIDE32 4096u
+/* The Voodoo's 2048 bytes a line (1024 pixels) up to that width, else the
+ * next power of two: set at every lock from the game's width. */
+static uint32_t shadow_stride16 = 2048u;
+#define SHADOW_STRIDE16 shadow_stride16
+#define SHADOW_STRIDE32 (shadow_stride16 * 2u)
 
 static struct {
     int       active;
@@ -233,6 +238,7 @@ GR_ENTRY(FxBool, grLfbLock, (GrLock_t type, GrBuffer_t buffer, GrLfbWriteMode_t 
     lk.mode = writeMode;
     lk.origin = origin;
     lk.shadow = need_shadow(type, buffer, writeMode, origin, pixelPipeline);
+    shadow_stride16 = mg.width <= 1024 ? 2048u : (uint32_t)mga_pow2_pitch(mg.width) * 2u;
     lk.pipe = pixelPipeline && (type & 1) == GR_LFB_WRITE_ONLY && buffer != GR_BUFFER_AUXBUFFER;
     info->size = sizeof(GrLfbInfo_t);
     info->writeMode = writeMode;
@@ -557,6 +563,8 @@ GR_ENTRY(FxBool, grLfbUnlock, (GrLock_t type, GrBuffer_t buffer))
         engine_sync(200000);
         write_back();
     }
+    if ((type & 1) == GR_LFB_WRITE_ONLY && lk.buffer == GR_BUFFER_FRONTBUFFER)
+        mg_present_front();
     lk.active = 0;
     return FXTRUE;
 }
@@ -637,6 +645,8 @@ GR_ENTRY(FxBool, grLfbWriteRegion, (GrBuffer_t dst_buffer, FxU32 dst_x, FxU32 ds
             }
         }
     }
+    if (dst_buffer == GR_BUFFER_FRONTBUFFER)
+        mg_present_front();
     return FXTRUE;
 }
 

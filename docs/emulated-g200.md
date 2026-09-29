@@ -50,6 +50,31 @@ conditions:
 Whether the texture cache sees texels written by ILOAD is silicon
 experiment E6 (DOS-GL `docs/silicon-experiments.md`).
 
+Patch `0011-mga-display-zoom-and-flip.patch` (all cards) fixes three display
+details the resolution work (`vbe_plan_mode`, `vbe_set_zoom`,
+`engine_present`) depends on:
+
+- **Pixel doubling.** In power-graphics mode, XZOOMCTRL hzoom 2x now shows
+  each pixel twice. Upstream stored the register and did nothing, and its
+  generic "low-res" renderers do not double pixels on the modern render
+  path, so the card has its own renderer for 15/16 and 32 bpp. Line
+  doubling through CRTC9's maxscan already worked. 4x zoom, and zoom at 8
+  or 24 bpp, are logged as unsupported.
+- **Page flips at 1024x768 and above.** A new display start that changes
+  only CRTCEXT0's high address bits (the second page of 1024x768 and
+  1280x1024 lands on a 64 KB boundary) now redraws the whole screen, as a
+  CRTC 0Ch/0Dh change always did. Before, the emulator kept showing the
+  previous page's lines until they changed.
+- **Horizontal blanking.** The Matrox blanking end is a 7-bit field (CRTC3,
+  CRTC5 bit 7, CRTCEXT1 bit 6), but 86Box's generic code compares only 6
+  bits unless the value has a higher bit set, so the G100 BIOS's 1600x1200
+  mode ended blanking 64 clocks early and showed a 512-pixel phantom left
+  border. Blanking start bit 8 (CRTCEXT1 bit 1) was also always read as 0.
+
+`tests/hal/scale.c` checks both, against the unit tester's picture of the
+monitor. Real cards are unaffected by the second fix; the first is the model
+of a documented register, to be confirmed on each card at the bench.
+
 Known gap: with 8 MB configured, the genuine BIOS reports **2 MB** as VBE
 `TotalMemory` (DOS-GL's PROBE: `vram=2097152`), so it presumably sizes
 memory from something the model does not provide. MGA-Glide never

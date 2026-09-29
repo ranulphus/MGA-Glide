@@ -43,7 +43,7 @@ WATCOM ?= $(HOME)/.local/opt/watcom-20260901
 export WATCOM DJGPP_PREFIX DJGPP_URL DJGPP_SHA256 CWSDPMI_URL CWSDPMI_SHA256 OW_URL OW_SHA256
 Q ?= @
 
-HAL_COMMON := hal/src/debug/serial.c hal/src/debug/regtrace.c hal/src/pci.c hal/src/chip.c hal/src/vbe.c hal/src/fifo.c hal/src/engine.c hal/src/dac.c hal/src/texhw.c hal/src/setup/trap.c
+HAL_COMMON := hal/src/debug/serial.c hal/src/debug/regtrace.c hal/src/pci.c hal/src/chip.c hal/src/vbe.c hal/src/fifo.c hal/src/engine.c hal/src/dac.c hal/src/texhw.c hal/src/present.c hal/src/setup/trap.c
 
 DJENV := env LD_LIBRARY_PATH=$(DJGPP_PREFIX)/hostlib
 DJCC := $(DJENV) $(DJGPP_PREFIX)/bin/i586-pc-msdosdjgpp-gcc

@@ -3,9 +3,38 @@
 #include "mga/sys.h"
 #include "tex/texmgr.h"
 
+/* Scaled fits: draw render buffer src onto a display buffer (the hidden
+ * one, or with to_front the one on screen). The engine's texture and blend
+ * registers are overwritten; every draw sets them again. */
+static void present(uint32_t src, int to_front)
+{
+    mga_surface rs, ds;
+    rs.off = src; rs.w = mg.rw; rs.h = mg.rh; rs.pitch_px = mg.pitch_px;
+    ds.off = mg.disp_off[to_front ? mg.disp_front : 1 - mg.disp_front];
+    ds.w = mg.mode.width; ds.h = mg.mode.height; ds.pitch_px = mg.disp_pitch_px;
+    FPU_ENTER();
+    engine_present(&rs, &ds, mg.plan.dx, mg.plan.dy, mg.plan.dw, mg.plan.dh,
+                   mg_config.scale_filter ? MGA_PRESENT_BILINEAR : MGA_PRESENT_NEAREST);
+    FPU_LEAVE();
+    mg.dirty |= MG_DIRTY_TARGET | MG_DIRTY_CLIP | MG_DIRTY_RASTER;
+}
+
+/* Show what the game drew into the front buffer (scaled fits only: there
+ * the front buffer is a render buffer, not the one on screen). */
+void mg_present_front(void)
+{
+    if (!mg.open || !mg.present_scaled)
+        return;
+    engine_sync(200000);
+    present(mg.buf_off[mg.front], 1);
+}
+
 GR_ENTRY(void, grRenderBuffer, (GrBuffer_t buffer))
 {
-    mg.render_buffer = buffer == GR_BUFFER_FRONTBUFFER ? GR_BUFFER_FRONTBUFFER : GR_BUFFER_BACKBUFFER;
+    GrBuffer_t b = buffer == GR_BUFFER_FRONTBUFFER ? GR_BUFFER_FRONTBUFFER : GR_BUFFER_BACKBUFFER;
+    if (mg.render_buffer == GR_BUFFER_FRONTBUFFER && b != GR_BUFFER_FRONTBUFFER)
+        mg_present_front();
+    mg.render_buffer = b;
     mg.dirty |= MG_DIRTY_TARGET;
 }
 
@@ -34,9 +63,20 @@ GR_ENTRY(void, grBufferSwap, (int swap_interval))
     if (!mg.open)
         return;
     engine_sync(200000);
-    for (i = 0; i < swap_interval; i++)
-        engine_vsync_wait(100000);
-    vbe_set_display_start(mg.buf_off[mg.back], mg.pitch_px * (mg.bpp / 8), mg.bpp);
+    if (mg.present_scaled) {
+        /* Scale the finished frame into the hidden display buffer; flip
+         * that once the engine is done with it. */
+        present(mg.buf_off[mg.back], 0);
+        engine_sync(200000);
+        for (i = 0; i < swap_interval; i++)
+            engine_vsync_wait(100000);
+        mg.disp_front ^= 1;
+        vbe_set_display_start(mg.disp_off[mg.disp_front], mg.disp_pitch_px * (mg.bpp / 8), mg.bpp);
+    } else {
+        for (i = 0; i < swap_interval; i++)
+            engine_vsync_wait(100000);
+        vbe_set_display_start(mg.buf_off[mg.back], mg.pitch_px * (mg.bpp / 8), mg.bpp);
+    }
     t = mg.front;
     mg.front = mg.back;
     mg.back = (mg.nbuffers == 3) ? (3 - mg.front - t) : t;

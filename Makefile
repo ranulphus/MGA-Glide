@@ -30,7 +30,7 @@ check-header:
 	  || { echo "include/glide/glide2.h is stale: run make header"; exit 1; }
 
 # ---- HAL -----------------------------------------------------------------
-HAL_COMMON := hal/src/debug/serial.c hal/src/debug/regtrace.c hal/src/pci.c hal/src/chip.c hal/src/vbe.c hal/src/fifo.c hal/src/engine.c hal/src/dac.c hal/src/texhw.c hal/src/setup/trap.c
+HAL_COMMON := hal/src/debug/serial.c hal/src/debug/regtrace.c hal/src/pci.c hal/src/chip.c hal/src/vbe.c hal/src/fifo.c hal/src/engine.c hal/src/dac.c hal/src/texhw.c hal/src/present.c hal/src/setup/trap.c
 HAL_OW     := $(HAL_COMMON) hal/port/ow_dos4g.c
 HAL_DJGPP  := $(HAL_COMMON) hal/port/djgpp.c
 HAL_HOST   := $(HAL_COMMON) hal/port/host.c
@@ -120,10 +120,12 @@ build/djgpp/%.EXE: build/djgpp/libmgahal.a tests/shim/hx.c tests/shim/hx.h
 DJ_SRC_HELLO := tests/shim/hello.c
 DJ_SRC_PROBE := tests/hal/probe.c
 DJ_SRC_HOOKS := tests/hal/hooks.c
+DJ_SRC_SCALE := tests/hal/scale.c
 build/djgpp/HOOKS.EXE: tests/hal/hooks.c
+build/djgpp/SCALE.EXE: tests/hal/scale.c
 build/djgpp/HELLO.EXE: tests/shim/hello.c
 build/djgpp/PROBE.EXE: tests/hal/probe.c
-dostests-djgpp: build/djgpp/HELLO.EXE build/djgpp/PROBE.EXE build/djgpp/HOOKS.EXE
+dostests-djgpp: build/djgpp/HELLO.EXE build/djgpp/PROBE.EXE build/djgpp/HOOKS.EXE build/djgpp/SCALE.EXE
 .PHONY: dostests-djgpp
 
 # ---- Host trace replay (tools/hreplay) --------------------------------------

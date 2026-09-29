@@ -374,7 +374,7 @@ Texture download cost matters for games that stream textures every frame. Conver
 ### 7.7 Framebuffer, swap and modes
 
 - Glide defines resolutions from 320×200 to 1600×1200. v1.0 supports those a Voodoo Graphics could display: 320×200, 320×240, 400×256, 512×384, 640×200, 640×350, 640×400 and 640×480. 800×600 is supported as a Voodoo 2 would. Larger modes are an enhancement (§8).
-- Front, back and depth buffers are allocated in VRAM. Buffer pitch is 1024 pixels where VRAM allows, matching the 2048-byte LFB stride of a Voodoo for games that ignore the returned `strideInBytes`.
+- Front, back and depth buffers are allocated in VRAM. Buffer pitch is 1024 pixels where VRAM allows, matching the 2048-byte LFB stride of a Voodoo for games that ignore the returned `strideInBytes`; display modes wider than 1024 use their width rounded up to 32. Resolutions the BIOS lacks are drawn into render buffers at pitch 1024 and scaled into a BIOS mode at each swap (docs/config.md, Resolutions).
 - `grBufferSwap` flips by CRTC start address and waits on vertical retrace when the swap interval requires it.
 - Mode setting uses the card's VBE BIOS in v1.0, behind the HAL interface, as in DOS-GL. Modes that the BIOS does not offer (Q8) are set by programming the CRTC directly, through the same HAL interface.
 
