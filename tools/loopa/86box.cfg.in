@@ -32,7 +32,7 @@ dithersub = 1
 
 [Input devices]
 keyboard_type = keyboard_ps2
-mouse_type = none
+mouse_type = @MOUSE@
 
 [Sound]
 sndcard = @SNDCARD@

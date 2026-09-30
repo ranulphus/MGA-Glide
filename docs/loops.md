@@ -18,6 +18,16 @@ timeout, collects `C:\OUT`, converts images to PNG, and writes
 The machine has 64 MB unless `--mem MB` says otherwise (Half-Life on
 DOS-GL runs with 128).
 
+`--keys` types into the guest through the SDL monitor console (local patch
+0101): `SECONDS:SCANCODE[:down|up]`, seconds counted from the first serial
+line. `--mouse ps2` gives the machine a PS/2 mouse and loads CuteMouse
+(FreeDOS 1.4's `ctmouse.zip`, fetched once) before the test; then
+`SECONDS:mouse:DX:DY[:BUTTONS]` items move it by DX, DY mickeys and set its
+buttons (bit 0 left, 1 right, 2 middle) through the monitor's `mouse`
+command (local patch 0104, which also marks the mouse captured: 86Box's mice
+report nothing otherwise). `make loopa-selftest` checks it with
+`MOUSETST.EXE` (`tests/shim/mousetst.c`).
+
 Statuses: `PASS`, `FAIL`, `TIMEOUT` (wall clock), `HANG` (serial silent for
 the idle time), `GUEST-EXC` (the program died and RUN.BAT carried on),
 `CRASH`, `EMU-FATAL` (86Box reported a fatal error).

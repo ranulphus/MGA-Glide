@@ -3,7 +3,7 @@
 #   dist/86box-mgaglide-windows-kit.zip
 # holding build-windows.sh, README.md, versions.env (the pins from
 # tools/setup/versions.mk), series.windows and the patches it names. The
-# series is the Linux one less the Unix-only SDL monitor patch (0101), which
+# series is the Linux one less the Unix-only SDL monitor patches (0101, 0104), which
 # the Windows (Qt) front end does not have. No ROMs or BIOSes are included:
 # build-windows.sh fetches them on the Windows machine.
 set -euo pipefail
@@ -17,7 +17,7 @@ cp "$here/windows/build-windows.sh" "$here/windows/README.md" "$kit/"
 sed -n 's/^\(BOX86_[A-Z]*\|ROMS_[A-Z]*\|MATROX_BIOS_[A-Z0-9]*\) *:= *\(.*\)$/\1=\2/p' \
     "$root/tools/setup/versions.mk" > "$kit/versions.env"
 {
-  echo "# The Windows patch series: tools/86box/series less the Unix-only SDL monitor patch."
+  echo "# The Windows patch series: tools/86box/series less the Unix-only SDL monitor patches."
   grep -v '^#' "$here/series" | grep -v 'sdl-monitor' | grep .
 } > "$kit/series.windows"
 grep -v '^#' "$kit/series.windows" | while read -r p; do cp "$here/patches/$p" "$kit/patches/$p"; done

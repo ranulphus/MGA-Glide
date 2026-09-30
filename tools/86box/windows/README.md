@@ -72,9 +72,10 @@ it needs are next to it, and the ROMs are in its `roms\` folder.
 
 ## What differs from the Linux build
 
-Patch 0101 (a `key` command for the Unix SDL monitor console, which the test
-harness types into games with) is left out: Windows builds use the Qt user
-interface, which has no such console. Everything else is the same series, and
+Patches 0101 and 0104 (`key` and `mouse` commands for the Unix SDL monitor
+console, which the test harness types into games and moves the mouse with)
+are left out: Windows builds use the Qt user interface, which has no such
+console. Everything else is the same series, and
 the test harness itself (Loop A, the bench tools) stays on Linux.
 
 If the build fails, the logs are in `work\cmake.log` and `work\build.log`

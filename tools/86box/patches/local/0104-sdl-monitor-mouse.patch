@@ -1,0 +1,28 @@
+diff --git a/src/unix/sdl_monitor.c b/src/unix/sdl_monitor.c
+index 209b169..1f68e42 100644
+--- a/src/unix/sdl_monitor.c
++++ b/src/unix/sdl_monitor.c
+@@ -13,6 +13,7 @@
+ #include <86box/version.h>
+ #include <86box/video.h>
+ #include <86box/keyboard.h>
++#include <86box/mouse.h>
+ 
+ #include "sdl_monitor.h"
+ 
+@@ -182,6 +183,15 @@ monitor_execute_line(char *line)
+                 usleep(50000);
+                 keyboard_input(0, scan);
+             }
++        } else if (strncasecmp(xargv[0], "mouse", 5) == 0 && cmdargc >= 3) {
++            /* MGA-Glide local patch: "mouse <dx> <dy> [buttons]" moves the
++             * emulated mouse by dx, dy mickeys and sets its buttons (bit 0
++             * left, 1 right, 2 middle), for a harness without window focus.
++             * The mice report only while captured: say so, without SDL's grab. */
++            mouse_capture = 1;
++            mouse_scale((int) strtol(xargv[1], NULL, 0), (int) strtol(xargv[2], NULL, 0));
++            if (cmdargc >= 4)
++                mouse_set_buttons_ex((int) strtol(xargv[3], NULL, 0));
+         } else if (strncasecmp(xargv[0], "version", 7) == 0) {
+ #ifndef EMU_GIT_HASH
+ #    define EMU_GIT_HASH "0000000"

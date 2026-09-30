@@ -89,6 +89,20 @@ def start_xvfb(errf):
     return x, ":" + num.decode().strip()
 
 
+CTMOUSE_URL = "https://www.ibiblio.org/pub/micro/pc-stuff/freedos/files/repositories/1.4/base/ctmouse.zip"
+CTMOUSE_SHA256 = "fd47069fb3d9559604dcaef34ca4f3705a7f2f2cff3e4b205e361b79f10a8200"
+
+
+def ctmouse(tmp):
+    """CuteMouse 2.1 (GPL) from FreeDOS 1.4's base repository, for --mouse."""
+    import zipfile
+    z = os.path.join(tmp, "ctmouse.zip")
+    sh([os.path.join(ROOT, "tools/setup/fetch.sh"), CTMOUSE_URL, CTMOUSE_SHA256, z])
+    exe = os.path.join(tmp, "CTMOUSE.EXE")
+    open(exe, "wb").write(zipfile.ZipFile(z).read("BIN/CTMOUSE.EXE"))
+    return exe
+
+
 def dos_bat(lines):
     return ("\r\n".join(["@ECHO OFF"] + lines) + "\r\n").encode("ascii")
 
@@ -111,6 +125,7 @@ def build_config(vm, a, serial, cimg, bootimg, extra_hdd):
         "@GFXCARD@": CARDS[a.card][0],
         "@GFXNAME@": CARDS[a.card][1],
         "@SNDCARD@": a.sound or "none",
+        "@MOUSE@": a.mouse,
         "@SERIAL@": serial,
         "@CIMG@": cimg,
         "@BOOTIMG@": bootimg,
@@ -169,6 +184,8 @@ def run(a):
         d.put(os.path.join(WATCOM, "binw/dos4gw.exe"), "/HX/DOS4GW.EXE")
         if os.path.exists(CWSDPMI):
             d.put(CWSDPMI, "/HX/CWSDPMI.EXE")
+        if a.mouse != "none":
+            d.put(ctmouse(tmp), "/HX/CTMOUSE.EXE")
         d.mkdir("/TEST")
         exe_name = os.path.basename(a.exe).upper() if a.exe else None
         if a.exe:
@@ -212,6 +229,8 @@ def run(a):
             result["ovl_dst"] = dst
         run_lines = ["SET PATH=C:\\HX;A:\\FREEDOS\\BIN", "C:", "CD \\TEST",
                      "SERSAY HX-BOOT loop=A test=%s" % a.name]
+        if a.mouse != "none":
+            run_lines += ["CTMOUSE"]
         run_lines += a.pre
         if a.cmd:
             run_lines += a.cmd
@@ -250,6 +269,9 @@ def run(a):
         events = []
         for k in filter(None, a.keys.split(",")):
             parts = k.split(":")
+            if parts[1] == "mouse":             # SECONDS:mouse:DX:DY[:BUTTONS]
+                events.append((float(parts[0]), "mouse %s\n" % " ".join(parts[2:5])))
+                continue
             mode = parts[2] if len(parts) > 2 else "tap"
             events.append((float(parts[0]), "key %s %s\n" % (mode, parts[1])))
         for sh_t in filter(None, a.shots.split(",")):
@@ -400,7 +422,10 @@ def main():
     ap.add_argument("--ovl", help="GLIDE2X.OVL to install as C:\\TEST\\GLIDE2X.OVL")
     ap.add_argument("--file", action="append", default=[], help="SRC[=/DOS/PATH] extra files")
     ap.add_argument("--pre", action="append", default=[], help="extra RUN.BAT lines before the test")
-    ap.add_argument("--keys", default="", help="comma list of SECONDS:SCANCODE[:down|up] after HX-BOOT")
+    ap.add_argument("--keys", default="", help="comma list of SECONDS:SCANCODE[:down|up] after HX-BOOT, "
+                    "or SECONDS:mouse:DX:DY[:BUTTONS] (mickeys; buttons bit 0 left, 1 right, 2 middle; needs --mouse)")
+    ap.add_argument("--mouse", default="none", help="86Box mouse (none, ps2, msserial); any but none also "
+                    "loads CuteMouse (C:\\HX\\CTMOUSE.EXE) before the test")
     ap.add_argument("--shots", default="", help="comma list of SECONDS after HX-BOOT to screenshot")
     ap.add_argument("--voodoo", type=int, default=1)
     ap.add_argument("--voodoo-threads", type=int, default=int(os.environ.get("VOODOO_THREADS", "1")))

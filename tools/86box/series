@@ -14,3 +14,4 @@ local/0011-mga-display-zoom-and-flip.patch
 local/0101-sdl-monitor-key-and-pipe.patch
 local/0102-unittester-clean-exit-and-serial-flush.patch
 local/0103-cpu-restartable-interrupt-frame.patch
+local/0104-sdl-monitor-mouse.patch
