@@ -114,8 +114,9 @@ README = """{name}: an 86Box machine for MGA-Glide's patched 86Box
 Machine: ABIT BF6 (440BX), Pentium II 350, {mem} MB, {cardname} ({vram} MB) plus a
 Voodoo Graphics (2+2 MB), Sound Blaster 16 (A220 I5 D1 H5), PS/2 mouse.
 It boots FreeDOS 1.4 from boot.img (keep it in the floppy drive); C: is
-c.img{d_note}. C:\\RUN.BAT runs at boot and sets PATH (C:\\HX has DOS4GW.EXE and
-CWSDPMI.EXE) and BLASTER.
+c.img{d_note}. C:\\RUN.BAT runs at boot, sets PATH (C:\\HX has DOS4GW.EXE and
+CWSDPMI.EXE) and BLASTER, and loads CuteMouse (C:\\HX\\CTMOUSE.EXE, GPL) for
+the mouse.
 
 Open: unzip this folder into the 86Box manager's system directory (shown in
 the manager's Preferences; by default %USERPROFILE%\\86Box VMs) and start
@@ -238,6 +239,7 @@ def main():
         d.put(os.path.join(loopa.WATCOM, "binw/dos4gw.exe"), "/HX/DOS4GW.EXE")
         if os.path.exists(loopa.CWSDPMI):
             d.put(loopa.CWSDPMI, "/HX/CWSDPMI.EXE")
+        d.put(loopa.ctmouse(tmp), "/HX/CTMOUSE.EXE")   # the PS/2 mouse in DOS programs
         for spec in a.file:
             put_file(d, spec)
         path = "C:\\HX;A:\\FREEDOS\\BIN"
@@ -264,7 +266,7 @@ def main():
                 d.put(bat, "/GAMES/" + name)
                 print("mkwinvm: installed %s (%s)" % (key, games[key]["title"]))
             path = "C:\\GAMES;" + path
-        run = ["SET PATH=" + path, "SET BLASTER=A220 I5 D1 H5 T6", "C:", "CD \\"] + a.run
+        run = ["SET PATH=" + path, "SET BLASTER=A220 I5 D1 H5 T6", "CTMOUSE", "C:", "CD \\"] + a.run
         rb = os.path.join(tmp, "RUN.BAT")
         open(rb, "wb").write(loopa.dos_bat(run))
         d.put(rb, "/RUN.BAT")
