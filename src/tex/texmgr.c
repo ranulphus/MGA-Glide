@@ -40,6 +40,15 @@ static uint32_t heap_lo, heap_hi, white_off;
 
 void tex_heap_init(uint32_t start, uint32_t end)
 {
+    int i;
+    /* A new window lays VRAM out afresh: blocks allocated in the old heap
+     * are gone, and freeing them into this one (tex_reset after a
+     * grSstWinOpen at another size) would hand out VRAM twice, or inside
+     * the new colour and depth buffers. */
+    for (i = 0; i < MAX_RECS; i++) {
+        recs[i].hw_bytes = 0;
+        memset(recs[i].hw_valid, 0, sizeof recs[i].hw_valid);
+    }
     heap_lo = (start + HW_ALIGN - 1) & ~(HW_ALIGN - 1);
     heap_hi = end;
     nfree = 1;

@@ -536,6 +536,51 @@ static void t26(void)
     ct_close();
 }
 
+/* t27: the window reopened with another VRAM layout while textures are
+ * resident. 640x480 without a depth buffer puts them just past the colour
+ * buffers; reopened with one, the depth buffer lies there. New textures are
+ * downloaded and drawn (uploading them), the depth buffer is cleared, and
+ * the same textures drawn again must be intact: MGA-Glide once freed the
+ * old window's blocks into the new heap and placed textures inside the new
+ * depth buffer. */
+static void t27_row(int first, float y0, float y1, int download)
+{
+    GrTexInfo ti;
+    int i;
+    info64(&ti);
+    for (i = 0; i < 8; i++) {
+        if (download) {
+            tinted64(first + i);
+            gl.grTexDownloadMipMap(GR_TMU0, 0x10000u * (FxU32)i, GR_MIPMAPLEVELMASK_BOTH, &ti);
+        }
+        gl.grTexSource(GR_TMU0, 0x10000u * (FxU32)i, GR_MIPMAPLEVELMASK_BOTH, &ti);
+        tquad(8.0f + 79.0f * (float)i, y0, 79.0f + 79.0f * (float)i, y1, 0, 0, 256, 256);
+    }
+}
+
+static void t27(void)
+{
+    if (ct_open(2, 0) < 0) return;
+    tex_setup_combine(0);
+    t27_row(1, 10, 80, 1);
+    gl.grSstWinClose();
+    if (!gl.grSstWinOpen(0, GR_RESOLUTION_640x480, GR_REFRESH_60Hz, GR_COLORFORMAT_ARGB, GR_ORIGIN_UPPER_LEFT, 2, 1)) {
+        hx_test("reopen", 0, "grSstWinOpen with a depth buffer failed");
+        ct_close();
+        return;
+    }
+    tex_setup_combine(0);
+    gl.grDepthBufferMode(GR_DEPTHBUFFER_ZBUFFER);
+    gl.grDepthBufferFunction(GR_CMP_ALWAYS);
+    gl.grDepthMask(FXTRUE);
+    t27_row(9, 10, 80, 1);
+    gl.grBufferClear(0x00101010, 0, 0xFFFF);
+    t27_row(9, 100, 240, 0);
+    t27_row(17, 260, 400, 1);
+    ct_capture(GR_BUFFER_BACKBUFFER);
+    ct_close();
+}
+
 /* t24: texture-coordinate magnitude sweep: large s,t offsets (wrapped)
  * and a range of q, exercising the per-triangle prescale. */
 static void t24(void)
@@ -577,6 +622,7 @@ const ct_test ct_tex_tests[] = {
     { "t24", t24, "texture coordinate magnitude sweep" },
     { "t25", t25, "texture state defaults" },
     { "t26", t26, "texture replaced in place while sourced" },
+    { "t27", t27, "textures after reopening the window with another layout" },
     { "t10", t10, "texture formats, aspects, small LODs" },
     { "t11", t11, "filtering, clamping, perspective" },
     { "t12", t12, "mipmaps, gu allocator, level downloads" },

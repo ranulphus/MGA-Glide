@@ -32,6 +32,7 @@ the emulated reference card is handled).
 | Vertex x, y are truncated to 1/16 pixel | t04 |
 | Texture state after `grSstWinOpen`: clamp, point sampling; s,t are not iterated until a texture combine is set | t25 |
 | A download into the texture being sourced takes effect without a new `grTexSource` (the TMU reads its memory); whole-chain, level and partial downloads | t26 |
+| After `grSstWinClose` and a `grSstWinOpen` with another buffer layout, textures downloaded again are intact through a depth clear (MGA-Glide once put them inside the new depth buffer) | t27 |
 | Texture memory: level sizes and offsets (short side at least 2 texels, totals rounded to 8 bytes) | `tests/unit/data/texmem.txt` |
 | LOD: `floor(log2 of the larger texel-space gradient)` plus the bias in quarter steps | t12 |
 | Bilinear filtering samples at texel centres (half-texel offset) | t11 |
