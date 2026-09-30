@@ -11,7 +11,7 @@ cpu_speed = 350000000
 cpu_multi = 3.5
 cpu_use_dynarec = 1
 fpu_type = internal
-mem_size = 65536
+mem_size = @MEM_KB@
 time_sync = disabled
 
 [Video]

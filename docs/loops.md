@@ -15,6 +15,9 @@ runtime). It ends the emulator through the unit-tester device or a
 timeout, collects `C:\OUT`, converts images to PNG, and writes
 `out/<name>/{result.json,status,serial.log,*.png}`.
 
+The machine has 64 MB unless `--mem MB` says otherwise (Half-Life on
+DOS-GL runs with 128).
+
 Statuses: `PASS`, `FAIL`, `TIMEOUT` (wall clock), `HANG` (serial silent for
 the idle time), `GUEST-EXC` (the program died and RUN.BAT carried on),
 `CRASH`, `EMU-FATAL` (86Box reported a fatal error).

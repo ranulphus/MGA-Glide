@@ -60,7 +60,7 @@ cpu_speed = 350000000
 cpu_multi = 3.5
 cpu_use_dynarec = 1
 fpu_type = internal
-mem_size = 65536
+mem_size = {mem_kb}
 time_sync = local
 
 [Video]
@@ -111,7 +111,7 @@ fdd_02_type = none
 README = """{name}: an 86Box machine for MGA-Glide's patched 86Box
 ===========================================================
 
-Machine: ABIT BF6 (440BX), Pentium II 350, 64 MB, {cardname} ({vram} MB) plus a
+Machine: ABIT BF6 (440BX), Pentium II 350, {mem} MB, {cardname} ({vram} MB) plus a
 Voodoo Graphics (2+2 MB), Sound Blaster 16 (A220 I5 D1 H5), PS/2 mouse.
 It boots FreeDOS 1.4 from boot.img (keep it in the floppy drive); C: is
 c.img{d_note}. C:\\RUN.BAT runs at boot and sets PATH (C:\\HX has DOS4GW.EXE and
@@ -216,6 +216,7 @@ def main():
     ap.add_argument("--d-file", action="append", default=[], help="SRC=/DOS/PATH on a second disk, D:")
     ap.add_argument("--d-dir", action="append", default=[], help="SRC=/DOS/PATH: a directory tree on D:")
     ap.add_argument("--d-cylinders", type=int, default=1000, help="size of D: (63 x 16 x N sectors, N <= 1023)")
+    ap.add_argument("--mem", type=int, default=64, help="the machine's RAM in MB (default 64)")
     ap.add_argument("--out")
     a = ap.parse_args()
     if not 1 <= a.d_cylinders <= 1023:
@@ -270,7 +271,8 @@ def main():
         section = loopa.CARDS[a.card][1]
         vram = 16 if a.card in ("g400", "g450") else 8
         open(os.path.join(vm, "86box.cfg"), "w").write(
-            CFG.format(gfxcard=loopa.CARDS[a.card][0], gfxname=section, vram=vram, voodoo=int(a.voodoo), hdd2=hdd2))
+            CFG.format(gfxcard=loopa.CARDS[a.card][0], gfxname=section, vram=vram, voodoo=int(a.voodoo), hdd2=hdd2,
+                       mem_kb=a.mem * 1024))
         notes = open(a.readme).read() if a.readme else ""
         if a.game:
             notes += ("\nGames (C:\\\\GAMES, on PATH; retail software: for your own machine only)\n"
@@ -282,7 +284,7 @@ def main():
                       "\n  ".join("%-4s %s" % (k.upper(), json.load(open(os.path.join(ROOT, "tools/games/games.json")))[k]["title"])
                                   for k in a.game))
         open(os.path.join(vm, "README.txt"), "w", newline="\r\n").write(
-            README.format(name=a.name, cardname=section, vram=vram, notes=notes, d_note=d_note))
+            README.format(name=a.name, cardname=section, vram=vram, notes=notes, d_note=d_note, mem=a.mem))
         os.makedirs(os.path.dirname(out), exist_ok=True)
         if os.path.exists(out):
             os.remove(out)

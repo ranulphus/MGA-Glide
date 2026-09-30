@@ -107,6 +107,7 @@ def build_config(vm, a, serial, cimg, bootimg, extra_hdd):
         "@VOODOO_RECOMPILER@": str(a.voodoo_recompiler),
         "@VOODOO_THREADS@": str(a.voodoo_threads),
         "@G100_MB@": str(max(a.g100_mb, 16) if a.card in ("g400", "g450") else a.g100_mb),
+        "@MEM_KB@": str(a.mem * 1024),
         "@GFXCARD@": CARDS[a.card][0],
         "@GFXNAME@": CARDS[a.card][1],
         "@SNDCARD@": a.sound or "none",
@@ -405,6 +406,7 @@ def main():
     ap.add_argument("--voodoo-threads", type=int, default=int(os.environ.get("VOODOO_THREADS", "1")))
     ap.add_argument("--voodoo-recompiler", type=int, default=int(os.environ.get("VOODOO_RECOMPILER", "0")))
     ap.add_argument("--g100-mb", type=int, default=8)
+    ap.add_argument("--mem", type=int, default=64, help="the PC's RAM in MB (default 64; the BF6 takes up to 768)")
     ap.add_argument("--card", choices=sorted(CARDS), default=os.environ.get("MGA_CARD", "g100"),
                     help="Matrox card: g100, or g200 (the local emulation, patch 0004)")
     ap.add_argument("--sound", default=None)
