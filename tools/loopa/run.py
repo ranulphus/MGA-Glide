@@ -266,17 +266,24 @@ def run(a):
         last_size, last_change, status, done_at = 0, time.time(), None, None
         f1_taps, next_f1 = 0, t0 + 6
         boot_at = None
-        events = []
+        # --keys in segments: the first timed from boot, each later one from
+        # when its @TEXT anchor shows in the serial log (searched after the
+        # previous anchor's match), so a slow emulator cannot outrun a script.
+        segments = [[None, None, []]]           # [anchor text, base time, [(seconds, command)]]
         for k in filter(None, a.keys.split(",")):
+            if k.startswith("@"):
+                segments.append([k[1:], None, []])
+                continue
             parts = k.split(":")
             if parts[1] == "mouse":             # SECONDS:mouse:DX:DY[:BUTTONS]
-                events.append((float(parts[0]), "mouse %s\n" % " ".join(parts[2:5])))
+                segments[-1][2].append((float(parts[0]), "mouse %s\n" % " ".join(parts[2:5])))
                 continue
             mode = parts[2] if len(parts) > 2 else "tap"
-            events.append((float(parts[0]), "key %s %s\n" % (mode, parts[1])))
-        for sh_t in filter(None, a.shots.split(",")):
-            events.append((float(sh_t), "screenshot\n"))
-        events.sort()
+            segments[-1][2].append((float(parts[0]), "key %s %s\n" % (mode, parts[1])))
+        for seg in segments:
+            seg[2].sort()
+        events = sorted((float(sh_t), "screenshot\n") for sh_t in filter(None, a.shots.split(",")))
+        seg_i, anchor_pos, serial_text = 0, 0, ""
 
         def console(cmd):
             try:
@@ -290,7 +297,7 @@ def run(a):
             now = time.time()
             if size != last_size:
                 last_size, last_change = size, now
-                text = open(serial, "rb").read().decode("latin-1")
+                text = serial_text = open(serial, "rb").read().decode("latin-1")
                 # Finished once every program started has reported HX-DONE
                 # (a --cmd job can run several programs in turn).
                 started = text.count("HX-START ") + text.count("DGL-START")
@@ -305,6 +312,21 @@ def run(a):
                 boot_at = now
             while events and boot_at is not None and now - boot_at >= events[0][0]:
                 console(events.pop(0)[1])
+            while seg_i < len(segments) and boot_at is not None:
+                seg = segments[seg_i]
+                if seg[1] is None:
+                    if seg[0] is None:
+                        seg[1] = boot_at
+                    else:
+                        at = serial_text.find(seg[0], anchor_pos)
+                        if at < 0:
+                            break
+                        anchor_pos, seg[1] = at + len(seg[0]), now
+                while seg[2] and now - seg[1] >= seg[2][0][0]:
+                    console(seg[2].pop(0)[1])
+                if seg[2]:
+                    break
+                seg_i += 1
             if last_size == 0 and now >= next_f1 and f1_taps < 12:
                 # A fresh NVRAM stops the BIOS at "press F1 to continue".
                 try:
@@ -423,7 +445,8 @@ def main():
     ap.add_argument("--file", action="append", default=[], help="SRC[=/DOS/PATH] extra files")
     ap.add_argument("--pre", action="append", default=[], help="extra RUN.BAT lines before the test")
     ap.add_argument("--keys", default="", help="comma list of SECONDS:SCANCODE[:down|up] after HX-BOOT, "
-                    "or SECONDS:mouse:DX:DY[:BUTTONS] (mickeys; buttons bit 0 left, 1 right, 2 middle; needs --mouse)")
+                    "or SECONDS:mouse:DX:DY[:BUTTONS] (mickeys; buttons bit 0 left, 1 right, 2 middle; needs --mouse); "
+                    "an @TEXT item makes the SECONDS after it count from when TEXT appears on the serial line")
     ap.add_argument("--mouse", default="none", help="86Box mouse (none, ps2, msserial); any but none also "
                     "loads CuteMouse (C:\\HX\\CTMOUSE.EXE) before the test")
     ap.add_argument("--shots", default="", help="comma list of SECONDS after HX-BOOT to screenshot")

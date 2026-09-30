@@ -20,7 +20,11 @@ DOS-GL runs with 128).
 
 `--keys` types into the guest through the SDL monitor console (local patch
 0101): `SECONDS:SCANCODE[:down|up]`, seconds counted from the first serial
-line. `--mouse ps2` gives the machine a PS/2 mouse and loads CuteMouse
+line. An `@TEXT` item starts a new count from the moment TEXT appears on the
+serial line (after the previous anchor's match): under load 86Box runs
+slower than the wall clock, so a script that waits for the guest's own
+lines ("the level is loaded", "saved") holds its order where fixed times
+drift. `--mouse ps2` gives the machine a PS/2 mouse and loads CuteMouse
 (FreeDOS 1.4's `ctmouse.zip`, fetched once) before the test; then
 `SECONDS:mouse:DX:DY[:BUTTONS]` items move it by DX, DY mickeys and set its
 buttons (bit 0 left, 1 right, 2 middle) through the monitor's `mouse`

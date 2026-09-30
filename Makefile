@@ -193,7 +193,7 @@ loopa-selftest: dostests runtime build/djgpp/STACKPG.EXE build/djgpp/MOUSETST.EX
 	if [ "$$got" = PASS ]; then echo "  selftest stackpg: PASS (ok)"; \
 	else echo "  selftest stackpg: got $$got, want PASS (an 86Box without local patch 0103?)"; exit 1; fi; \
 	$(DEV) $(PYTHON) tools/loopa/run.py --name selftest-mouse --exe build/djgpp/MOUSETST.EXE --mouse ps2 \
-	  --keys 6:mouse:40:-20:1,7:mouse:40:-20:0,12:mouse:40:-20:1,13:mouse:40:-20:0 --idle 40 --timeout 120 >/dev/null || true; \
+	  --keys '@HX-TEST driver,1:mouse:40:-20:1,2:mouse:40:-20:0' --idle 40 --timeout 120 >/dev/null || true; \
 	got=$$(cat out/selftest-mouse/status); \
 	if [ "$$got" = PASS ]; then echo "  selftest mouse: PASS (ok)"; \
 	else echo "  selftest mouse: got $$got, want PASS (an 86Box without local patch 0104?)"; exit 1; fi

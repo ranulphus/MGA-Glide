@@ -3,8 +3,9 @@
  * (local patch 0104) end to end. The harness moves the mouse right and up
  * with the left button held, then lets go (make loopa-selftest):
  *
- *   --keys 6:mouse:40:-20:1,7:mouse:40:-20:0,12:...,13:... (again, in case
- *   the first comes before the program starts)
+ *   --keys '@HX-TEST driver,1:mouse:40:-20:1,2:mouse:40:-20:0'
+ *
+ * (timed from this program's driver line, so after its INT 33h reset)
  *
  * INT 33h function 0 finds the driver, 0Bh reads the motion counters
  * (mickeys since the last call) and 03h the buttons, for up to 30 seconds.
