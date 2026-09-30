@@ -23,7 +23,7 @@ for f in $(git ls-files hal); do copy "$f"; done
 # Host reference rasteriser and the setup unit test.
 for f in tests/unit/unit.c tests/unit/unit.h tests/unit/refrast.c tests/unit/refrast.h tests/unit/test_trap.c; do copy "$f"; done
 # Smoke and bring-up programs, the guest shim and DOS helpers.
-for f in tests/hal/smoke.c tests/hal/probe.c tests/hal/romdump.c tests/shim/hx.c tests/shim/hx.h tests/shim/hello.c tests/shim/stackpg.c tests/shim/mousetst.c $(git ls-files tools/dos); do copy "$f"; done
+for f in tests/hal/smoke.c tests/hal/probe.c tests/hal/romdump.c tests/shim/hx.c tests/shim/hx.h tests/shim/hello.c tests/shim/stackpg.c tests/shim/mousetst.c tests/shim/joytest.c tests/shim/sbbeep.c $(git ls-files tools/dos); do copy "$f"; done
 # Loop C rig (Linux port is part of hal/).
 for f in tests/rig/mgarig.c $(git ls-files tools/rig); do copy "$f"; done
 # Loop A harness, 86Box build and patches, setup scripts, dev container.
@@ -80,7 +80,13 @@ build/djgpp/STACKPG.EXE: tests/shim/stackpg.c tests/shim/hx.c build/djgpp/libmga
 # The --mouse check (docs/loops.md): must PASS in Loop A with --mouse ps2.
 build/djgpp/MOUSETST.EXE: tests/shim/mousetst.c tests/shim/hx.c build/djgpp/libmgahal.a
 	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^
-dostests-djgpp: build/djgpp/HELLO.EXE build/djgpp/PROBE.EXE build/djgpp/STACKPG.EXE build/djgpp/MOUSETST.EXE
+# The --keys joy check (JOYTEST, local patch 0105) and the --sound/--wav check (SBBEEP).
+build/djgpp/JOYTEST.EXE: tests/shim/joytest.c tests/shim/hx.c build/djgpp/libmgahal.a
+	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^
+build/djgpp/SBBEEP.EXE: tests/shim/sbbeep.c tests/shim/hx.c build/djgpp/libmgahal.a
+	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^ -lm
+dostests-djgpp: build/djgpp/HELLO.EXE build/djgpp/PROBE.EXE build/djgpp/STACKPG.EXE build/djgpp/MOUSETST.EXE \
+                build/djgpp/JOYTEST.EXE build/djgpp/SBBEEP.EXE
 
 build/host/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -101,8 +107,8 @@ build/ow/%.obj: %.c
 hal-ow: $(HAL_COMMON:%.c=build/ow/%.obj) build/ow/hal/port/ow_dos4g.obj
 
 # 16-bit DOS helpers for Loop A and the bench (SERSAY, UTEXIT, WAITSEC, REBOOT,
-# VMODE), built with Open Watcom's 16-bit compiler (make setup-ow).
-DOS_TOOLS := UTEXIT SERSAY WAITSEC REBOOT VMODE
+# VMODE, KEYWAIT, VECCHK, SBCHK), built with Open Watcom's 16-bit compiler (make setup-ow).
+DOS_TOOLS := UTEXIT SERSAY WAITSEC REBOOT VMODE KEYWAIT VECCHK SBCHK
 build/ow/dos/%.COM:
 	@mkdir -p build/ow/dos/obj16
 	$(Q)$(OWENV) $(OWBIN)/wcc -bt=dos -ms -0 -os -zq -we -fo=build/ow/dos/obj16/$*.obj $<
@@ -112,6 +118,9 @@ build/ow/dos/SERSAY.COM: tools/dos/sersay.c
 build/ow/dos/WAITSEC.COM: tools/dos/waitsec.c
 build/ow/dos/REBOOT.COM: tools/dos/reboot.c
 build/ow/dos/VMODE.COM: tools/dos/vmode.c
+build/ow/dos/KEYWAIT.COM: tools/dos/keywait.c
+build/ow/dos/VECCHK.COM: tools/dos/vecchk.c
+build/ow/dos/SBCHK.COM: tools/dos/sbchk.c
 dostools: $(DOS_TOOLS:%=build/ow/dos/%.COM)
 
 setup-djgpp:

@@ -101,6 +101,14 @@ int engine_sync(uint32_t timeout_us)
     return 0;
 }
 
+/* Non-blocking: nothing queued in the bus FIFO and the drawing engine not
+ * busy (engine_sync's condition), for callers with other work to do while
+ * they wait (DOS-GL's swap, which lets a program's audio thread run). */
+int engine_idle(void)
+{
+    return (MGA_RD32(MGAREG_FIFOSTATUS) & (1u << 9)) && !(MGA_RD32(MGAREG_STATUS) & STATUS_DWGENGSTS);
+}
+
 void engine_reset(void)
 {
     engine_resets++;

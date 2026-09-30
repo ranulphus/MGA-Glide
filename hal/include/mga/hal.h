@@ -117,6 +117,7 @@ typedef struct {
 
 void     engine_init(int pitch_px, int bpp);
 int      engine_sync(uint32_t timeout_us);     /* 0 ok, -1 timeout (engine reset) */
+int      engine_idle(void);                    /* 1 when the FIFO is empty and the engine idle (no wait) */
 void     engine_reset(void);
 void     engine_set_target(const mga_target *t);
 void     engine_set_maccess_flags(uint32_t flags);     /* MACCESS_NODITHER / MACCESS_FOGEN */

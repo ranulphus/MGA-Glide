@@ -1,0 +1,116 @@
+diff --git a/src/include/86box/gameport.h b/src/include/86box/gameport.h
+index 65b4df0..3615efd 100644
+--- a/src/include/86box/gameport.h
++++ b/src/include/86box/gameport.h
+@@ -156,6 +156,7 @@ extern int joystick_type[GAMEPORT_MAX];
+ extern void joystick_init(void);
+ extern void joystick_close(void);
+ extern void joystick_process(uint8_t gp);
++extern int  joystick_virtual_index(void); /* MGA-Glide local patch 0105 */
+ 
+ extern const char *joystick_get_name(int js);
+ extern const char *joystick_get_internal_name(int js);
+diff --git a/src/qt/sdl_joystick.c b/src/qt/sdl_joystick.c
+index fe8173b..8ce9929 100644
+--- a/src/qt/sdl_joystick.c
++++ b/src/qt/sdl_joystick.c
+@@ -54,6 +54,39 @@ joystick_state_t      joystick_state[GAMEPORT_MAX][MAX_JOYSTICKS];
+ plat_joystick_state_t plat_joystick_state[MAX_PLAT_JOYSTICKS];
+ static SDL_Joystick  *sdl_joy[MAX_PLAT_JOYSTICKS];
+ 
++/* MGA-Glide local patch: with BOX86_VJOY=1, one virtual joystick (4 axes,
++ * 4 buttons) follows any real ones, for a harness with no joystick; the SDL
++ * monitor's "joy" command sets its state (joystick_virtual_index()). */
++static int vjoy = -1;
++
++int
++joystick_virtual_index(void)
++{
++    return vjoy;
++}
++
++static void
++vjoy_add(void)
++{
++    const char *e = getenv("BOX86_VJOY");
++    plat_joystick_state_t *p;
++
++    if (!e || !*e || !strcmp(e, "0") || joysticks_present >= MAX_PLAT_JOYSTICKS)
++        return;
++    vjoy = joysticks_present++;
++    p    = &plat_joystick_state[vjoy];
++    memset(p, 0, sizeof(*p));
++    strcpy(p->name, "Monitor joystick");
++    p->nr_axes    = 4;
++    p->nr_buttons = 4;
++    for (int i = 0; i < 4; i++) {
++        snprintf(p->axis[i].name, sizeof(p->axis[i].name), "Axis %i", i);
++        p->axis[i].id = i;
++        snprintf(p->button[i].name, sizeof(p->button[i].name), "Button %i", i);
++        p->button[i].id = i;
++    }
++}
++
+ #ifndef M_PI
+ #    define M_PI 3.14159265358979323846
+ #endif
+@@ -71,7 +104,10 @@ joystick_init(void)
+ #else
+     if (SDL_INITSUBSYSTEM_FAILED(SDL_InitSubSystem(SDL_INIT_JOYSTICK)))
+ #endif
++    {
++        vjoy_add();
+         return;
++    }
+ 
+ #ifdef USE_SDL2_LIB
+     joysticks_present = SDL_NumJoysticks();
+@@ -126,6 +162,7 @@ joystick_init(void)
+             }
+         }
+     }
++    vjoy_add();
+ }
+ 
+ void
+@@ -182,6 +219,8 @@ joystick_process(uint8_t gp)
+ 
+     SDL_UpdateJoysticks();
+     for (int js = 0; js < joysticks_present; js++) {
++        if (js == vjoy)
++            continue;
+         for (int axis_nr = 0; axis_nr < plat_joystick_state[js].nr_axes; axis_nr++)
+             plat_joystick_state[js].a[axis_nr] = SDL_GetJoystickAxis(sdl_joy[js], axis_nr);
+ 
+diff --git a/src/unix/sdl_monitor.c b/src/unix/sdl_monitor.c
+index 1f68e42..9bb1a26 100644
+--- a/src/unix/sdl_monitor.c
++++ b/src/unix/sdl_monitor.c
+@@ -14,6 +14,7 @@
+ #include <86box/video.h>
+ #include <86box/keyboard.h>
+ #include <86box/mouse.h>
++#include <86box/gameport.h>
+ 
+ #include "sdl_monitor.h"
+ 
+@@ -192,6 +193,19 @@ monitor_execute_line(char *line)
+             mouse_scale((int) strtol(xargv[1], NULL, 0), (int) strtol(xargv[2], NULL, 0));
+             if (cmdargc >= 4)
+                 mouse_set_buttons_ex((int) strtol(xargv[3], NULL, 0));
++        } else if (strncasecmp(xargv[0], "joy", 3) == 0 && cmdargc >= 4) {
++            /* MGA-Glide local patch: "joy axis <n> <-32767..32767>" and
++             * "joy button <n> 0|1" set the virtual joystick (BOX86_VJOY=1),
++             * which the gameport reads through the configured mapping. */
++            int v = joystick_virtual_index();
++            int n = (int) strtol(xargv[2], NULL, 0);
++            int x = (int) strtol(xargv[3], NULL, 0);
++            if (v < 0)
++                fprintf(stderr, "joy: no virtual joystick (set BOX86_VJOY=1)\n");
++            else if (!strncasecmp(xargv[1], "axis", 4) && n >= 0 && n < MAX_JOY_AXES)
++                plat_joystick_state[v].a[n] = x < -32767 ? -32767 : x > 32767 ? 32767 : x;
++            else if (!strncasecmp(xargv[1], "button", 6) && n >= 0 && n < MAX_JOY_BUTTONS)
++                plat_joystick_state[v].b[n] = x != 0;
+         } else if (strncasecmp(xargv[0], "version", 7) == 0) {
+ #ifndef EMU_GIT_HASH
+ #    define EMU_GIT_HASH "0000000"

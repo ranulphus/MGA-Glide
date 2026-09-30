@@ -113,6 +113,20 @@ def golden():
     return out
 
 
+def joystick_config(kind):
+    """[Input devices] lines for --joystick: the virtual joystick (local patch
+    0105) is platform joystick 1 under Xvfb, which has no real ones. The
+    monitor's "joy axis N" drives the game port's axis N (bit N of port
+    0x201): 86Box's 4-axis sticks read the port's axes 2 and 3 from their
+    axes 3 and 2 (rudder, throttle), so those two are mapped crosswise."""
+    if kind == "none":
+        return ""
+    lines = "joystick_type = %s\njoystick_0_nr = 1\n" % kind
+    if kind.startswith("4axis"):
+        lines += "joystick_0_axis_2 = 3\njoystick_0_axis_3 = 2\n"
+    return lines
+
+
 def build_config(vm, a, serial, cimg, bootimg, extra_hdd):
     tpl = open(os.path.join(HERE, "86box.cfg.in")).read()
     subst = {
@@ -126,6 +140,10 @@ def build_config(vm, a, serial, cimg, bootimg, extra_hdd):
         "@GFXNAME@": CARDS[a.card][1],
         "@SNDCARD@": a.sound or "none",
         "@MOUSE@": a.mouse,
+        # The virtual joystick (local patch 0105) is platform joystick 1 under
+        # Xvfb, which has no real ones; 86Box adds a standalone game port at
+        # 0x201 when no sound card brings one. Axes and buttons map 1:1.
+        "@JOYSTICK@": joystick_config(a.joystick),
         "@SERIAL@": serial,
         "@CIMG@": cimg,
         "@BOOTIMG@": bootimg,
@@ -166,6 +184,8 @@ FATAL_RE = re.compile(r"(^|\s)(FATAL|fatal error|Fatal error)", re.M)
 
 
 def run(a):
+    if a.joystick == "none" and ":joy:" in a.keys:
+        a.joystick = "4axis_4button"
     out = os.path.abspath(a.out or os.path.join(ROOT, "out", a.name))
     shutil.rmtree(out, ignore_errors=True)
     vm = os.path.join(out, "vm")
@@ -179,7 +199,7 @@ def run(a):
         shutil.copyfile(os.path.join(gold, "boot.img"), bootimg)
         sh(["cp", "--sparse=always", os.path.join(gold, "c.img"), cimg])
         d = Disk(cimg, tmp)
-        for t in ("UTEXIT.COM", "SERSAY.COM", "WAITSEC.COM", "REBOOT.COM", "VMODE.COM"):
+        for t in ("UTEXIT.COM", "SERSAY.COM", "WAITSEC.COM", "REBOOT.COM", "VMODE.COM", "KEYWAIT.COM", "VECCHK.COM", "SBCHK.COM"):
             d.put(os.path.join(ROOT, "build/ow/dos", t), "/HX/" + t)
         d.put(os.path.join(WATCOM, "binw/dos4gw.exe"), "/HX/DOS4GW.EXE")
         if os.path.exists(CWSDPMI):
@@ -261,6 +281,17 @@ def run(a):
         xvfb, display = start_xvfb(errf)
         env = dict(os.environ, BOX86_MONITOR="1", HOME=vm, XDG_CONFIG_HOME=vm,
                    SDL_AUDIODRIVER="dummy", DISPLAY=display)
+        if a.joystick != "none":
+            env["BOX86_VJOY"] = "1"             # local patch 0105: the monitor's "joy" command
+        if a.wav:
+            # 86Box plays through OpenAL Soft: its wave backend writes what the
+            # guest's sound card produced. 86Box does not run in step with the
+            # wall clock, so the file shows the right sounds with gaps, not
+            # exact timing.
+            conf = os.path.join(vm, "alsoft.conf")
+            open(conf, "w").write("[general]\ndrivers = wave\nsample-type = int16\n[wave]\nfile = %s\n"
+                                  % os.path.join(out, "audio.wav"))
+            env.update(ALSOFT_CONF=conf, ALSOFT_DRIVERS="wave")
         t0 = time.time()
         p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=errf, stderr=errf, env=env)
         last_size, last_change, status, done_at = 0, time.time(), None, None
@@ -277,6 +308,9 @@ def run(a):
             parts = k.split(":")
             if parts[1] == "mouse":             # SECONDS:mouse:DX:DY[:BUTTONS]
                 segments[-1][2].append((float(parts[0]), "mouse %s\n" % " ".join(parts[2:5])))
+                continue
+            if parts[1] == "joy":               # SECONDS:joy:axis|button:N:VALUE
+                segments[-1][2].append((float(parts[0]), "joy %s\n" % " ".join(parts[2:5])))
                 continue
             mode = parts[2] if len(parts) > 2 else "tap"
             segments[-1][2].append((float(parts[0]), "key %s %s\n" % (mode, parts[1])))
@@ -445,8 +479,14 @@ def main():
     ap.add_argument("--file", action="append", default=[], help="SRC[=/DOS/PATH] extra files")
     ap.add_argument("--pre", action="append", default=[], help="extra RUN.BAT lines before the test")
     ap.add_argument("--keys", default="", help="comma list of SECONDS:SCANCODE[:down|up] after HX-BOOT, "
-                    "or SECONDS:mouse:DX:DY[:BUTTONS] (mickeys; buttons bit 0 left, 1 right, 2 middle; needs --mouse); "
+                    "or SECONDS:mouse:DX:DY[:BUTTONS] (mickeys; buttons bit 0 left, 1 right, 2 middle; needs --mouse), "
+                    "or SECONDS:joy:axis|button:N:VALUE (see --joystick); "
                     "an @TEXT item makes the SECONDS after it count from when TEXT appears on the serial line")
+    ap.add_argument("--joystick", default="none", help="86Box joystick type (e.g. 2axis_4button, 4axis_4button; "
+                    "default 4axis_4button when --keys has joy items), driven by the monitor's joy command "
+                    "(local patch 0105) through SECONDS:joy:axis:N:VALUE (-32767..32767) and SECONDS:joy:button:N:0|1")
+    ap.add_argument("--wav", action="store_true", help="record the sound card's output to OUT/audio.wav "
+                    "(OpenAL Soft's wave backend; use with --sound)")
     ap.add_argument("--mouse", default="none", help="86Box mouse (none, ps2, msserial); any but none also "
                     "loads CuteMouse (C:\\HX\\CTMOUSE.EXE) before the test")
     ap.add_argument("--shots", default="", help="comma list of SECONDS after HX-BOOT to screenshot")

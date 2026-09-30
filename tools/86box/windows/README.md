@@ -72,8 +72,9 @@ it needs are next to it, and the ROMs are in its `roms\` folder.
 
 ## What differs from the Linux build
 
-Patches 0101 and 0104 (`key` and `mouse` commands for the Unix SDL monitor
-console, which the test harness types into games and moves the mouse with)
+Patches 0101, 0104 and 0105 (`key`, `mouse` and `joy` commands for the Unix
+SDL monitor console, which the test harness types into games, moves the mouse
+and drives a virtual joystick with)
 are left out: Windows builds use the Qt user interface, which has no such
 console. Everything else is the same series, and
 the test harness itself (Loop A, the bench tools) stays on Linux.

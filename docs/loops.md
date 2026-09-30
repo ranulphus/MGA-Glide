@@ -32,6 +32,33 @@ command (local patch 0104, which also marks the mouse captured: 86Box's mice
 report nothing otherwise). `make loopa-selftest` checks it with
 `MOUSETST.EXE` (`tests/shim/mousetst.c`).
 
+`--joystick TYPE` gives the machine a joystick (86Box's `joystick_type`,
+e.g. `2axis_4button`; `4axis_4button` when `--keys` has joy items and no
+type is given): a virtual one (local patch 0105, `BOX86_VJOY=1`) that
+`SECONDS:joy:axis:N:VALUE` (-32767..32767) and `SECONDS:joy:button:N:0|1`
+items set through the monitor's `joy` command. Axis N is the game port's
+axis N (bit N of port 0x201; run.py maps the 4-axis types' rudder and
+throttle straight), and 86Box adds a standalone game port when no sound
+card brings one. `make loopa-selftest` checks it with `JOYTEST.EXE`
+(`tests/shim/joytest.c`).
+
+`--wav` records the sound card's output to `out/<name>/audio.wav`: 86Box
+plays through OpenAL Soft, whose wave backend (`ALSOFT_DRIVERS=wave`, 16-bit)
+writes the file. The wave backend keeps wall-clock time and 86Box does not,
+so a recording has the guest's sounds with silences between them;
+`tools/loopa/wavcheck.py FILE --tone HZ [--max-gap MS]` looks for tones in
+the loud stretches. `make loopa-selftest` plays a 440 Hz tone with
+`SBBEEP.EXE` (`tests/shim/sbbeep.c`, the SB DAC in direct mode) under
+`--sound sb16`.
+
+Two 16-bit helpers in `C:\HX` check that a program gave the machine back:
+`KEYWAIT <seconds>` drops keys already in the BIOS buffer, prints
+`HX-KEYWAIT ready`, then reports the next key read through INT 16h
+(`HX-KEY scan=.. ascii=..`, or `HX-KEY none`), which shows IRQ 1 is the
+BIOS's again; `VECCHK save|check` compares the real-mode vectors of IRQ 0,
+1, 5, 7 and 12 and the PIC masks with a saved copy (`HX-VECCHK ok`, or one
+`HX-VECCHK changed` line per difference).
+
 Statuses: `PASS`, `FAIL`, `TIMEOUT` (wall clock), `HANG` (serial silent for
 the idle time), `GUEST-EXC` (the program died and RUN.BAT carried on),
 `CRASH`, `EMU-FATAL` (86Box reported a fatal error).

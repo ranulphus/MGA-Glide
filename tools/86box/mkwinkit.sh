@@ -3,7 +3,7 @@
 #   dist/86box-mgaglide-windows-kit.zip
 # holding build-windows.sh, README.md, versions.env (the pins from
 # tools/setup/versions.mk), series.windows and the patches it names. The
-# series is the Linux one less the Unix-only SDL monitor patches (0101, 0104), which
+# series is the Linux one less the Unix-only SDL monitor patches (0101, 0104, 0105), which
 # the Windows (Qt) front end does not have. No ROMs or BIOSes are included:
 # build-windows.sh fetches them on the Windows machine.
 set -euo pipefail

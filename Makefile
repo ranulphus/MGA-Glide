@@ -116,21 +116,25 @@ DJ_SHIM := -Itests/shim -DHX_BUILD_ID='"$(BUILD_ID)"'
 build/djgpp/%.EXE: build/djgpp/libmgahal.a tests/shim/hx.c tests/shim/hx.h
 	@mkdir -p $(dir $@)
 	$(Q)echo "  DJLD    $@"
-	$(Q)$(DJCC) $(DJ_CFLAGS) $(DJ_SHIM) -o $@ $(DJ_SRC_$*) tests/shim/hx.c build/djgpp/libmgahal.a
+	$(Q)$(DJCC) $(DJ_CFLAGS) $(DJ_SHIM) -o $@ $(DJ_SRC_$*) tests/shim/hx.c build/djgpp/libmgahal.a -lm
 DJ_SRC_HELLO := tests/shim/hello.c
 DJ_SRC_PROBE := tests/hal/probe.c
 DJ_SRC_HOOKS := tests/hal/hooks.c
 DJ_SRC_SCALE := tests/hal/scale.c
 DJ_SRC_STACKPG := tests/shim/stackpg.c
 DJ_SRC_MOUSETST := tests/shim/mousetst.c
+DJ_SRC_JOYTEST := tests/shim/joytest.c
+DJ_SRC_SBBEEP := tests/shim/sbbeep.c
 build/djgpp/HOOKS.EXE: tests/hal/hooks.c
 build/djgpp/SCALE.EXE: tests/hal/scale.c
 build/djgpp/HELLO.EXE: tests/shim/hello.c
 build/djgpp/PROBE.EXE: tests/hal/probe.c
 build/djgpp/STACKPG.EXE: tests/shim/stackpg.c
 build/djgpp/MOUSETST.EXE: tests/shim/mousetst.c
+build/djgpp/JOYTEST.EXE: tests/shim/joytest.c
+build/djgpp/SBBEEP.EXE: tests/shim/sbbeep.c
 dostests-djgpp: build/djgpp/HELLO.EXE build/djgpp/PROBE.EXE build/djgpp/HOOKS.EXE build/djgpp/SCALE.EXE \
-                build/djgpp/STACKPG.EXE build/djgpp/MOUSETST.EXE
+                build/djgpp/STACKPG.EXE build/djgpp/MOUSETST.EXE build/djgpp/JOYTEST.EXE build/djgpp/SBBEEP.EXE
 .PHONY: dostests-djgpp
 
 # ---- Host trace replay (tools/hreplay) --------------------------------------
@@ -172,7 +176,8 @@ loopa: dostests
 	$(DEV) $(PYTHON) tools/loopa/run.py --name $(TEST) --exe build/ow/dos/$(shell echo $(TEST) | tr a-z A-Z).EXE \
 	  $(if $(ARGS),--args="$(ARGS)") $(if $(OVL),--ovl $(OVL))
 
-loopa-selftest: dostests runtime build/djgpp/STACKPG.EXE build/djgpp/MOUSETST.EXE
+loopa-selftest: dostests runtime build/djgpp/STACKPG.EXE build/djgpp/MOUSETST.EXE build/djgpp/JOYTEST.EXE \
+                build/djgpp/SBBEEP.EXE
 	@set -e; \
 	check() { $(DEV) $(PYTHON) tools/loopa/run.py --name selftest-$$1 --exe build/ow/dos/HELLO.EXE \
 	            --idle 25 --boot-grace 20 $${3:+--args=$$3} >/dev/null || true; \
@@ -196,7 +201,25 @@ loopa-selftest: dostests runtime build/djgpp/STACKPG.EXE build/djgpp/MOUSETST.EX
 	  --keys '@HX-TEST driver,1:mouse:40:-20:1,2:mouse:40:-20:0' --idle 40 --timeout 120 >/dev/null || true; \
 	got=$$(cat out/selftest-mouse/status); \
 	if [ "$$got" = PASS ]; then echo "  selftest mouse: PASS (ok)"; \
-	else echo "  selftest mouse: got $$got, want PASS (an 86Box without local patch 0104?)"; exit 1; fi
+	else echo "  selftest mouse: got $$got, want PASS (an 86Box without local patch 0104?)"; exit 1; fi; \
+	$(DEV) $(PYTHON) tools/loopa/run.py --name selftest-joy --exe build/djgpp/JOYTEST.EXE \
+	  --keys '@HX-TEST centre,1:joy:axis:0:-32767,2:joy:axis:0:32767,3:joy:axis:0:0,3:joy:axis:1:-32767,4:joy:axis:1:32767,5:joy:axis:1:0,5:joy:axis:2:-32767,6:joy:axis:2:32767,7:joy:axis:2:0,7:joy:axis:3:-32767,8:joy:axis:3:32767,9:joy:axis:3:0,10:joy:button:0:1,11:joy:button:1:1,12:joy:button:2:1,13:joy:button:3:1' --idle 40 --timeout 150 >/dev/null || true; \
+	got=$$(cat out/selftest-joy/status); \
+	if [ "$$got" = PASS ]; then echo "  selftest joy: PASS (ok)"; \
+	else echo "  selftest joy: got $$got, want PASS (an 86Box without local patch 0105?)"; exit 1; fi; \
+	$(DEV) $(PYTHON) tools/loopa/run.py --name selftest-wav --exe build/djgpp/SBBEEP.EXE --sound sb16 --wav \
+	  --pre "SET BLASTER=A220 I5 D1 H5 T6" --idle 40 --timeout 120 >/dev/null || true; \
+	got=$$(cat out/selftest-wav/status); \
+	if [ "$$got" = PASS ] && $(PYTHON) tools/loopa/wavcheck.py out/selftest-wav/audio.wav --tone 440 >/dev/null; \
+	then echo "  selftest wav: PASS, 440 Hz recorded (ok)"; \
+	else echo "  selftest wav: got $$got; see tools/loopa/wavcheck.py out/selftest-wav/audio.wav --tone 440"; exit 1; fi; \
+	$(DEV) $(PYTHON) tools/loopa/run.py --name selftest-keywait --cmd "SERSAY HX-START keywait" \
+	  --cmd "VECCHK save" --cmd "VECCHK check" --cmd "KEYWAIT 20" --cmd "SERSAY HX-DONE 0" \
+	  --keys '@HX-KEYWAIT ready,1:0x1c' --idle 40 --timeout 120 >/dev/null || true; \
+	if grep -q "HX-VECCHK ok" out/selftest-keywait/serial.log && \
+	   grep -q "HX-KEY scan=1c" out/selftest-keywait/serial.log; then \
+	  echo "  selftest keywait: VECCHK ok, KEYWAIT read the key (ok)"; \
+	else echo "  selftest keywait: expected HX-VECCHK ok and HX-KEY scan=1c"; exit 1; fi
 
 # Conformance suite (tools/conform/run.py). References come from a retail
 # OVL on the emulated Voodoo and are committed; checks run MGA-Glide.
