@@ -86,24 +86,26 @@ static void adjust(mga_svtx *a, mga_svtx *b, mga_svtx *c, const mga_texstate *t,
     v[0] = a; v[1] = b; v[2] = c;
     for (axis = 0; axis < 2; axis++) {
         int wrap = axis ? !t->clamp_v : !t->clamp_u;
-        double mn = 1e30, half = 0.5 / (double)(1 << (axis ? t->h_log2 : t->w_log2));
-        for (i = 0; i < 3; i++) {
-            double q = v[i]->q > 0 ? v[i]->q : 1e-9;
-            double u = (axis ? (map1 ? v[i]->t1 : v[i]->t) : (map1 ? v[i]->s1 : v[i]->s)) / q;
-            if (u < mn) mn = u;
+        double shift = 0, half = 0;
+        if (t->bilinear) {
+            half = 0.5 / (double)(1 << (axis ? t->h_log2 : t->w_log2));
+            shift -= half;
         }
-        if (t->bilinear)
-            mn -= half;
-        {
-            double shift = 0;
-            if (t->bilinear)
-                shift -= half;
-            if (wrap)
-                shift -= mga_floor(mn);     /* minimum into [0, 1): whole periods only */
+        if (wrap) {
+            /* The smallest coordinate (three divides) only matters here. */
+            double mn = 1e30;
             for (i = 0; i < 3; i++) {
-                float *p = axis ? (map1 ? &v[i]->t1 : &v[i]->t) : (map1 ? &v[i]->s1 : &v[i]->s);
-                *p += (float)(shift * v[i]->q);
+                double q = v[i]->q > 0 ? v[i]->q : 1e-9;
+                double u = (axis ? (map1 ? v[i]->t1 : v[i]->t) : (map1 ? v[i]->s1 : v[i]->s)) / q;
+                if (u < mn) mn = u;
             }
+            if (t->bilinear)
+                mn -= half;
+            shift -= mga_floor(mn);         /* minimum into [0, 1): whole periods only */
+        }
+        for (i = 0; i < 3; i++) {
+            float *p = axis ? (map1 ? &v[i]->t1 : &v[i]->t) : (map1 ? &v[i]->s1 : &v[i]->s);
+            *p += (float)(shift * v[i]->q);     /* also when shift is 0: a NaN q makes it NaN */
         }
     }
 }

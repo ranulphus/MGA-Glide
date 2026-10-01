@@ -24,21 +24,61 @@ static int64_t floordiv64(int64_t a, int64_t b)
     return q;
 }
 
-/* First covered row for an edge starting at Y (1/16 px): ceil((Y-8)/16). */
-static int32_t first_row(int32_t Y) { return (int32_t)floordiv64((int64_t)Y - 8 + 15, 16); }
+/* First covered row for an edge starting at Y (1/16 px): ceil((Y-8)/16),
+ * i.e. floor((Y + 7) / 16), an arithmetic shift while Y + 7 fits. */
+static int32_t first_row(int32_t Y)
+{
+    if (Y <= 0x7FFFFFF8)
+        return (Y + 7) >> 4;
+    return (int32_t)floordiv64((int64_t)Y - 8 + 15, 16);
+}
+
+/* floor(a / b) for b > 0, and *r = a - q * b in [0, b): for |a| < 2^52 and
+ * a quotient inside int32 (the edges' sizes) a double quotient, at most one
+ * off, corrected exactly in integers; otherwise the 64-bit division (a
+ * library call on the x87 compilers). */
+static int64_t floordiv_pos(int64_t a, int32_t b, int64_t *r)
+{
+    double qd = (double)a / (double)b;
+    if (a > -4503599627370496LL && a < 4503599627370496LL && qd > -2147483645.0 && qd < 2147483645.0) {
+        int32_t q = mga_ifloor(qd);
+        int64_t rem = a - (int64_t)q * b;
+        if (rem < 0) { q--; rem += b; }
+        else if (rem >= b) { q++; rem -= b; }
+        if (rem >= 0 && rem < b) {
+            *r = rem;
+            return q;
+        }
+    }
+    {
+        int64_t q = floordiv64(a, b);
+        *r = a - q * b;
+        return q;
+    }
+}
 
 /* An edge whose first covered column on row k (k = 0 at the trapezoid's
  * first row) is x_k = floor((N0 + S*k) / D), D > 0. The engine walks it
  * with: while (AR1 < 0) { AR1 += AR0; x += dir; } AR1 += AR2. */
-static void edge_from_line(int64_t N0, int64_t S, int64_t D, mga_edge *e)
+static void edge_set(int64_t x0, int64_t r0, int64_t S, int64_t D, mga_edge *e)
 {
-    int64_t x0 = floordiv64(N0, D);
-    int64_t r0 = N0 - x0 * D;                      /* 0 <= r0 < D */
     e->x = (int32_t)x0;
     e->neg = S < 0;
     e->ar_step = (int32_t)D;
     e->ar_dec = (int32_t)(S < 0 ? S : -S);
     e->ar_err = (int32_t)((S < 0 ? r0 : (D - 1 - r0)) + e->ar_dec);
+}
+
+static void edge_from_line(int64_t N0, int64_t S, int64_t D, mga_edge *e)
+{
+    int64_t x0, r0;
+    if (D > 0 && D <= 0x7FFFFFFF)
+        x0 = floordiv_pos(N0, (int32_t)D, &r0);
+    else {
+        x0 = floordiv64(N0, D);
+        r0 = N0 - x0 * D;                          /* 0 <= r0 < D */
+    }
+    edge_set(x0, r0, S, D, e);
 }
 
 /* Exact mode: column covered when its centre is inside (top-left rule). */
@@ -50,36 +90,93 @@ void setup_edge(int32_t Xa, int32_t Ya, int32_t Xb, int32_t Yb, int32_t ys, mga_
     edge_from_line(P - 8 * dY + 16 * dY - 1, 16 * dX, 16 * dY, e);
 }
 
+/* The Voodoo's 16.16 slope, truncated toward zero: (dX << 16) / dY with
+ * dY > 0, from a double estimate corrected in integers (as floordiv_pos). */
+static int64_t voodoo_slope(int32_t Xa, int32_t Ya, int32_t Xb, int32_t Yb)
+{
+    int64_t n = ((int64_t)Xb - Xa) << 16, dY = (int64_t)Yb - Ya;
+    if (dY > 0 && n > -4503599627370496LL && n < 4503599627370496LL) {
+        int64_t q = mga_itrunc64((double)n / (double)dY), rem = n - q * dY;
+        if (n >= 0) {
+            if (rem < 0) { q--; rem += dY; }
+            else if (rem >= dY) { q++; rem -= dY; }
+            if (rem >= 0 && rem < dY)
+                return q;
+        } else {
+            if (rem > 0) { q++; rem -= dY; }
+            else if (rem <= -dY) { q--; rem += dY; }
+            if (rem <= 0 && rem > -dY)
+                return q;
+        }
+    }
+    return n / dY;                                  /* truncates toward zero */
+}
+
+/* A Voodoo edge with its slope d known; x0 = floor(N0 / 65536) is a shift
+ * and prod >> 4 is floor(prod / 16) (arithmetic shifts on every target). */
+static void edge_voodoo(int32_t Xa, int32_t Ya, int64_t d, int32_t ys, mga_edge *e)
+{
+    int64_t c0 = (int64_t)16 * ys + 8 - Ya;
+    int64_t prod = d * c0;
+    int64_t N0 = ((int64_t)Xa << 12) + (prod >> 4) + 0x7000;
+    int64_t x0 = N0 >> 16;
+    edge_set(x0, N0 - x0 * 65536, d, 65536, e);
+}
+
 /* Voodoo mode: the Voodoo evaluates each edge in 16.16 fixed point with a
  * truncated slope and takes columns [floor(xl + 7/16), floor(xr + 7/16)),
  * sampling at x + 9/16. Matching it keeps shared edges identical to the
  * reference frames. */
 void setup_edge_voodoo(int32_t Xa, int32_t Ya, int32_t Xb, int32_t Yb, int32_t ys, mga_edge *e)
 {
-    int64_t d = (((int64_t)Xb - Xa) << 16) / ((int64_t)Yb - Ya);      /* truncates toward zero */
-    int64_t c0 = (int64_t)16 * ys + 8 - Ya;
-    int64_t prod = d * c0;
-    int64_t N0 = ((int64_t)Xa << 12) + (prod >= 0 ? prod >> 4 : -((-prod + 15) >> 4)) + 0x7000;
-    edge_from_line(N0, d, 65536, e);
+    edge_voodoo(Xa, Ya, voodoo_slope(Xa, Ya, Xb, Yb), ys, e);
 }
 
 /* Plane A(x, y) = A0 + dx*(x - x0) + dy*(y - y0) in pixel units. */
 typedef struct { double a0, dx, dy; } plane;
 
-static void make_plane(plane *p, const mga_svtx *v[3], double a0, double a1, double a2, double inv)
+/* The sorted triangle in pixels relative to v0, computed once for every
+ * plane (multiples of 1/16: exact). */
+typedef struct { double x0, y0, x1, y1, x2, y2, inv; } geom;
+
+static void make_plane(plane *p, const geom *g, double a0, double a1, double a2)
 {
-    double x0 = v[0]->X16 / 16.0, y0 = v[0]->Y16 / 16.0;
-    double x1 = v[1]->X16 / 16.0 - x0, y1 = v[1]->Y16 / 16.0 - y0;
-    double x2 = v[2]->X16 / 16.0 - x0, y2 = v[2]->Y16 / 16.0 - y0;
     double d1 = a1 - a0, d2 = a2 - a0;
     p->a0 = a0;
-    p->dx = (d1 * y2 - d2 * y1) * inv;
-    p->dy = (x1 * d2 - x2 * d1) * inv;
+    p->dx = (d1 * g->y2 - d2 * g->y1) * g->inv;
+    p->dy = (g->x1 * d2 - g->x2 * d1) * g->inv;
 }
 
-static double eval(const plane *p, const mga_svtx *v0, double px, double py)
+/* The plane at the pixel centre (x0 + ex, y0 + ey); ex and ey are exact. */
+static double eval(const plane *p, double ex, double ey)
 {
-    return p->a0 + p->dx * (px - v0->X16 / 16.0) + p->dy * (py - v0->Y16 / 16.0);
+    return p->a0 + p->dx * ex + p->dy * ey;
+}
+
+/* The texture prescale K = 2^k: the largest k in [-8, 15] with
+ * ms * 2^k < 2047 and mq * 2^k < 32767 (TMR6 12.20, TMR8 16.16), from exact
+ * thresholds (scaling by 2^k is exact, so the comparisons are those of
+ * multiplying ms and mq through, NaN and infinity included). */
+static int prescale(double ms, double mq, double *K)
+{
+    static double ts[24], tq[24], tk[24];
+    int k;
+    if (tk[0] == 0.0) {
+        for (k = -8; k <= 15; k++) {
+            double m = 1.0;
+            int j;
+            for (j = 0; j < (k < 0 ? -k : k); j++)
+                m *= 2.0;
+            tk[k + 8] = k < 0 ? 1.0 / m : m;
+            ts[k + 8] = 2047.0 / tk[k + 8];
+            tq[k + 8] = 32767.0 / tk[k + 8];
+        }
+    }
+    k = 15;
+    while (k > -8 && (ms >= ts[k + 8] || mq >= tq[k + 8]))
+        k--;
+    *K = tk[k + 8];
+    return k;
 }
 
 #ifdef MGA_PROF
@@ -104,6 +201,8 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
     int mid_right;
     double inv;
     plane pz, pr, pg, pb, pa, pf, ps, pt, pq, psr, psg, psb, ps1, pt1, pq1;
+    geom g;
+    int64_t d_long = 0;
     double K = 1.0;
     int k = 0, k1 = 0, map1_sizes = 1;
     int32_t y_top, y_mid, y_bot, part;
@@ -136,21 +235,25 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
         double x2 = (v[2]->X16 - v[0]->X16) / 16.0, y2 = (v[2]->Y16 - v[0]->Y16) / 16.0;
         inv = 1.0 / (x1 * y2 - x2 * y1);
     }
+    g.x0 = v[0]->X16 / 16.0; g.y0 = v[0]->Y16 / 16.0;
+    g.x1 = v[1]->X16 / 16.0 - g.x0; g.y1 = v[1]->Y16 / 16.0 - g.y0;
+    g.x2 = v[2]->X16 / 16.0 - g.x0; g.y2 = v[2]->Y16 / 16.0 - g.y0;
+    g.inv = inv;
     if (flags & MGA_S_Z)
-        make_plane(&pz, v, v[0]->z, v[1]->z, v[2]->z, inv);
+        make_plane(&pz, &g, v[0]->z, v[1]->z, v[2]->z);
     if (flags & MGA_S_COLOR) {
-        make_plane(&pr, v, v[0]->r, v[1]->r, v[2]->r, inv);
-        make_plane(&pg, v, v[0]->g, v[1]->g, v[2]->g, inv);
-        make_plane(&pb, v, v[0]->b, v[1]->b, v[2]->b, inv);
+        make_plane(&pr, &g, v[0]->r, v[1]->r, v[2]->r);
+        make_plane(&pg, &g, v[0]->g, v[1]->g, v[2]->g);
+        make_plane(&pb, &g, v[0]->b, v[1]->b, v[2]->b);
     }
     if (flags & MGA_S_ALPHA)
-        make_plane(&pa, v, v[0]->a, v[1]->a, v[2]->a, inv);
+        make_plane(&pa, &g, v[0]->a, v[1]->a, v[2]->a);
     if (flags & MGA_S_FOG)
-        make_plane(&pf, v, v[0]->fog, v[1]->fog, v[2]->fog, inv);
+        make_plane(&pf, &g, v[0]->fog, v[1]->fog, v[2]->fog);
     if (flags & MGA_S_SPEC) {
-        make_plane(&psr, v, v[0]->sr, v[1]->sr, v[2]->sr, inv);
-        make_plane(&psg, v, v[0]->sg, v[1]->sg, v[2]->sg, inv);
-        make_plane(&psb, v, v[0]->sb, v[1]->sb, v[2]->sb, inv);
+        make_plane(&psr, &g, v[0]->sr, v[1]->sr, v[2]->sr);
+        make_plane(&psg, &g, v[0]->sg, v[1]->sg, v[2]->sg);
+        make_plane(&psb, &g, v[0]->sb, v[1]->sb, v[2]->sb);
     }
     if (flags & MGA_S_TEX) {
         /* Prescale K = 2^k keeps the most bits through the engine's
@@ -164,13 +267,10 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
             if (at > ms) ms = at;
             if (v[i]->q > mq) mq = v[i]->q;
         }
-        k = 15;
-        while (k > -8 && ((ms * (double)(1 << (k + 8)) / 256.0) >= 2047.0 || (mq * (double)(1 << (k + 8)) / 256.0) >= 32767.0))
-            k--;
-        K = (double)(1 << (k + 8)) / 256.0;
-        make_plane(&ps, v, v[0]->s * K, v[1]->s * K, v[2]->s * K, inv);
-        make_plane(&pt, v, v[0]->t * K, v[1]->t * K, v[2]->t * K, inv);
-        make_plane(&pq, v, v[0]->q * K, v[1]->q * K, v[2]->q * K, inv);
+        k = prescale(ms, mq, &K);
+        make_plane(&ps, &g, v[0]->s * K, v[1]->s * K, v[2]->s * K);
+        make_plane(&pt, &g, v[0]->t * K, v[1]->t * K, v[2]->t * K);
+        make_plane(&pq, &g, v[0]->q * K, v[1]->q * K, v[2]->q * K);
     }
     if (flags & MGA_S_TEX2) {
         /* Map 1 (G400) gets its own prescale: its coordinates can span far
@@ -183,13 +283,10 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
             if (at > ms) ms = at;
             if (v[i]->q > mq) mq = v[i]->q;
         }
-        k1 = 15;
-        while (k1 > -8 && ((ms * (double)(1 << (k1 + 8)) / 256.0) >= 2047.0 || (mq * (double)(1 << (k1 + 8)) / 256.0) >= 32767.0))
-            k1--;
-        K1 = (double)(1 << (k1 + 8)) / 256.0;
-        make_plane(&ps1, v, v[0]->s1 * K1, v[1]->s1 * K1, v[2]->s1 * K1, inv);
-        make_plane(&pt1, v, v[0]->t1 * K1, v[1]->t1 * K1, v[2]->t1 * K1, inv);
-        make_plane(&pq1, v, v[0]->q * K1, v[1]->q * K1, v[2]->q * K1, inv);
+        k1 = prescale(ms, mq, &K1);
+        make_plane(&ps1, &g, v[0]->s1 * K1, v[1]->s1 * K1, v[2]->s1 * K1);
+        make_plane(&pt1, &g, v[0]->t1 * K1, v[1]->t1 * K1, v[2]->t1 * K1);
+        make_plane(&pq1, &g, v[0]->q * K1, v[1]->q * K1, v[2]->q * K1);
     }
 
     /* Per-triangle increments. */
@@ -260,18 +357,20 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
     y_top = first_row(v[0]->Y16);
     y_mid = first_row(v[1]->Y16);
     y_bot = first_row(v[2]->Y16);
+    if (flags & MGA_S_VOODOO_EDGES)
+        d_long = voodoo_slope(v[0]->X16, v[0]->Y16, v[2]->X16, v[2]->Y16);   /* both trapezoids' long edge */
 
     for (part = 0; part < 2; part++) {
         int32_t ys = part ? y_mid : y_top, ye = part ? y_bot : y_mid;
         const mga_svtx *sa = part ? v[1] : v[0], *sb = part ? v[2] : v[1];
         mga_edge el, er, lng, sht;
-        double px, py;
+        double ex, ey;
         if (ys < ctx->clip_y0) ys = ctx->clip_y0;
         if (ye > ctx->clip_y1) ye = ctx->clip_y1;
         if (ye <= ys)
             continue;
         if (flags & MGA_S_VOODOO_EDGES) {
-            setup_edge_voodoo(v[0]->X16, v[0]->Y16, v[2]->X16, v[2]->Y16, ys, &lng);
+            edge_voodoo(v[0]->X16, v[0]->Y16, d_long, ys, &lng);
             setup_edge_voodoo(sa->X16, sa->Y16, sb->X16, sb->Y16, ys, &sht);
         } else {
             setup_edge(v[0]->X16, v[0]->Y16, v[2]->X16, v[2]->Y16, ys, &lng);
@@ -279,8 +378,8 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
         }
         if (mid_right) { el = lng; er = sht; } else { el = sht; er = lng; }
         setup_stats.traps++;
-        px = el.x + 0.5;
-        py = ys + 0.5;
+        ex = (el.x + 0.5) - g.x0;          /* exact: multiples of 1/16 */
+        ey = (ys + 0.5) - g.y0;
         fifo_reserve(8);
         MGA_WR32(MGAREG_AR0, (uint32_t)el.ar_step);
         MGA_WR32(MGAREG_AR1, (uint32_t)el.ar_err);
@@ -291,7 +390,7 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
         MGA_WR32(MGAREG_SGN, (el.neg ? SGN_SDXL : 0) | (er.neg ? SGN_SDXR : 0));
         MGA_WR32(MGAREG_FXBNDRY, ((uint32_t)(er.x & 0xFFFF) << 16) | (uint32_t)(el.x & 0xFFFF));
         if (flags & MGA_S_Z) {
-            double z = eval(&pz, v[0], px, py);
+            double z = eval(&pz, ex, ey);
             if (flags & MGA_S_Z32) {
                 uint64_t zs = z32_start(z);
                 fifo_reserve(2);
@@ -304,9 +403,9 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
         }
         fifo_reserve(3);
         if (flags & MGA_S_COLOR) {
-            MGA_WR32(MGAREG_DR4, col_start(eval(&pr, v[0], px, py)));
-            MGA_WR32(MGAREG_DR8, col_start(eval(&pg, v[0], px, py)));
-            MGA_WR32(MGAREG_DR12, col_start(eval(&pb, v[0], px, py)));
+            MGA_WR32(MGAREG_DR4, col_start(eval(&pr, ex, ey)));
+            MGA_WR32(MGAREG_DR8, col_start(eval(&pg, ex, ey)));
+            MGA_WR32(MGAREG_DR12, col_start(eval(&pb, ex, ey)));
         } else {
             MGA_WR32(MGAREG_DR4, col_start(v[0]->r));
             MGA_WR32(MGAREG_DR8, col_start(v[0]->g));
@@ -314,23 +413,23 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
         }
         if (flags & MGA_S_ALPHA) {
             fifo_reserve(1);
-            MGA_WR32(MGAREG_ALPHASTART, col_start(eval(&pa, v[0], px, py)));
+            MGA_WR32(MGAREG_ALPHASTART, col_start(eval(&pa, ex, ey)));
         }
         if (flags & MGA_S_FOG) {
             fifo_reserve(1);
-            MGA_WR32(MGAREG_FOGSTART, col_start(eval(&pf, v[0], px, py)));
+            MGA_WR32(MGAREG_FOGSTART, col_start(eval(&pf, ex, ey)));
         }
         if (flags & MGA_S_SPEC) {
             fifo_reserve(3);
-            MGA_WR32(MGAREG_SPECRSTART, col_start(eval(&psr, v[0], px, py)));
-            MGA_WR32(MGAREG_SPECGSTART, col_start(eval(&psg, v[0], px, py)));
-            MGA_WR32(MGAREG_SPECBSTART, col_start(eval(&psb, v[0], px, py)));
+            MGA_WR32(MGAREG_SPECRSTART, col_start(eval(&psr, ex, ey)));
+            MGA_WR32(MGAREG_SPECGSTART, col_start(eval(&psg, ex, ey)));
+            MGA_WR32(MGAREG_SPECBSTART, col_start(eval(&psb, ex, ey)));
         }
         if (flags & MGA_S_TEX) {
             fifo_reserve(3);
-            MGA_WR32(MGAREG_TMR(6), (uint32_t)fx(eval(&ps, v[0], px, py), 1048576.0));
-            MGA_WR32(MGAREG_TMR(7), (uint32_t)fx(eval(&pt, v[0], px, py), 1048576.0));
-            MGA_WR32(MGAREG_TMR(8), (uint32_t)fx(eval(&pq, v[0], px, py), 65536.0));
+            MGA_WR32(MGAREG_TMR(6), (uint32_t)fx(eval(&ps, ex, ey), 1048576.0));
+            MGA_WR32(MGAREG_TMR(7), (uint32_t)fx(eval(&pt, ex, ey), 1048576.0));
+            MGA_WR32(MGAREG_TMR(8), (uint32_t)fx(eval(&pq, ex, ey), 65536.0));
         }
         if (flags & MGA_S_TEX2) {
             /* The G400's second programming step (specification §4.5.5.5):
@@ -353,9 +452,9 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
                 map1_sizes = 0;
             }
             fifo_reserve(4);
-            MGA_WR32(MGAREG_TMR(6), (uint32_t)fx(eval(&ps1, v[0], px, py), 1048576.0));
-            MGA_WR32(MGAREG_TMR(7), (uint32_t)fx(eval(&pt1, v[0], px, py), 1048576.0));
-            MGA_WR32(MGAREG_TMR(8), (uint32_t)fx(eval(&pq1, v[0], px, py), 65536.0));
+            MGA_WR32(MGAREG_TMR(6), (uint32_t)fx(eval(&ps1, ex, ey), 1048576.0));
+            MGA_WR32(MGAREG_TMR(7), (uint32_t)fx(eval(&pt1, ex, ey), 1048576.0));
+            MGA_WR32(MGAREG_TMR(8), (uint32_t)fx(eval(&pq1, ex, ey), 65536.0));
             MGA_WR32(MGAREG_TEXCTL2, ctx->texctl2_1);   /* map 1 only; broadcast from the next write */
         }
         fifo_reserve(1);
