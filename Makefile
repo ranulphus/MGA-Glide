@@ -218,7 +218,7 @@ loopa-cfgcheck:
 
 # The harness's machine options: 486 profiles, the VBE card, and more
 # (tools/loopa/selftest_ext.py; CHECKS="486 vbe" runs some).
-loopa-selftest-ext: dostests build/djgpp/STACKPG.EXE
+loopa-selftest-ext: dostests build/djgpp/STACKPG.EXE v86test
 	$(DEV) $(PYTHON) tools/loopa/selftest_ext.py $(CHECKS)
 
 # make loopa TEST=hello [ARGS="--frames 10"] [OVL=build/ow/GLIDE2X.OVL]

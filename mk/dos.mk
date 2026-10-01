@@ -63,3 +63,25 @@ $(eval $(call dos_com,XMSINFO,xmsinfo))
 dostools: $(DOS_TOOLS:%=build/ow/dos/%.COM)
 dostests: $(DOS_EXES) dostools
 .PHONY: dostools dostests
+
+# V86TEST, the CPU self-test (tests/cpu): a 16-bit loader that enters
+# protected mode with paging, and a 32-bit monitor (host gcc) linked at 4 MB.
+V86PM_CFLAGS := -m32 -march=i486 -ffreestanding -fno-pic -fno-pie -fno-stack-protector \
+                -fno-asynchronous-unwind-tables -fno-delete-null-pointer-checks -mgeneral-regs-only \
+                -O2 -Wall -Wextra -Werror -nostdinc -Itests/cpu
+V86PM_SRCS := tests/cpu/pm_entry.S tests/cpu/v86snip.S tests/cpu/pm_main.c
+build/cpu/V86PM.BIN: $(V86PM_SRCS) tests/cpu/pm.ld tests/cpu/v86pm.h
+	@mkdir -p build/cpu
+	$(Q)echo "  CC32    $@"
+	$(Q)$(HOST_CC) $(V86PM_CFLAGS) -nostdlib -no-pie -Wl,-T,tests/cpu/pm.ld -Wl,--build-id=none -Wl,--no-warn-rwx-segments \
+	  -o build/cpu/v86pm.elf $(V86PM_SRCS)
+	$(Q)objcopy -O binary build/cpu/v86pm.elf $@
+build/ow/dos/V86TEST.EXE: tests/cpu/v86test.c tests/cpu/v86sw.asm tests/cpu/v86pm.h
+	@mkdir -p build/ow/dos/obj16
+	$(Q)echo "  WCC16   $<"
+	$(Q)$(OWENV) $(OWBIN)/wcc -bt=dos -ms -0 -os -zq -we -itests/cpu -dHX_BUILD_ID="\"$(BUILD_ID)\"" \
+	  -fo=build/ow/dos/obj16/v86test.obj tests/cpu/v86test.c
+	$(Q)$(OWENV) $(OWBIN)/wasm -q -fo=build/ow/dos/obj16/v86sw.obj tests/cpu/v86sw.asm
+	$(Q)$(WLINK) system dos option quiet name $@ file build/ow/dos/obj16/v86test.obj,build/ow/dos/obj16/v86sw.obj
+v86test: build/ow/dos/V86TEST.EXE build/cpu/V86PM.BIN
+.PHONY: v86test

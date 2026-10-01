@@ -11,6 +11,9 @@ Each check runs one short job through run.py and looks at its result:
           echoes it back
   himemx  --boot-cfg himemx: XMS 3.0 with DOS in the HMA (XMSINFO), then
           HELLO (DOS/4GW) and STACKPG (DJGPP) on top of it
+  cpu     V86TEST on all three profiles: every case passes or is a known
+          86Box deviation (tests/cpu/known-86box.txt), and CR4 has the bits
+          the profile's CPU has
 
 Runs inside the dev container (tools/dev). Arguments pick checks; the
 default is all of them. Exit status 1 if any check fails.
@@ -95,7 +98,48 @@ def check_himemx():
     return report("himemx-stackpg", st == "PASS", "STACKPG %s" % st) and ok
 
 
-CHECKS = {"486": check_486, "vbe": check_vbe, "net": check_net, "com2": check_com2, "himemx": check_himemx}
+# CR4 as V86TEST's case A reports it, per profile.
+CPU_CR4 = {"bf6": "bits=vme,pvi,tsd,de,pse,mce,pge,pce,osfxsr,", "486dx4": "bits=vme,pvi,", "486dx2": "cr4=absent"}
+
+
+def known_86box():
+    known = {}
+    for line in open(os.path.join(ROOT, "tests/cpu/known-86box.txt")):
+        if line.strip() and not line.startswith("#"):
+            name, patch = line.split()[:2]
+            known[name] = patch
+    return known
+
+
+def check_cpu():
+    ok = True
+    known = known_86box()
+    for m in ("bf6", "486dx2", "486dx4"):
+        st, serial = job("selftest-cpu-%s" % m, "--machine", m, "--exe", "build/ow/dos/V86TEST.EXE",
+                         "--file", "build/cpu/V86PM.BIN=/HX/V86PM.BIN")
+        tests = {}
+        for l in serial.split("\n"):
+            if l.startswith("HX-TEST cpu-"):
+                parts = l.split(" ", 3)
+                tests[parts[1][4:]] = (parts[2], parts[3] if len(parts) > 3 else "")
+        failed = sorted(n for n, (r, _) in tests.items() if r == "FAIL")
+        unknown = [n for n in failed if n not in known]
+        fixed = sorted(n for n in known if n in tests and tests[n][0] == "PASS")
+        cr4 = tests.get("A-features", ("?", ""))[1]
+        good = "HX-DONE" in serial and "monitor" in tests and not unknown and CPU_CR4[m] in cr4
+        detail = "%d cases, %d known 86Box deviations" % (len(tests), len(failed) - len(unknown))
+        if unknown:
+            detail += ", unexpected failures: " + " ".join(unknown)
+        if fixed:
+            detail += ", listed but now passing: " + " ".join(fixed)
+        if CPU_CR4[m] not in cr4:
+            detail += ", CR4 %r (want %r)" % (cr4, CPU_CR4[m])
+        ok &= report("cpu-%s" % m, good, detail)
+    return ok
+
+
+CHECKS = {"486": check_486, "vbe": check_vbe, "net": check_net, "com2": check_com2, "himemx": check_himemx,
+          "cpu": check_cpu}
 
 
 def main():
