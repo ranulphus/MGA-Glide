@@ -36,17 +36,24 @@
 mga_chip mga;
 volatile uint8_t *mga_mmio, *mga_fb;
 int mga_fifo_free;                  /* stays 0: every reservation reaches fifo_reserve */
-static long credit, unpaced, oversize, writes;
+static long credit, unpaced, oversize, writes, reads;
+static int model_free;              /* fifo.c's credit, against a FIFO that is always empty (as in 86Box) */
 void fifo_reserve(int n)
 {
     if (n > mga.fifo_depth)
         oversize++;
     credit += n;
+    if (model_free < n) {           /* fifo.c would read FIFOSTATUS: count it */
+        reads++;
+        model_free = mga.fifo_depth;
+    }
+    model_free -= n;
 }
 void fifo_reset(void)
 {
     if (credit < mga.fifo_depth)    /* engine_sync: the FIFO is empty */
         credit = mga.fifo_depth;
+    model_free = 0;
 }
 uint32_t sys_time_us(void) { static uint32_t t; return t += 10; }
 void sys_delay_us(uint32_t us) { (void)us; }
@@ -342,7 +349,8 @@ static void scenario(const char *name, mga_family fam, int voodoo, int extreme, 
     m1_tc2 = m1_tw = m1_th = 0;
     run_hash = 0xCBF29CE484222325ull;
     draws = 0;
-    credit = unpaced = oversize = writes = 0;
+    credit = unpaced = oversize = writes = reads = 0;
+    model_free = 0;
     dumping = dump && !strcmp(dump, name);
     seed = 0x9E3779B9u ^ (uint32_t)(fam * 7919 + voodoo * 104729 + extreme * 1299709 + fans * 15485863);
     engine_init(1024, 16);
@@ -407,7 +415,7 @@ static void scenario(const char *name, mga_family fam, int voodoo, int extreme, 
         fprintf(stderr, "setupgold: %s: %ld writes without a reserved FIFO slot, %ld reservations beyond %d\n", name,
                 unpaced, oversize, mga.fifo_depth);
     CHECK(unpaced == 0 && oversize == 0);
-    printf("setupgold: %-16s %5u draws, %6ld register writes\n", name, draws, writes);
+    printf("setupgold: %-16s %5u draws, %6ld register writes, %6ld FIFOSTATUS reads\n", name, draws, writes, reads);
     if (out)
         fprintf(out, "%s %u %016llx\n", name, draws, (unsigned long long)run_hash);
     else {

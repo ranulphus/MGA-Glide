@@ -233,6 +233,11 @@ static int prescale(double ms, double mq, double *K)
     return k;
 }
 
+/* Each register write takes its FIFO slot as it goes (fifo_need is inline):
+ * a FIFOSTATUS read happens only when the slots the last one found free
+ * are used up, never because a group did not fit what was left. */
+#define WR(reg, val) do { fifo_need(1); MGA_WR32((reg), (val)); } while (0)
+
 #ifdef MGA_PROF
 /* The setup in three stages (planes, increments, trapezoids), returning to
  * the caller's stage. */
@@ -349,7 +354,7 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
     PROF_SWITCH(PROF_SINC);
     {
         uint32_t zi[4], ci[6], ai[2], fi[2], si[6], wh[2], tm[6];
-        int zn = 0, w_dwg, w_z = 0, w_c, w_a = 0, w_f = 0, w_s = 0, w_wh = 0, w_tm = 0, n;
+        int zn = 0, w_dwg, w_z = 0, w_c, w_a = 0, w_f = 0, w_s = 0, w_wh = 0, w_tm = 0;
         w_dwg = !(sh.valid & SH_DWG) || sh.dwgctl != ctx->dwgctl || (ctx->dwgctl & DWG_WRITE_TIME);
         if (flags & MGA_S_Z) {
             if (flags & MGA_S_Z32) {
@@ -409,80 +414,71 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
             w_tm = tex_changes(SH_TM0, SH_TM1, sh.tm[0], sh.tm[1], tm, 6);
         }
 
-        n = w_dwg + (w_z ? zn : 0) + (w_c ? 6 : 0);
-        if (n)
-            fifo_need(n);
         if (w_dwg) {
-            MGA_WR32(MGAREG_DWGCTL, ctx->dwgctl);
+            WR(MGAREG_DWGCTL, ctx->dwgctl);
             sh.dwgctl = ctx->dwgctl;
             sh.valid |= SH_DWG;
         }
         if (w_z) {
             if (zn == 4) {
-                MGA_WR32(MGAREG_DR2_Z32LSB, zi[0]);
-                MGA_WR32(MGAREG_DR2_Z32MSB, zi[1]);
-                MGA_WR32(MGAREG_DR3_Z32LSB, zi[2]);
-                MGA_WR32(MGAREG_DR3_Z32MSB, zi[3]);
+                WR(MGAREG_DR2_Z32LSB, zi[0]);
+                WR(MGAREG_DR2_Z32MSB, zi[1]);
+                WR(MGAREG_DR3_Z32LSB, zi[2]);
+                WR(MGAREG_DR3_Z32MSB, zi[3]);
             } else {
-                MGA_WR32(MGAREG_DR2, zi[0]);
-                MGA_WR32(MGAREG_DR3, zi[1]);
+                WR(MGAREG_DR2, zi[0]);
+                WR(MGAREG_DR3, zi[1]);
             }
             keep(sh.z, zi, zn);
             sh.zn = zn;
             sh.valid |= SH_Z;
         }
         if (w_c) {
-            MGA_WR32(MGAREG_DR6, ci[0]);
-            MGA_WR32(MGAREG_DR7, ci[1]);
-            MGA_WR32(MGAREG_DR10, ci[2]);
-            MGA_WR32(MGAREG_DR11, ci[3]);
-            MGA_WR32(MGAREG_DR14, ci[4]);
-            MGA_WR32(MGAREG_DR15, ci[5]);
+            WR(MGAREG_DR6, ci[0]);
+            WR(MGAREG_DR7, ci[1]);
+            WR(MGAREG_DR10, ci[2]);
+            WR(MGAREG_DR11, ci[3]);
+            WR(MGAREG_DR14, ci[4]);
+            WR(MGAREG_DR15, ci[5]);
             keep(sh.col, ci, 6);
             sh.valid |= SH_COL;
         }
-        n = (w_a ? 2 : 0) + (w_f ? 2 : 0) + (w_s ? 6 : 0);
-        if (n)
-            fifo_need(n);
         if (w_a) {
-            MGA_WR32(MGAREG_ALPHAXINC, ai[0]);
-            MGA_WR32(MGAREG_ALPHAYINC, ai[1]);
+            WR(MGAREG_ALPHAXINC, ai[0]);
+            WR(MGAREG_ALPHAYINC, ai[1]);
             keep(sh.alpha, ai, 2);
             sh.valid |= SH_ALPHA;
         }
         if (w_f) {
-            MGA_WR32(MGAREG_FOGXINC, fi[0]);
-            MGA_WR32(MGAREG_FOGYINC, fi[1]);
+            WR(MGAREG_FOGXINC, fi[0]);
+            WR(MGAREG_FOGYINC, fi[1]);
             keep(sh.fog, fi, 2);
             sh.valid |= SH_FOG;
         }
         if (w_s) {
-            MGA_WR32(MGAREG_SPECRXINC, si[0]);
-            MGA_WR32(MGAREG_SPECRYINC, si[1]);
-            MGA_WR32(MGAREG_SPECGXINC, si[2]);
-            MGA_WR32(MGAREG_SPECGYINC, si[3]);
-            MGA_WR32(MGAREG_SPECBXINC, si[4]);
-            MGA_WR32(MGAREG_SPECBYINC, si[5]);
+            WR(MGAREG_SPECRXINC, si[0]);
+            WR(MGAREG_SPECRYINC, si[1]);
+            WR(MGAREG_SPECGXINC, si[2]);
+            WR(MGAREG_SPECGYINC, si[3]);
+            WR(MGAREG_SPECBXINC, si[4]);
+            WR(MGAREG_SPECBYINC, si[5]);
             keep(sh.spec, si, 6);
             sh.valid |= SH_SPEC;
         }
-        n = (w_wh ? 2 : 0) + (w_tm ? 6 : 0);
-        if (n)
-            fifo_need(n);
         if (w_wh) {                     /* tmap0dis is clear here: both maps */
-            MGA_WR32(MGAREG_TEXWIDTH, wh[0]);
-            MGA_WR32(MGAREG_TEXHEIGHT, wh[1]);
+            WR(MGAREG_TEXWIDTH, wh[0]);
+            WR(MGAREG_TEXHEIGHT, wh[1]);
             keep(sh.wh[0], wh, 2);
             keep(sh.wh[1], wh, 2);
             sh.valid |= SH_WH0 | SH_WH1;
         }
         if (w_tm) {
-            MGA_WR32(MGAREG_TMR(0), tm[0]);
-            MGA_WR32(MGAREG_TMR(1), tm[1]);
-            MGA_WR32(MGAREG_TMR(2), tm[2]);
-            MGA_WR32(MGAREG_TMR(3), tm[3]);
-            MGA_WR32(MGAREG_TMR(4), tm[4]);
-            MGA_WR32(MGAREG_TMR(5), tm[5]);
+            WR(MGAREG_TMR(0), tm[0]);
+            WR(MGAREG_TMR(1), tm[1]);
+            WR(MGAREG_TMR(2), tm[2]);
+            WR(MGAREG_TMR(3), tm[3]);
+            WR(MGAREG_TMR(4), tm[4]);
+            WR(MGAREG_TMR(5), tm[5]);
             keep(sh.tm[0], tm, 6);
             keep(sh.tm[1], tm, 6);
             sh.valid |= SH_TM0 | SH_TM1;
@@ -516,56 +512,48 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
         setup_stats.traps++;
         ex = (el.x + 0.5) - g.x0;          /* exact: multiples of 1/16 */
         ey = (ys + 0.5) - g.y0;
-        fifo_need(8);
-        MGA_WR32(MGAREG_AR0, (uint32_t)el.ar_step);
-        MGA_WR32(MGAREG_AR1, (uint32_t)el.ar_err);
-        MGA_WR32(MGAREG_AR2, (uint32_t)el.ar_dec);
-        MGA_WR32(MGAREG_AR4, (uint32_t)er.ar_err);
-        MGA_WR32(MGAREG_AR5, (uint32_t)er.ar_dec);
-        MGA_WR32(MGAREG_AR6, (uint32_t)er.ar_step);
-        MGA_WR32(MGAREG_SGN, (el.neg ? SGN_SDXL : 0) | (er.neg ? SGN_SDXR : 0));
-        MGA_WR32(MGAREG_FXBNDRY, ((uint32_t)(er.x & 0xFFFF) << 16) | (uint32_t)(el.x & 0xFFFF));
+        WR(MGAREG_AR0, (uint32_t)el.ar_step);
+        WR(MGAREG_AR1, (uint32_t)el.ar_err);
+        WR(MGAREG_AR2, (uint32_t)el.ar_dec);
+        WR(MGAREG_AR4, (uint32_t)er.ar_err);
+        WR(MGAREG_AR5, (uint32_t)er.ar_dec);
+        WR(MGAREG_AR6, (uint32_t)er.ar_step);
+        WR(MGAREG_SGN, (el.neg ? SGN_SDXL : 0) | (er.neg ? SGN_SDXR : 0));
+        WR(MGAREG_FXBNDRY, ((uint32_t)(er.x & 0xFFFF) << 16) | (uint32_t)(el.x & 0xFFFF));
         if (flags & MGA_S_Z) {
             double z = eval(&pz, ex, ey);
             if (flags & MGA_S_Z32) {
                 uint64_t zs = z32_start(z);
-                fifo_need(2);
-                MGA_WR32(MGAREG_DR0_Z32LSB, (uint32_t)zs);
-                MGA_WR32(MGAREG_DR0_Z32MSB, (uint32_t)(zs >> 32) & 0xFFFF);
+                WR(MGAREG_DR0_Z32LSB, (uint32_t)zs);
+                WR(MGAREG_DR0_Z32MSB, (uint32_t)(zs >> 32) & 0xFFFF);
             } else {
-                fifo_need(1);
-                MGA_WR32(MGAREG_DR0, z16_start(z));
+                WR(MGAREG_DR0, z16_start(z));
             }
         }
-        fifo_need(3);
         if (flags & MGA_S_COLOR) {
-            MGA_WR32(MGAREG_DR4, col_start(eval(&pr, ex, ey)));
-            MGA_WR32(MGAREG_DR8, col_start(eval(&pg, ex, ey)));
-            MGA_WR32(MGAREG_DR12, col_start(eval(&pb, ex, ey)));
+            WR(MGAREG_DR4, col_start(eval(&pr, ex, ey)));
+            WR(MGAREG_DR8, col_start(eval(&pg, ex, ey)));
+            WR(MGAREG_DR12, col_start(eval(&pb, ex, ey)));
         } else {
-            MGA_WR32(MGAREG_DR4, col_start(v[0]->r));
-            MGA_WR32(MGAREG_DR8, col_start(v[0]->g));
-            MGA_WR32(MGAREG_DR12, col_start(v[0]->b));
+            WR(MGAREG_DR4, col_start(v[0]->r));
+            WR(MGAREG_DR8, col_start(v[0]->g));
+            WR(MGAREG_DR12, col_start(v[0]->b));
         }
         if (flags & MGA_S_ALPHA) {
-            fifo_need(1);
-            MGA_WR32(MGAREG_ALPHASTART, col_start(eval(&pa, ex, ey)));
+            WR(MGAREG_ALPHASTART, col_start(eval(&pa, ex, ey)));
         }
         if (flags & MGA_S_FOG) {
-            fifo_need(1);
-            MGA_WR32(MGAREG_FOGSTART, col_start(eval(&pf, ex, ey)));
+            WR(MGAREG_FOGSTART, col_start(eval(&pf, ex, ey)));
         }
         if (flags & MGA_S_SPEC) {
-            fifo_need(3);
-            MGA_WR32(MGAREG_SPECRSTART, col_start(eval(&psr, ex, ey)));
-            MGA_WR32(MGAREG_SPECGSTART, col_start(eval(&psg, ex, ey)));
-            MGA_WR32(MGAREG_SPECBSTART, col_start(eval(&psb, ex, ey)));
+            WR(MGAREG_SPECRSTART, col_start(eval(&psr, ex, ey)));
+            WR(MGAREG_SPECGSTART, col_start(eval(&psg, ex, ey)));
+            WR(MGAREG_SPECBSTART, col_start(eval(&psb, ex, ey)));
         }
         if (flags & MGA_S_TEX) {
-            fifo_need(3);
-            MGA_WR32(MGAREG_TMR(6), (uint32_t)fx(eval(&ps, ex, ey), 1048576.0));
-            MGA_WR32(MGAREG_TMR(7), (uint32_t)fx(eval(&pt, ex, ey), 1048576.0));
-            MGA_WR32(MGAREG_TMR(8), (uint32_t)fx(eval(&pq, ex, ey), 65536.0));
+            WR(MGAREG_TMR(6), (uint32_t)fx(eval(&ps, ex, ey), 1048576.0));
+            WR(MGAREG_TMR(7), (uint32_t)fx(eval(&pt, ex, ey), 1048576.0));
+            WR(MGAREG_TMR(8), (uint32_t)fx(eval(&pq, ex, ey), 65536.0));
         }
         if (flags & MGA_S_TEX2) {
             /* The G400's second programming step (specification §4.5.5.5):
@@ -573,11 +561,10 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
              * start the engine. Its sizes and increments go with the first
              * trapezoid drawn and stay for the second. */
             int tw = ctx->tex_tw1, th = ctx->tex_th1;
-            fifo_need(1);
-            MGA_WR32(MGAREG_TEXCTL2, ctx->texctl2_1 | TEXCTL2_MAP1);
+            WR(MGAREG_TEXCTL2, ctx->texctl2_1 | TEXCTL2_MAP1);
             if (map1_sizes) {
                 uint32_t wh1[2], tm1[6];
-                int w_wh1, w_tm1, n;
+                int w_wh1, w_tm1;
                 wh1[0] = TEXWH(tw, 8 - tw - k1, (1u << tw) - 1);
                 wh1[1] = TEXWH(th, 8 - th - k1, (1u << th) - 1);
                 tm1[0] = (uint32_t)fx(ps1.dx, 1048576.0);
@@ -588,34 +575,29 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
                 tm1[5] = (uint32_t)fx(pq1.dy, 65536.0);
                 w_wh1 = !(sh.valid & SH_WH1) || !same(sh.wh[1], wh1, 2);
                 w_tm1 = !(sh.valid & SH_TM1) || !same(sh.tm[1], tm1, 6);
-                n = (w_wh1 ? 2 : 0) + (w_tm1 ? 6 : 0);
-                if (n)
-                    fifo_need(n);
                 if (w_wh1) {            /* map 1 only */
-                    MGA_WR32(MGAREG_TEXWIDTH, wh1[0]);
-                    MGA_WR32(MGAREG_TEXHEIGHT, wh1[1]);
+                    WR(MGAREG_TEXWIDTH, wh1[0]);
+                    WR(MGAREG_TEXHEIGHT, wh1[1]);
                     keep(sh.wh[1], wh1, 2);
                     sh.valid |= SH_WH1;
                 }
                 if (w_tm1) {
-                    MGA_WR32(MGAREG_TMR(0), tm1[0]);
-                    MGA_WR32(MGAREG_TMR(1), tm1[1]);
-                    MGA_WR32(MGAREG_TMR(2), tm1[2]);
-                    MGA_WR32(MGAREG_TMR(3), tm1[3]);
-                    MGA_WR32(MGAREG_TMR(4), tm1[4]);
-                    MGA_WR32(MGAREG_TMR(5), tm1[5]);
+                    WR(MGAREG_TMR(0), tm1[0]);
+                    WR(MGAREG_TMR(1), tm1[1]);
+                    WR(MGAREG_TMR(2), tm1[2]);
+                    WR(MGAREG_TMR(3), tm1[3]);
+                    WR(MGAREG_TMR(4), tm1[4]);
+                    WR(MGAREG_TMR(5), tm1[5]);
                     keep(sh.tm[1], tm1, 6);
                     sh.valid |= SH_TM1;
                 }
                 map1_sizes = 0;
             }
-            fifo_need(4);
-            MGA_WR32(MGAREG_TMR(6), (uint32_t)fx(eval(&ps1, ex, ey), 1048576.0));
-            MGA_WR32(MGAREG_TMR(7), (uint32_t)fx(eval(&pt1, ex, ey), 1048576.0));
-            MGA_WR32(MGAREG_TMR(8), (uint32_t)fx(eval(&pq1, ex, ey), 65536.0));
-            MGA_WR32(MGAREG_TEXCTL2, ctx->texctl2_1);   /* map 1 only; broadcast from the next write */
+            WR(MGAREG_TMR(6), (uint32_t)fx(eval(&ps1, ex, ey), 1048576.0));
+            WR(MGAREG_TMR(7), (uint32_t)fx(eval(&pt1, ex, ey), 1048576.0));
+            WR(MGAREG_TMR(8), (uint32_t)fx(eval(&pq1, ex, ey), 65536.0));
+            WR(MGAREG_TEXCTL2, ctx->texctl2_1);   /* map 1 only; broadcast from the next write */
         }
-        fifo_need(1);
-        MGA_WR32(MGAREG_YDSTLEN + MGAREG_EXEC, ((uint32_t)(ys & 0xFFFF) << 16) | (uint32_t)(ye - ys));
+        WR(MGAREG_YDSTLEN + MGAREG_EXEC, ((uint32_t)(ys & 0xFFFF) << 16) | (uint32_t)(ye - ys));
     }
 }
