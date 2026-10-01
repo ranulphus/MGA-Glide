@@ -80,6 +80,69 @@ did). Real processors restore ESP. `STACKPG.EXE`
 around fresh page boundaries, and `make loopa-selftest` fails without the
 patch.
 
+### Machine options (for GLOS)
+
+These options serve GLOS (`~/GLOS`), whose supervisor runs DOS in
+virtual-8086 mode. None changes what an existing job generates:
+`make loopa-cfgcheck` compares `run.py --emit-config` output (the 86box.cfg
+with placeholder paths, RUN.BAT and the golden image key) for a set of cases
+with `tools/loopa/ref/`. It needs no emulator; after a deliberate change,
+`tools/loopa/cfgcheck.py --update` rewrites the references for review.
+
+| Option | What it does |
+|---|---|
+| `--machine bf6\|486dx2\|486dx4` | `bf6` is the Pentium II 350 above. The 486 profiles are a Shuttle HOT-433A (UMC 8881, PCI, AwardBIOS 4.51PG) with an i486DX2-66 (no CR4, no CPUID) or an Intel iDX4-100 (CR4 with VME and PVI). Each profile has its own NVRAM cache. |
+| `--card vbe` | An S3 Trio64V2/DX with its "Generic" BIOS (VBE 2.0, 4 MB, linear framebuffer). The default on the 486 profiles: 86Box's Matrox cards are AGP, so a Matrox card there is a setup error. `VBEINFO` reports the VBE version, memory and modes. |
+| `--boot-cfg himemx` | A boot floppy with `DEVICE=HIMEMX.EXE` and `DOS=HIGH` (`tools/loopa/mkgolden-variant.sh`; HIMEMX pinned from the FreeDOS 1.4 repository). The default floppy and its key are untouched. `XMSINFO` reports the XMS driver and whether DOS is in the HMA. |
+| `--net CARD` | A network card on SLiRP (`ne2k` ISA at 300h IRQ 10, `ne2kpci`, `rtl8139c+`, `i82557`, `i82558`) with host TCP ports forwarded into the guest: `--net-fwd [HOST:]GUEST`, default guest port 22 on a free host port, recorded in `result.json`. `--net-dos` puts the Crynwr NE2000 packet driver and mTCP's DHCP and NC on C:. |
+| `--com2` | COM2 on a pty (86Box's named-pipe device opens it directly) that run.py relays to a TCP port on 127.0.0.1 (`result.json` `com2_port`; the guest's output also goes to `com2.log`): the route for a gdb stub in the guest. |
+| `--tcp-send ANCHOR\|TARGET\|TEXT` | Once ANCHOR is on the serial line, connects to TARGET (`com2` or `net:GUESTPORT`), sends TEXT and CR LF, and keeps the reply in `tcp-N.txt`. |
+| `--wrap PREFIX` | Puts PREFIX in front of the program's command line (`GLOS.EXE /RUN ...`). |
+| `--dynarec 0` | Runs 86Box's interpreter instead of the dynamic recompiler. |
+
+`make loopa-selftest-ext` (`tools/loopa/selftest_ext.py`; `CHECKS="486 vbe"`
+picks some) checks them:
+
+| Check | What passes |
+|---|---|
+| `486` | HELLO and STACKPG on both 486 profiles |
+| `vbe` | VBE 2.0 with a linear 640x480x16 mode on the BF6 and the 486dx2 |
+| `net` | The host's text reaching mTCP NC listening on the guest's port 22 through the forward |
+| `com2` | `COM2ECHO` echoing a line from the bridge |
+| `himemx` | XMS 3.0 with DOS high, then HELLO and STACKPG |
+| `cpu` | V86TEST on all three profiles |
+
+**V86TEST** (`tests/cpu/`) is a CPU self-test for the paths a virtual-8086
+monitor depends on.
+- A 16-bit loader runs the real-mode cases: the BIOS's INT 15h 86h against the
+  RTC, and the A20 methods.
+- It then enters protected mode with paging and calls a 32-bit monitor (host
+  `gcc -m32`, `V86PM.BIN`). The monitor checks, against silicon behaviour:
+  - V86 entry and exit;
+  - IOPL-sensitive instructions;
+  - INT3, INTO and BOUND;
+  - the I/O bitmap;
+  - VME and PVI;
+  - gate checks and ESP0;
+  - the 16-bit-SS ESP leak;
+  - bad IRET frames;
+  - page-fault error codes;
+  - global pages;
+  - the RTC rate;
+  - FPU error reporting;
+  - IOPL changes under the dynarec.
+
+It found six places where 86Box differed. Local patches fix them:
+- **0106:** a VME-redirected INT pushes IF = VIF and IOPL = 3.
+- **0107:** INT3 and INTO in V86 mode go through the IDT.
+- **0108:** the redirection bitmap applies at IOPL 3.
+- **0109:** POPFD never loads VIF or VIP.
+- **0110:** a byte port's two bitmap bytes must be inside the TSS limit.
+
+`tests/cpu/known-86box.txt` lists any remaining deviation the check accepts.
+It is empty; the RTC firing with register C unread and PGE having no effect
+are recorded as INFO.
+
 ### Conformance (`tools/conform/run.py`)
 
 `ref` runs a test on the retail runtime and the emulated Voodoo and stores
