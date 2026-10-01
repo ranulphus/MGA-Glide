@@ -1,0 +1,29 @@
+diff --git a/src/cpu/x86_ops_int.h b/src/cpu/x86_ops_int.h
+index e7d6790..e353dc8 100644
+--- a/src/cpu/x86_ops_int.h
++++ b/src/cpu/x86_ops_int.h
+@@ -37,7 +37,10 @@ opINT(uint32_t fetchdat)
+     UN_USED(cycles_old);
+     uint8_t temp = getbytef();
+ 
+-    if ((cr0 & 1) && (cpu_state.eflags & VM_FLAG) && (IOPL != 3)) {
++    if ((cr0 & 1) && (cpu_state.eflags & VM_FLAG)) {
++        /* With VME a clear bit in the TSS's redirection bitmap sends INT n
++           to the 8086 handler at any IOPL (methods 5 and 6, SDM vol. 3,
++           table 20-2); a set bit means #GP at IOPL < 3 and the IDT at 3. */
+         if (cr4 & CR4_VME) {
+             uint16_t t;
+             uint8_t  d;
+@@ -63,8 +66,10 @@ opINT(uint32_t fetchdat)
+                 }
+             }
+         }
+-        x86gpf_expected(NULL, 0);
+-        return 1;
++        if (IOPL != 3) {
++            x86gpf_expected(NULL, 0);
++            return 1;
++        }
+     }
+ 
+     x86_int_sw(temp);

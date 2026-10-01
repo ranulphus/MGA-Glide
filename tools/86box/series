@@ -16,3 +16,8 @@ local/0102-unittester-clean-exit-and-serial-flush.patch
 local/0103-cpu-restartable-interrupt-frame.patch
 local/0104-sdl-monitor-mouse.patch
 local/0105-sdl-monitor-joystick.patch
+local/0106-cpu-vme-int-redirect-flags.patch
+local/0107-cpu-v86-int3-into.patch
+local/0108-cpu-vme-iopl3-redirect.patch
+local/0109-cpu-popfd-vif-vip.patch
+local/0110-cpu-iopb-two-bytes.patch

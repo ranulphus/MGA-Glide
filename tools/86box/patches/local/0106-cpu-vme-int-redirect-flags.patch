@@ -1,0 +1,33 @@
+diff --git a/src/cpu/386_common.c b/src/cpu/386_common.c
+index 60c7e6f..d6de784 100644
+--- a/src/cpu/386_common.c
++++ b/src/cpu/386_common.c
+@@ -1717,7 +1717,15 @@ x86_int_sw_rm(int num)
+     if (cpu_state.abrt)
+         return 1;
+ 
+-    writememw(ss, ((SP - 2) & 0xFFFF), cpu_state.flags);
++    /* VME redirection (SDM vol. 3, 20.3.3.5): at IOPL < 3 the pushed FLAGS
++       image has IF = VIF and IOPL = 3, and VIF is cleared; at IOPL 3 the
++       real FLAGS are pushed and IF is cleared, as in real mode. */
++    int      virt  = (cpu_state.eflags & VM_FLAG) && (IOPL != 3);
++    uint16_t image = cpu_state.flags;
++    if (virt)
++        image = (image & ~(I_FLAG | 0x3000)) | ((cpu_state.eflags & VIF_FLAG) ? I_FLAG : 0) | 0x3000;
++
++    writememw(ss, ((SP - 2) & 0xFFFF), image);
+ 
+     if (cpu_state.abrt)
+         return 1;
+@@ -1730,7 +1738,10 @@ x86_int_sw_rm(int num)
+ 
+     SP -= 6;
+ 
+-    cpu_state.eflags &= ~VIF_FLAG;
++    if (virt)
++        cpu_state.eflags &= ~VIF_FLAG;
++    else
++        cpu_state.flags &= ~I_FLAG;
+     cpu_state.flags &= ~T_FLAG;
+     cpu_state.pc = new_pc;
+     cpu_use_exec ? loadcs(new_cs) : loadcs_2386(new_cs);

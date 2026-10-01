@@ -1,0 +1,48 @@
+diff --git a/src/cpu/x86_ops_int.h b/src/cpu/x86_ops_int.h
+index 1ed5e6c..e7d6790 100644
+--- a/src/cpu/x86_ops_int.h
++++ b/src/cpu/x86_ops_int.h
+@@ -7,10 +7,8 @@ opINT3(UNUSED(uint32_t fetchdat))
+     if (gdbstub_int3())
+         return 1;
+ #endif
+-    if ((cr0 & 1) && (cpu_state.eflags & VM_FLAG) && (IOPL != 3)) {
+-        x86gpf(NULL, 0);
+-        return 1;
+-    }
++    /* INT3 is not IOPL-sensitive in V86 mode: it goes through the IDT
++       like an exception (SDM vol. 3, 20.3.1; the INT n description). */
+     x86_int_sw(3);
+     CLOCK_CYCLES((is486) ? 44 : 59);
+     PREFETCH_RUN(cycles_old - cycles, 1, -1, 0, 0, 0, 0, 0);
+@@ -80,10 +78,7 @@ opINTO(UNUSED(uint32_t fetchdat))
+     int cycles_old = cycles;
+     UN_USED(cycles_old);
+ 
+-    if ((cr0 & 1) && (cpu_state.eflags & VM_FLAG) && (IOPL != 3)) {
+-        x86gpf(NULL, 0);
+-        return 1;
+-    }
++    /* INTO is not IOPL-sensitive in V86 mode either. */
+     if (VF_SET()) {
+         cpu_state.oldpc = cpu_state.pc;
+         x86_int_sw(4);
+diff --git a/src/cpu/x86seg.c b/src/cpu/x86seg.c
+index e690031..1318a35 100644
+--- a/src/cpu/x86seg.c
++++ b/src/cpu/x86seg.c
+@@ -1546,11 +1546,9 @@ pmodeint(int num, int soft)
+     uint32_t     *segdat332 = (uint32_t *) segdat3;
+     const x86seg *dt;
+ 
+-    if ((cpu_state.eflags & VM_FLAG) && (IOPL != 3) && soft) {
+-        x86seg_log("V86 banned int\n");
+-        x86gpf("pmodeint(): V86 banned int", 0);
+-        return;
+-    }
++    /* No V86 IOPL check here: INT n (opINT) and INT1 (opINT1) make it
++       themselves, and INT3 and INTO are not IOPL-sensitive in V86 mode
++       (SDM vol. 3, 20.3.1), so they reach the IDT. */
+     addr = (num << 3);
+     if ((addr + 7) > idt.limit) {
+         if (num == 0x08) {

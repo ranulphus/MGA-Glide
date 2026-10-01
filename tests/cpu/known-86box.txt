@@ -3,9 +3,10 @@
 # here and reports a listed case that passes, so the entry can go once a
 # local patch fixes it. Format: case, then the patch that fixes it (or
 # "none"), then what 86Box does.
-D-v86-int3              0107  INT3 in V86 at IOPL<3 raises #GP instead of #BP through the IDT
-D-v86-into              0107  INTO likewise raises #GP instead of #OF
-G-vme-redirect-flags    0106  a VME-redirected INT pushes the real IF and IOPL, not IF=VIF and IOPL=3
-G-vme-iopl3-redirect    0108  at IOPL 3 VME ignores the redirection bitmap and goes to the IDT
-H-pvi-popf-leaves-vif   0109  POPFD at CPL>0 loads VIF and VIP from the popped image
-F-v86-iopb-last-byte    0110  a byte access whose bitmap byte is the TSS's last checks only that byte
+#
+# None at present: local patches 0106-0110 fixed the six V86TEST found
+# (INT3/INTO in V86, the VME flags image and IOPL 3, POPFD loading VIF/VIP,
+# the I/O bitmap's last byte). Two differences are recorded as INFO, not
+# failures, because GLOS does not depend on them:
+#   Q-rtc-regc-unread   the RTC keeps interrupting while register C is unread
+#   P-pge-survives-cr3  global pages are flushed by a CR3 load

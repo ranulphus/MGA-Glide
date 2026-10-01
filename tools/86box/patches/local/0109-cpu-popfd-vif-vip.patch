@@ -1,0 +1,16 @@
+diff --git a/src/cpu/x86_ops_flag.h b/src/cpu/x86_ops_flag.h
+index 7e73243..0566b71 100644
+--- a/src/cpu/x86_ops_flag.h
++++ b/src/cpu/x86_ops_flag.h
+@@ -297,8 +297,9 @@ opPOPFD(UNUSED(uint32_t fetchdat))
+ 
+     templ &= (is486 || isibm486) ? 0x3c0000 : 0;
+     templ |= ((cpu_state.eflags & 3) << 16);
+-    if (cpu_CR4_mask & CR4_VME)
+-        cpu_state.eflags = (templ >> 16) & 0x3f;
++    if (cpu_CR4_mask & CR4_VME)     /* POPFD never changes VIF or VIP (SDM: POPF/POPFD) */
++        cpu_state.eflags = (cpu_state.eflags & (VIF_FLAG | VIP_FLAG)) |
++                           ((templ >> 16) & 0x3f & ~(VIF_FLAG | VIP_FLAG));
+     else if (CPUID)
+         cpu_state.eflags = (templ >> 16) & 0x27;
+     else if (is486 || isibm486)

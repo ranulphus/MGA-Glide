@@ -1,0 +1,16 @@
+diff --git a/src/cpu/386_ops.h b/src/cpu/386_ops.h
+index 3859efe..187b540 100644
+--- a/src/cpu/386_ops.h
++++ b/src/cpu/386_ops.h
+@@ -213,7 +213,10 @@ checkio(uint32_t port, int mask)
+             mask &= readmemw_n(tr.base, t, addr64a_2);
+         }
+     } else {
+-        if (LIKELY(t <= tr.limit)) {
++        /* The CPU reads two bitmap bytes even for a byte access, so the
++           second must be inside the TSS limit too (hence the trailing FFh
++           byte operating systems put after the bitmap). */
++        if (LIKELY(t < tr.limit)) {
+             do_mmut_rb(tr.base, t, addr64a_2);
+             mask &= readmemb_n(tr.base, t, addr64a_2[0]);
+         }
