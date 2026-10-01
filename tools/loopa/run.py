@@ -162,9 +162,12 @@ def dos_bat(lines):
     return ("\r\n".join(["@ECHO OFF"] + lines) + "\r\n").encode("ascii")
 
 
-def golden():
-    out = subprocess.run([os.path.join(HERE, "mkgolden.sh")], check=True,
-                         stdout=subprocess.PIPE, text=True).stdout.strip().splitlines()[-1]
+def golden(variant="default"):
+    """The golden boot floppy and C: images: mkgolden.sh's, or a variant of
+    them (--boot-cfg; mkgolden-variant.sh)."""
+    cmd = [os.path.join(HERE, "mkgolden.sh")] if variant == "default" else \
+        [os.path.join(HERE, "mkgolden-variant.sh"), variant]
+    out = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, text=True).stdout.strip().splitlines()[-1]
     return out
 
 
@@ -176,6 +179,20 @@ def golden_key():
     for fn in sorted(os.listdir(os.path.join(HERE, "dos"))):
         h.update(open(os.path.join(HERE, "dos", fn), "rb").read())
     return h.hexdigest()[:12]
+
+
+def golden_variant_key(variant):
+    """mkgolden-variant.sh's key for VARIANT, computed the same way."""
+    import hashlib
+    import re
+    pins = dict(re.findall(r"^(\w+)\s*:=\s*(\S+)", open(os.path.join(ROOT, "tools/setup/versions.mk")).read(), re.M))
+    h = hashlib.sha256(("golden-%s\n" % golden_key()).encode())
+    h.update(open(os.path.join(HERE, "mkgolden-variant.sh"), "rb").read())
+    vdir = os.path.join(HERE, "dos-" + variant)
+    for fn in sorted(os.listdir(vdir)):
+        h.update(open(os.path.join(vdir, fn), "rb").read())
+    h.update((pins["HIMEMX_SHA256"] + "\n").encode())
+    return "%s-%s" % (variant, h.hexdigest()[:12])
 
 
 def joystick_config(kind):
@@ -277,7 +294,8 @@ def emit_config(a):
     if a.com2:
         tail += hostio.com2_config("@COM2PTY@")
     out = ["# 86box.cfg", config_text(a, "@SERIAL@", "@CIMG@", "@BOOTIMG@", "", tail),
-           "# RUN.BAT"] + run_bat_lines(a, exe_name, game) + ["# golden " + golden_key()]
+           "# RUN.BAT"] + run_bat_lines(a, exe_name, game) + \
+        ["# golden " + (golden_key() if a.boot_cfg == "default" else golden_variant_key(a.boot_cfg))]
     sys.stdout.write("\n".join(out) + "\n")
     return 0
 
@@ -320,8 +338,8 @@ def run(a):
     result = {"name": a.name, "exe": a.exe, "args": a.args, "ovl": a.ovl, "status": "SETUP-ERROR"}
     try:
         prof = resolve_profile(a)
-        result.update(machine=a.machine, card=a.card)
-        gold = golden()
+        result.update(machine=a.machine, card=a.card, boot_cfg=a.boot_cfg)
+        gold = golden(a.boot_cfg)
         bootimg = os.path.join(vm, "boot.img")
         cimg = os.path.join(vm, "c.img")
         shutil.copyfile(os.path.join(gold, "boot.img"), bootimg)
@@ -665,6 +683,9 @@ def main():
     ap.add_argument("--wrap", default="", help="prefix for the program's command line in RUN.BAT "
                     "(e.g. C:\\GLOS\\GLOS.EXE /RUN), for --exe and --game jobs")
     ap.add_argument("--dynarec", type=int, choices=(0, 1), default=1, help="86Box's dynamic recompiler")
+    ap.add_argument("--boot-cfg", choices=["default"] + sorted(d[4:] for d in os.listdir(HERE) if d.startswith("dos-")),
+                    default="default", help="boot floppy variant: default (FreeDOS 1.4, no XMS driver) or himemx "
+                    "(HIMEMX.EXE and DOS=HIGH; tools/loopa/mkgolden-variant.sh)")
     ap.add_argument("--timeout", type=float, default=float(os.environ.get("LOOPA_TIMEOUT", 300)))
     ap.add_argument("--idle", type=float, default=float(os.environ.get("LOOPA_IDLE", 60)))
     ap.add_argument("--boot-grace", type=float, default=45)

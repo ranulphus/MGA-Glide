@@ -29,3 +29,8 @@ MTCP_URL       := https://www.brutman.com/mTCP/download/mTCP_2025-01-10.zip
 MTCP_SHA256    := 31fdde92db0b2c390a84f17c04750eb8927afa79321e156f25afb50b4f0214a5
 CRYNWR_URL     := https://www.ibiblio.org/pub/micro/pc-stuff/freedos/files/repositories/1.4/net/crynwr.zip
 CRYNWR_SHA256  := b5761639a1bf4ad4fa93bfa4643ca62ae46d08412c78d45ae1b5e10d91d0b9c8
+
+# HIMEMX 3.x (XMS 3.0 driver) from the FreeDOS 1.4 repository, for Loop A's
+# "himemx" boot (tools/loopa/mkgolden-variant.sh): the Loop A floppy has none.
+HIMEMX_URL     := https://www.ibiblio.org/pub/micro/pc-stuff/freedos/files/repositories/1.4/base/himemx.zip
+HIMEMX_SHA256  := 99b44e5bbb878105486e172675a460f645cdfb5a86cc1cf1e0e549fa31f29ce6

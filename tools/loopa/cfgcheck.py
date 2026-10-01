@@ -37,6 +37,7 @@ CASES = {
     "net-com2": "--net ne2k --net-fwd 22 --net-fwd 5555:23 --net-dos --com2 --exe build/ow/dos/HELLO.EXE",
     "rtl8139": "--machine 486dx2 --net rtl8139c+ --exe build/ow/dos/HELLO.EXE",
     "wrap-dynarec": "--dynarec 0 --wrap 'C:\\GLOS\\GLOS.EXE /RUN' --exe build/ow/dos/HELLO.EXE",
+    "himemx": "--boot-cfg himemx --machine 486dx4 --exe build/ow/dos/HELLO.EXE",
 }
 
 

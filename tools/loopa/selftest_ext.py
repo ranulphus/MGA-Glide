@@ -9,6 +9,8 @@ Each check runs one short job through run.py and looks at its result:
           through SLiRP's port forwarding and its text arrives
   com2    --com2: COM2ECHO reads a line sent to the bridge's TCP port and
           echoes it back
+  himemx  --boot-cfg himemx: XMS 3.0 with DOS in the HMA (XMSINFO), then
+          HELLO (DOS/4GW) and STACKPG (DJGPP) on top of it
 
 Runs inside the dev container (tools/dev). Arguments pick checks; the
 default is all of them. Exit status 1 if any check fails.
@@ -82,7 +84,18 @@ def check_com2():
                   "ECHO:GLOS-COM2-PROBE" in echo, "%s, host got %r" % (st, echo.strip()[:40]))
 
 
-CHECKS = {"486": check_486, "vbe": check_vbe, "net": check_net, "com2": check_com2}
+def check_himemx():
+    st, serial = job("selftest-himemx-hello", "--boot-cfg", "himemx",
+                     "--file", "build/ow/dos/XMSINFO.COM=/HX/XMSINFO.COM", "--exe", "build/ow/dos/HELLO.EXE",
+                     "--pre", "XMSINFO")
+    line = next((l for l in serial.split("\n") if l.startswith("HX-XMS")), "no HX-XMS line")
+    ok = report("himemx-hello", st == "PASS" and "ver=0300" in line and "doshigh=1" in line,
+                "HELLO %s; %s" % (st, line))
+    st, _ = job("selftest-himemx-stackpg", "--boot-cfg", "himemx", "--exe", "build/djgpp/STACKPG.EXE")
+    return report("himemx-stackpg", st == "PASS", "STACKPG %s" % st) and ok
+
+
+CHECKS = {"486": check_486, "vbe": check_vbe, "net": check_net, "com2": check_com2, "himemx": check_himemx}
 
 
 def main():
