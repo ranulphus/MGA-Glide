@@ -25,6 +25,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
+import hostio  # noqa: E402
 import png  # noqa: E402
 
 CACHE = os.environ.get("MGA_CACHE", os.path.expanduser("~/.cache/mga-glide"))
@@ -132,6 +133,31 @@ def ctmouse(tmp):
     return exe
 
 
+def net_dos(d, tmp):
+    """--net-dos: the Crynwr NE2000 packet driver and mTCP's DHCP and NC (the
+    versions Loop B's bench PCs use) in C:\\PKTDRV and C:\\MTCP, with a TCP.CFG
+    for the packet driver at INT 60h. Loading them is up to the job."""
+    import re
+    import zipfile
+    pins = dict(re.findall(r"^(\w+)\s*:=\s*(\S+)", open(os.path.join(ROOT, "tools/setup/versions.mk")).read(), re.M))
+    fetch = os.path.join(ROOT, "tools/setup/fetch.sh")
+    sh([fetch, pins["MTCP_URL"], pins["MTCP_SHA256"], os.path.join(tmp, "mtcp.zip")])
+    sh([fetch, pins["CRYNWR_URL"], pins["CRYNWR_SHA256"], os.path.join(tmp, "crynwr.zip")])
+    d.mkdir("/MTCP")
+    d.mkdir("/PKTDRV")
+    mz = zipfile.ZipFile(os.path.join(tmp, "mtcp.zip"))
+    for name in ("dhcp.exe", "nc.exe"):
+        f = os.path.join(tmp, name.upper())
+        open(f, "wb").write(mz.read(name))
+        d.put(f, "/MTCP/" + name.upper())
+    f = os.path.join(tmp, "NE2000.COM")
+    open(f, "wb").write(zipfile.ZipFile(os.path.join(tmp, "crynwr.zip")).read("DRIVERS/CRYNWR/NE2000.COM"))
+    d.put(f, "/PKTDRV/NE2000.COM")
+    f = os.path.join(tmp, "TCP.CFG")
+    open(f, "wb").write(b"PACKETINT 0x60\r\n")
+    d.put(f, "/MTCP/TCP.CFG")
+
+
 def dos_bat(lines):
     return ("\r\n".join(["@ECHO OFF"] + lines) + "\r\n").encode("ascii")
 
@@ -172,7 +198,7 @@ def build_config(vm, a, serial, cimg, bootimg, extra_hdd):
     return path
 
 
-def config_text(a, serial, cimg, bootimg, extra_hdd):
+def config_text(a, serial, cimg, bootimg, extra_hdd, tail=""):
     tpl = open(os.path.join(HERE, "86box.cfg.in")).read()
     prof = PROFILES[getattr(a, "machine", "bf6")]
     subst = {
@@ -181,6 +207,11 @@ def config_text(a, serial, cimg, bootimg, extra_hdd):
         "@CPU_SPEED@": prof["cpu_speed"],
         "@CPU_MULTI@": prof["cpu_multi"],
         "@MACHINE_EXTRA@": prof["extra"],
+        "@DYNAREC@": str(getattr(a, "dynarec", 1)),
+        # COM2 (--com2) is 86Box's named-pipe device on the bridge's pty.
+        "@COM2@": "1\nserial2_device = pipe" if getattr(a, "com2", False) else "0",
+        # Sections appended at the end: the network card (--net), COM2's pipe.
+        "@TAIL@": tail,
         "@RENDERER@": "sdl_software",
         "@VOODOO@": "1" if a.voodoo else "0",
         "@VOODOO_RECOMPILER@": str(a.voodoo_recompiler),
@@ -208,18 +239,23 @@ def config_text(a, serial, cimg, bootimg, extra_hdd):
 
 def run_bat_lines(a, exe_name, game):
     """C:\\RUN.BAT, which the boot floppy's AUTOEXEC.BAT calls."""
-    run_lines = ["SET PATH=C:\\HX;A:\\FREEDOS\\BIN", "C:", "CD \\TEST",
-                 "SERSAY HX-BOOT loop=A test=%s" % a.name]
+    if getattr(a, "net_dos", False):
+        # mTCP and the packet drivers (--net-dos); loading them is the job's.
+        run_lines = ["SET PATH=C:\\HX;C:\\MTCP;C:\\PKTDRV;A:\\FREEDOS\\BIN", "SET MTCPCFG=C:\\MTCP\\TCP.CFG"]
+    else:
+        run_lines = ["SET PATH=C:\\HX;A:\\FREEDOS\\BIN"]
+    run_lines += ["C:", "CD \\TEST", "SERSAY HX-BOOT loop=A test=%s" % a.name]
+    wrap = (getattr(a, "wrap", "") + " ") if getattr(a, "wrap", "") else ""
     if a.mouse != "none":
         run_lines += ["CTMOUSE"]
     run_lines += a.pre
     if a.cmd:
         run_lines += a.cmd
     elif game:
-        run_lines += ["D:", "CD \\" + game["cwd"]] + [l + (" " + a.args if a.args else "") for l in game["run"]]
+        run_lines += ["D:", "CD \\" + game["cwd"]] + [wrap + l + (" " + a.args if a.args else "") for l in game["run"]]
         run_lines += ["C:", "SERSAY HX-GAME-EXIT"]
     else:
-        run_lines += ["C:\\TEST\\%s %s" % (exe_name, a.args or "")]
+        run_lines += ["%sC:\\TEST\\%s %s" % (wrap, exe_name, a.args or "")]
     run_lines += ["VMODE", "SERSAY HX-EXIT program returned without ending the run",
                   "UTEXIT 124"]
     return run_lines
@@ -234,7 +270,13 @@ def emit_config(a):
     resolve_profile(a)
     game = json.load(open(a.games_file))[a.game] if a.game else None
     exe_name = os.path.basename(a.exe).upper() if a.exe else None
-    out = ["# 86box.cfg", config_text(a, "@SERIAL@", "@CIMG@", "@BOOTIMG@", ""),
+    tail = ""
+    if a.net:
+        fw = hostio.parse_forwards(a.net_fwd or ["22"])
+        tail += hostio.net_config(a.net, [(h if h else "@HOSTPORT%d@" % i, g) for i, (h, g) in enumerate(fw)])
+    if a.com2:
+        tail += hostio.com2_config("@COM2PTY@")
+    out = ["# 86box.cfg", config_text(a, "@SERIAL@", "@CIMG@", "@BOOTIMG@", "", tail),
            "# RUN.BAT"] + run_bat_lines(a, exe_name, game) + ["# golden " + golden_key()]
     sys.stdout.write("\n".join(out) + "\n")
     return 0
@@ -292,6 +334,8 @@ def run(a):
             d.put(CWSDPMI, "/HX/CWSDPMI.EXE")
         if a.mouse != "none":
             d.put(ctmouse(tmp), "/HX/CTMOUSE.EXE")
+        if a.net_dos:
+            net_dos(d, tmp)
         d.mkdir("/TEST")
         exe_name = os.path.basename(a.exe).upper() if a.exe else None
         if a.exe:
@@ -340,7 +384,22 @@ def run(a):
 
         serial = os.path.join(out, "serial.log")
         open(serial, "w").close()
-        cfg = build_config(vm, a, serial, cimg, bootimg, extra)
+        tail = ""
+        ports = {}
+        if a.net:
+            fw = [(h or hostio.free_port(), g) for h, g in hostio.parse_forwards(a.net_fwd or ["22"])]
+            tail += hostio.net_config(a.net, fw)
+            ports.update(("net:%d" % g, h) for h, g in fw)
+            result["net"] = {"card": a.net, "forwards": [{"host": h, "guest": g} for h, g in fw]}
+        if a.com2:
+            bridge = hostio.Com2Bridge(os.path.join(out, "com2.log"))
+            bridge.start()
+            tail += hostio.com2_config(bridge.path)
+            ports["com2"] = bridge.port
+            result["com2_port"] = bridge.port
+        path = os.path.join(vm, "86box.cfg")
+        open(path, "w").write(config_text(a, serial, cimg, bootimg, extra, tail))
+        cfg = path
         box = os.path.join(BOX86_DIR, "bin", "86Box")
         roms = os.path.join(BOX86_DIR, "roms")
         cmd = [box, "-P", vm, "-C", cfg, "-R", roms, "-N", "-L", os.path.join(out, "86box.log")]
@@ -391,6 +450,8 @@ def run(a):
             seg[2].sort()
         events = sorted((float(sh_t), "screenshot\n") for sh_t in filter(None, a.shots.split(",")))
         seg_i, anchor_pos, serial_text = 0, 0, ""
+        sends = [hostio.parse_tcp_send(t) for t in a.tcp_send]
+        senders = []
 
         def console(cmd):
             try:
@@ -434,6 +495,14 @@ def run(a):
                 if seg[2]:
                     break
                 seg_i += 1
+            while sends and sends[0]["anchor"] in serial_text:
+                # --tcp-send: once its anchor is on the serial line, in order.
+                st = sends.pop(0)
+                if st["target"] not in ports:
+                    raise RuntimeError("--tcp-send %s: no such port (needs --net/--net-fwd or --com2)" % st["target"])
+                t = hostio.TcpSend(ports[st["target"]], st["text"], os.path.join(out, "tcp-%d.txt" % len(senders)))
+                t.start()
+                senders.append(t)
             if last_size == 0 and now >= next_f1 and f1_taps < 12:
                 # A fresh NVRAM stops the BIOS at "press F1 to continue".
                 try:
@@ -485,6 +554,12 @@ def run(a):
         except subprocess.TimeoutExpired:
             xvfb.kill()
         errf.close()
+        for t in senders:
+            t.join(timeout=10)
+        if senders:
+            result["tcp_send"] = [t.result for t in senders]
+        if a.com2:
+            bridge.stop()
         result["elapsed_s"] = round(time.time() - t0, 1)
         result["box_exit"] = p.returncode
         text = open(serial, "rb").read().decode("latin-1")
@@ -575,6 +650,21 @@ def main():
                     help="bf6 (Pentium II 350, the default), 486dx2 (i486DX2-66, no CR4) or 486dx4 "
                     "(iDX4-100, VME/PVI), both on a Shuttle HOT-433A")
     ap.add_argument("--sound", default=None)
+    ap.add_argument("--net", choices=sorted(hostio.NICS), help="network card on SLiRP user networking "
+                    "(ne2k is ISA at 300h, IRQ 10)")
+    ap.add_argument("--net-fwd", action="append", default=[], metavar="[HOST:]GUEST",
+                    help="forward a host TCP port to the guest's port (default 22 when --net is given; "
+                    "a free host port is picked if HOST is left out; result.json records it)")
+    ap.add_argument("--net-dos", action="store_true", help="put the Crynwr NE2000 packet driver and mTCP "
+                    "(DHCP, NC) in C:\\PKTDRV and C:\\MTCP, with PATH and MTCPCFG set")
+    ap.add_argument("--com2", action="store_true", help="COM2 on a pty bridged to a TCP port on 127.0.0.1 "
+                    "(result.json com2_port; guest output also in OUT/com2.log)")
+    ap.add_argument("--tcp-send", action="append", default=[], metavar="ANCHOR|TARGET|TEXT",
+                    help="when ANCHOR appears on the serial line (in order), connect to TARGET (com2, or "
+                    "net:GUESTPORT), send TEXT and CR LF, and keep the reply in OUT/tcp-N.txt")
+    ap.add_argument("--wrap", default="", help="prefix for the program's command line in RUN.BAT "
+                    "(e.g. C:\\GLOS\\GLOS.EXE /RUN), for --exe and --game jobs")
+    ap.add_argument("--dynarec", type=int, choices=(0, 1), default=1, help="86Box's dynamic recompiler")
     ap.add_argument("--timeout", type=float, default=float(os.environ.get("LOOPA_TIMEOUT", 300)))
     ap.add_argument("--idle", type=float, default=float(os.environ.get("LOOPA_IDLE", 60)))
     ap.add_argument("--boot-grace", type=float, default=45)

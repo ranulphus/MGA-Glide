@@ -5,6 +5,10 @@ Each check runs one short job through run.py and looks at its result:
 
   486     HELLO (DOS/4GW) and STACKPG (DJGPP) on the 486dx2 and 486dx4 profiles
   vbe     VBEINFO on the S3 Trio64V2/DX: VBE 2.0 with linear 640x480x16
+  net     --net ne2k: mTCP listens on the guest's port 22; the host connects
+          through SLiRP's port forwarding and its text arrives
+  com2    --com2: COM2ECHO reads a line sent to the bridge's TCP port and
+          echoes it back
 
 Runs inside the dev container (tools/dev). Arguments pick checks; the
 default is all of them. Exit status 1 if any check fails.
@@ -57,7 +61,28 @@ def check_vbe():
     return ok
 
 
-CHECKS = {"486": check_486, "vbe": check_vbe}
+def check_net():
+    st, serial = job("selftest-net", "--net", "ne2k", "--net-dos", "--cmd", "NE2000 0x60 10 0x300",
+                     "--cmd", "DHCP", "--cmd", "SERSAY HX-START net", "--cmd", "SERSAY HX-NET listening",
+                     "--cmd", "NC -LISTEN 22 > C:\\OUT\\NETRX.TXT", "--cmd", "SERSAY HX-DONE 0",
+                     "--tcp-send", "HX-NET listening|net:22|GLOS-NET-PROBE")
+    rx = os.path.join(OUT, "selftest-net", "files", "NETRX.TXT")
+    got = open(rx, "rb").read().decode("latin-1") if os.path.exists(rx) else ""
+    return report("net", st == "PASS" and "GLOS-NET-PROBE" in got,
+                  "%s, guest received %r" % (st, got.strip()[:40]))
+
+
+def check_com2():
+    st, serial = job("selftest-com2", "--com2", "--file", "build/ow/dos/COM2ECHO.COM=/HX/COM2ECHO.COM",
+                     "--cmd", "SERSAY HX-START com2", "--cmd", "COM2ECHO", "--cmd", "SERSAY HX-DONE 0",
+                     "--tcp-send", "HX-COM2 ready|com2|GLOS-COM2-PROBE")
+    back = os.path.join(OUT, "selftest-com2", "tcp-0.txt")
+    echo = open(back, "rb").read().decode("latin-1") if os.path.exists(back) else ""
+    return report("com2", st == "PASS" and "HX-COM2 got=GLOS-COM2-PROBE" in serial and
+                  "ECHO:GLOS-COM2-PROBE" in echo, "%s, host got %r" % (st, echo.strip()[:40]))
+
+
+CHECKS = {"486": check_486, "vbe": check_vbe, "net": check_net, "com2": check_com2}
 
 
 def main():
