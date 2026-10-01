@@ -1,0 +1,86 @@
+# 86box.cfg
+[General]
+confirm_exit = 0
+confirm_save = 0
+confirm_reset = 0
+sound_gain = 0
+
+[Machine]
+machine = bf6
+cpu_family = pentium2_deschutes
+cpu_speed = 350000000
+cpu_multi = 3.5
+cpu_use_dynarec = 1
+fpu_type = internal
+mem_size = 65536
+time_sync = disabled
+
+[Video]
+gfxcard = millennium_g200
+voodoo = 1
+
+[Matrox Millennium G200 (MGA-Glide emulation)]
+memory = 8
+
+[3DFX Voodoo Graphics]
+type = voodoo
+framebuffer_memory = 2
+texture_memory = 2
+render_threads = 1
+recompiler = 0
+bilinear = 1
+dithersub = 1
+
+[Input devices]
+keyboard_type = keyboard_ps2
+mouse_type = none
+joystick_type = 4axis_4button
+joystick_0_nr = 1
+joystick_0_axis_2 = 3
+joystick_0_axis_3 = 2
+
+[Sound]
+sndcard = none
+
+[Storage controllers]
+hdc = internal
+fdc = internal
+
+[Ports (COM & LPT)]
+serial1_enabled = 1
+serial1_device = file
+serial2_enabled = 0
+lpt1_enabled = 0
+
+[File (COM) #1]
+path = @SERIAL@
+append = 0
+
+[Hard disks]
+hdd_01_parameters = 63, 16, 1000, 0, ide
+hdd_01_fn = @CIMG@
+hdd_01_ide_channel = 0:0
+
+
+[Floppy and CD-ROM drives]
+fdd_01_type = 35_2hd
+fdd_01_fn = @BOOTIMG@
+fdd_01_check_bpb = 0
+fdd_02_type = none
+
+[Other peripherals]
+unittester_enabled = 1
+
+[86Box Unit Tester]
+exit_enabled = 1
+
+# RUN.BAT
+SET PATH=C:\HX;A:\FREEDOS\BIN
+C:
+CD \TEST
+SERSAY HX-BOOT loop=A test=cfgcheck
+C:\TEST\JOYTEST.EXE 
+VMODE
+SERSAY HX-EXIT program returned without ending the run
+UTEXIT 124
+# golden ea26a1a0e106

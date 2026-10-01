@@ -113,6 +113,16 @@ def golden():
     return out
 
 
+def golden_key():
+    """The key mkgolden.sh files its images under (the script plus dos/*),
+    computed without building anything (for --emit-config)."""
+    import hashlib
+    h = hashlib.sha256(open(os.path.join(HERE, "mkgolden.sh"), "rb").read())
+    for fn in sorted(os.listdir(os.path.join(HERE, "dos"))):
+        h.update(open(os.path.join(HERE, "dos", fn), "rb").read())
+    return h.hexdigest()[:12]
+
+
 def joystick_config(kind):
     """[Input devices] lines for --joystick: the virtual joystick (local patch
     0105) is platform joystick 1 under Xvfb, which has no real ones. The
@@ -128,6 +138,12 @@ def joystick_config(kind):
 
 
 def build_config(vm, a, serial, cimg, bootimg, extra_hdd):
+    path = os.path.join(vm, "86box.cfg")
+    open(path, "w").write(config_text(a, serial, cimg, bootimg, extra_hdd))
+    return path
+
+
+def config_text(a, serial, cimg, bootimg, extra_hdd):
     tpl = open(os.path.join(HERE, "86box.cfg.in")).read()
     subst = {
         "@RENDERER@": "sdl_software",
@@ -135,15 +151,16 @@ def build_config(vm, a, serial, cimg, bootimg, extra_hdd):
         "@VOODOO_RECOMPILER@": str(a.voodoo_recompiler),
         "@VOODOO_THREADS@": str(a.voodoo_threads),
         "@G100_MB@": str(max(a.g100_mb, 16) if a.card in ("g400", "g450") else a.g100_mb),
-        "@MEM_KB@": str(a.mem * 1024),
+        # vpc.py passes a minimal options object: these have defaults.
+        "@MEM_KB@": str(getattr(a, "mem", 64) * 1024),
         "@GFXCARD@": CARDS[a.card][0],
         "@GFXNAME@": CARDS[a.card][1],
         "@SNDCARD@": a.sound or "none",
-        "@MOUSE@": a.mouse,
+        "@MOUSE@": getattr(a, "mouse", "none"),
         # The virtual joystick (local patch 0105) is platform joystick 1 under
         # Xvfb, which has no real ones; 86Box adds a standalone game port at
         # 0x201 when no sound card brings one. Axes and buttons map 1:1.
-        "@JOYSTICK@": joystick_config(a.joystick),
+        "@JOYSTICK@": joystick_config(getattr(a, "joystick", "none")),
         "@SERIAL@": serial,
         "@CIMG@": cimg,
         "@BOOTIMG@": bootimg,
@@ -151,9 +168,40 @@ def build_config(vm, a, serial, cimg, bootimg, extra_hdd):
     }
     for k, v in subst.items():
         tpl = tpl.replace(k, v)
-    path = os.path.join(vm, "86box.cfg")
-    open(path, "w").write(tpl)
-    return path
+    return tpl
+
+
+def run_bat_lines(a, exe_name, game):
+    """C:\\RUN.BAT, which the boot floppy's AUTOEXEC.BAT calls."""
+    run_lines = ["SET PATH=C:\\HX;A:\\FREEDOS\\BIN", "C:", "CD \\TEST",
+                 "SERSAY HX-BOOT loop=A test=%s" % a.name]
+    if a.mouse != "none":
+        run_lines += ["CTMOUSE"]
+    run_lines += a.pre
+    if a.cmd:
+        run_lines += a.cmd
+    elif game:
+        run_lines += ["D:", "CD \\" + game["cwd"]] + [l + (" " + a.args if a.args else "") for l in game["run"]]
+        run_lines += ["C:", "SERSAY HX-GAME-EXIT"]
+    else:
+        run_lines += ["C:\\TEST\\%s %s" % (exe_name, a.args or "")]
+    run_lines += ["VMODE", "SERSAY HX-EXIT program returned without ending the run",
+                  "UTEXIT 124"]
+    return run_lines
+
+
+def emit_config(a):
+    """--emit-config: what a run would generate (86box.cfg with placeholder
+    paths, RUN.BAT, the golden image key) without starting anything.
+    tools/loopa/cfgcheck.py compares this with tools/loopa/ref/."""
+    if a.joystick == "none" and ":joy:" in a.keys:
+        a.joystick = "4axis_4button"
+    game = json.load(open(a.games_file))[a.game] if a.game else None
+    exe_name = os.path.basename(a.exe).upper() if a.exe else None
+    out = ["# 86box.cfg", config_text(a, "@SERIAL@", "@CIMG@", "@BOOTIMG@", ""),
+           "# RUN.BAT"] + run_bat_lines(a, exe_name, game) + ["# golden " + golden_key()]
+    sys.stdout.write("\n".join(out) + "\n")
+    return 0
 
 
 def parse_serial(text):
@@ -247,20 +295,7 @@ def run(a):
             (gd if drive == "d" else d).put(a.ovl, path)
             result["ovl_sha256"] = hashlib.sha256(open(a.ovl, "rb").read()).hexdigest()
             result["ovl_dst"] = dst
-        run_lines = ["SET PATH=C:\\HX;A:\\FREEDOS\\BIN", "C:", "CD \\TEST",
-                     "SERSAY HX-BOOT loop=A test=%s" % a.name]
-        if a.mouse != "none":
-            run_lines += ["CTMOUSE"]
-        run_lines += a.pre
-        if a.cmd:
-            run_lines += a.cmd
-        elif game:
-            run_lines += ["D:", "CD \\" + game["cwd"]] + [l + (" " + a.args if a.args else "") for l in game["run"]]
-            run_lines += ["C:", "SERSAY HX-GAME-EXIT"]
-        else:
-            run_lines += ["C:\\TEST\\%s %s" % (exe_name, a.args or "")]
-        run_lines += ["VMODE", "SERSAY HX-EXIT program returned without ending the run",
-                      "UTEXIT 124"]
+        run_lines = run_bat_lines(a, exe_name, game)
         rb = os.path.join(tmp, "RUN.BAT")
         open(rb, "wb").write(dos_bat(run_lines))
         d.put(rb, "/RUN.BAT")
@@ -503,7 +538,10 @@ def main():
     ap.add_argument("--boot-grace", type=float, default=45)
     ap.add_argument("--out")
     ap.add_argument("--keep-vm", action="store_true")
-    sys.exit(run(ap.parse_args()))
+    ap.add_argument("--emit-config", action="store_true",
+                    help="print the generated 86box.cfg, RUN.BAT and golden key, and exit (tools/loopa/cfgcheck.py)")
+    a = ap.parse_args()
+    sys.exit(emit_config(a) if a.emit_config else run(a))
 
 
 if __name__ == "__main__":

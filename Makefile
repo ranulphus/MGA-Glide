@@ -207,9 +207,14 @@ help:
 -include $(shell find build -name '*.d' 2>/dev/null)
 
 # ---- Loop A (86Box) ------------------------------------------------------
-.PHONY: 86box loopa loopa-selftest
+.PHONY: 86box loopa loopa-selftest loopa-cfgcheck
 86box:
 	$(DEV) tools/86box/build.sh
+
+# Generated 86Box configs, RUN.BAT and golden keys unchanged (tools/loopa/ref/);
+# no emulator needed. After a deliberate change: tools/loopa/cfgcheck.py --update.
+loopa-cfgcheck:
+	$(PYTHON) tools/loopa/cfgcheck.py
 
 # make loopa TEST=hello [ARGS="--frames 10"] [OVL=build/ow/GLIDE2X.OVL]
 loopa: dostests
