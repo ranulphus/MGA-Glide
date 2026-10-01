@@ -23,6 +23,7 @@
 #include "mga/setup.h"
 #include "mga/sys.h"
 #include "mga/tex.h"
+#include "mga/fp.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -266,6 +267,10 @@ static void scenario(const char *name, mga_family fam, int voodoo, int extreme, 
 {
     int i;
     const char *dump = getenv("SETUPGOLD_DUMP");
+    /* As in the drivers, whose entry points run setup inside FPU_ENTER
+     * (53-bit, round to nearest): the x87 build's default 64-bit precision
+     * would make results depend on which values the compiler spills. */
+    FPU_ENTER();
     memset(&mga, 0, sizeof mga);
     mga.family = fam;
     mga_chip_caps(&mga);
@@ -323,6 +328,7 @@ static void scenario(const char *name, mga_family fam, int voodoo, int extreme, 
         setup_triangle(&a, &b, &c, &ctx);
     }
     refrast_write_hook = NULL;
+    FPU_LEAVE();
     if (out)
         fprintf(out, "%s %u %016llx\n", name, draws, (unsigned long long)run_hash);
     else {

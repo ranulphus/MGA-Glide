@@ -11,6 +11,7 @@
 #include "mga/mmio.h"
 #include "mga/regs_mga.h"
 #include "mga/fp.h"
+#include "mga/setupconv.h"
 #include "mga/prof.h"
 
 mga_setup_stats setup_stats;
@@ -79,45 +80,6 @@ static void make_plane(plane *p, const mga_svtx *v[3], double a0, double a1, dou
 static double eval(const plane *p, const mga_svtx *v0, double px, double py)
 {
     return p->a0 + p->dx * (px - v0->X16 / 16.0) + p->dy * (py - v0->Y16 / 16.0);
-}
-
-static int32_t fx(double v, double scale)
-{
-    double r = mga_floor(v * scale + 0.5);
-    if (r > 2147483647.0) r = 2147483647.0;
-    if (r < -2147483648.0) r = -2147483648.0;
-    return (int32_t)r;
-}
-
-/* Start value for colour-like 9.15 channels: truncating engine, so bias by
- * half an LSB of the 8-bit result is not applied (matches Voodoo floor). */
-static uint32_t col_start(double v)
-{
-    double r = mga_floor(v * 32768.0);
-    if (r < 0) r = 0;
-    if (r > 255.999 * 32768.0) r = 255.999 * 32768.0;
-    return (uint32_t)r;
-}
-
-static uint32_t z16_start(double z)
-{
-    double r = mga_floor(z * 32768.0);
-    if (r < 0) r = 0;
-    if (r > 65535.999 * 32768.0) r = 65535.999 * 32768.0;
-    return (uint32_t)r;
-}
-
-static uint64_t z32_start(double z)
-{
-    double r = mga_floor(z * 32768.0);
-    if (r < 0) r = 0;
-    if (r > 4294967295.999 * 32768.0) r = 4294967295.999 * 32768.0;
-    return (uint64_t)r;
-}
-
-static int64_t z32_inc(double d)
-{
-    return (int64_t)mga_floor(d * 32768.0 + 0.5);
 }
 
 #ifdef MGA_PROF

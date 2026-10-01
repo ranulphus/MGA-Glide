@@ -22,7 +22,8 @@ copy() { mkdir -p "$dest/$(dirname "$1")"; cp -a "$1" "$dest/$1"; }
 for f in $(git ls-files hal); do copy "$f"; done
 # Host reference rasteriser and the setup unit test.
 for f in tests/unit/unit.c tests/unit/unit.h tests/unit/refrast.c tests/unit/refrast.h tests/unit/test_trap.c \
-         tests/unit/test_setupgold.c tests/unit/data/setupgold-host64.txt tests/unit/data/setupgold-host32.txt; do copy "$f"; done
+         tests/unit/test_setupgold.c tests/unit/data/setupgold-host64.txt tests/unit/data/setupgold-host32.txt \
+         tests/unit/test_fp.c tests/unit/fpcheck.inc tests/hal/fpcheck.c; do copy "$f"; done
 # Smoke and bring-up programs, the guest shim and DOS helpers.
 for f in tests/hal/smoke.c tests/hal/probe.c tests/hal/romdump.c tests/shim/hx.c tests/shim/hx.h tests/shim/hello.c tests/shim/stackpg.c tests/shim/mousetst.c tests/shim/joytest.c tests/shim/sbbeep.c $(git ls-files tools/dos); do copy "$f"; done
 # Loop C rig (Linux port is part of hal/).
@@ -86,8 +87,11 @@ build/djgpp/JOYTEST.EXE: tests/shim/joytest.c tests/shim/hx.c build/djgpp/libmga
 	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^
 build/djgpp/SBBEEP.EXE: tests/shim/sbbeep.c tests/shim/hx.c build/djgpp/libmgahal.a
 	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^ -lm
+# The float-to-integer helpers on DJGPP, in 86Box (HX-TEST fpcheck).
+build/djgpp/FPCHECK.EXE: tests/hal/fpcheck.c tests/shim/hx.c build/djgpp/libmgahal.a
+	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^ -lm
 dostests-djgpp: build/djgpp/HELLO.EXE build/djgpp/PROBE.EXE build/djgpp/STACKPG.EXE build/djgpp/MOUSETST.EXE \
-                build/djgpp/JOYTEST.EXE build/djgpp/SBBEEP.EXE
+                build/djgpp/JOYTEST.EXE build/djgpp/SBBEEP.EXE build/djgpp/FPCHECK.EXE
 
 build/host/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -113,12 +117,21 @@ build/host32/test_trap: tests/unit/test_trap.c tests/unit/unit.c tests/unit/refr
 build/host32/test_setupgold: $(GOLD_SRCS)
 	@mkdir -p $(dir $@)
 	$(Q)$(CC) $(HOST_CFLAGS) -m32 -mfpmath=387 -o $@ $^ -lm
-tests-host: build/host/test_trap build/host/test_setupgold
+# The float-to-integer helpers (hal/include/mga/fp.h, setupconv.h).
+build/host/test_fp: tests/unit/test_fp.c tests/unit/unit.c tests/unit/fpcheck.inc
+	@mkdir -p $(dir $@)
+	$(Q)$(CC) $(HOST_CFLAGS) -o $@ tests/unit/test_fp.c tests/unit/unit.c -lm
+build/host32/test_fp: tests/unit/test_fp.c tests/unit/unit.c tests/unit/fpcheck.inc
+	@mkdir -p $(dir $@)
+	$(Q)$(CC) $(HOST_CFLAGS) -m32 -mfpmath=387 -o $@ tests/unit/test_fp.c tests/unit/unit.c -lm
+tests-host: build/host/test_trap build/host/test_setupgold build/host/test_fp
 	build/host/test_trap
 	build/host/test_setupgold
-tests-host32: build/host32/test_trap build/host32/test_setupgold
+	build/host/test_fp
+tests-host32: build/host32/test_trap build/host32/test_setupgold build/host32/test_fp
 	build/host32/test_trap
 	build/host32/test_setupgold
+	build/host32/test_fp
 
 build/ow/%.obj: %.c
 	@mkdir -p $(dir $@)

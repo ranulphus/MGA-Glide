@@ -150,6 +150,7 @@ DJ_SRC_STACKPG := tests/shim/stackpg.c
 DJ_SRC_MOUSETST := tests/shim/mousetst.c
 DJ_SRC_JOYTEST := tests/shim/joytest.c
 DJ_SRC_SBBEEP := tests/shim/sbbeep.c
+DJ_SRC_FPCHECK := tests/hal/fpcheck.c
 build/djgpp/HOOKS.EXE: tests/hal/hooks.c
 build/djgpp/SCALE.EXE: tests/hal/scale.c
 build/djgpp/HELLO.EXE: tests/shim/hello.c
@@ -158,9 +159,22 @@ build/djgpp/STACKPG.EXE: tests/shim/stackpg.c
 build/djgpp/MOUSETST.EXE: tests/shim/mousetst.c
 build/djgpp/JOYTEST.EXE: tests/shim/joytest.c
 build/djgpp/SBBEEP.EXE: tests/shim/sbbeep.c
+build/djgpp/FPCHECK.EXE: tests/hal/fpcheck.c tests/unit/fpcheck.inc hal/include/mga/fp.h hal/include/mga/setupconv.h
 dostests-djgpp: build/djgpp/HELLO.EXE build/djgpp/PROBE.EXE build/djgpp/HOOKS.EXE build/djgpp/SCALE.EXE \
-                build/djgpp/STACKPG.EXE build/djgpp/MOUSETST.EXE build/djgpp/JOYTEST.EXE build/djgpp/SBBEEP.EXE
+                build/djgpp/STACKPG.EXE build/djgpp/MOUSETST.EXE build/djgpp/JOYTEST.EXE build/djgpp/SBBEEP.EXE \
+                build/djgpp/FPCHECK.EXE
 .PHONY: dostests-djgpp
+
+# The FISTP float-to-integer helpers on both DOS compilers, in 86Box
+# (tests/hal/fpcheck.c; the host builds run the same checks in tests-host).
+loopa-fpcheck: dostests build/djgpp/FPCHECK.EXE
+	@set -e; for b in ow djgpp; do \
+	  exe=build/$$b/dos/FPCHECK.EXE; [ $$b = djgpp ] && exe=build/djgpp/FPCHECK.EXE; \
+	  $(DEV) $(PYTHON) tools/loopa/run.py --name fpcheck-$$b --exe $$exe --idle 60 --timeout 300 >/dev/null || true; \
+	  got=$$(cat out/fpcheck-$$b/status); grep -ah 'HX-TEST fpcheck' out/fpcheck-$$b/serial.log || true; \
+	  if [ "$$got" != PASS ]; then echo "loopa-fpcheck: $$b: $$got"; exit 1; fi; done; \
+	echo "loopa-fpcheck: Watcom and DJGPP pass"
+.PHONY: loopa-fpcheck
 
 # ---- Host trace replay (tools/hreplay) --------------------------------------
 HR_SRCS := $(RT_SRCS) $(HAL_HOST) tests/unit/refrast.c tools/hreplay/hreplay.c

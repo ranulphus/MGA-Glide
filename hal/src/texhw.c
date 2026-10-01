@@ -94,14 +94,16 @@ static void adjust(mga_svtx *a, mga_svtx *b, mga_svtx *c, const mga_texstate *t,
         }
         if (t->bilinear)
             mn -= half;
-        for (i = 0; i < 3; i++) {
-            float *p = axis ? (map1 ? &v[i]->t1 : &v[i]->t) : (map1 ? &v[i]->s1 : &v[i]->s);
+        {
             double shift = 0;
             if (t->bilinear)
                 shift -= half;
             if (wrap)
                 shift -= mga_floor(mn);     /* minimum into [0, 1): whole periods only */
-            *p += (float)(shift * v[i]->q);
+            for (i = 0; i < 3; i++) {
+                float *p = axis ? (map1 ? &v[i]->t1 : &v[i]->t) : (map1 ? &v[i]->s1 : &v[i]->s);
+                *p += (float)(shift * v[i]->q);
+            }
         }
     }
 }

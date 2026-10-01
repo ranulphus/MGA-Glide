@@ -33,15 +33,106 @@ MGA_INLINE void fp_set_cw(unsigned short cw) { __asm__ __volatile__("fldcw %0" :
 #  define FPU_LEAVE() ((void)0)
 #endif
 
+/* Float to integer without changing the control word. A C cast truncates,
+ * so on the x87 the compiler wraps each FISTP in two FLDCWs, which stall a
+ * P6 (a cast cost 35 emulated cycles, setup's fx() 91). FISTP alone rounds
+ * in the current mode and lands on floor(v) or ceil(v), so one comparison
+ * makes floor or truncation exact in any rounding and precision mode.
+ *   mga_irint(v)    v rounded in the current mode (what lrint() does)
+ *   mga_ifloor(v)   floor(v), exactly
+ *   mga_itrunc(v)   v truncated toward zero, exactly
+ * valid for -2^31+1 < v < 2^31-1 (callers check; NaN fails such a check);
+ * the 64-bit forms for |v| < 2^62. 86Box's FISTP rounds tiny negatives
+ * (|v| < 2^-53) to +1 in round-to-nearest (x87_fround: floor(v + 1.0) is
+ * 1), so the floor steps down twice if it has to; real x87s never need the
+ * second step. Exact in every mode means the same
+ * results as the casts they replace: tests/unit/test_fp.c (host, x87) and
+ * tests/hal/fpcheck.c (Watcom and DJGPP, in 86Box) check it. */
+#if defined(__GNUC__) && defined(__i386__)
+MGA_INLINE int32_t mga_irint(double v)
+{
+    int32_t r;
+    __asm__ __volatile__("fistpl %0" : "=m"(r) : "t"(v) : "st");
+    return r;
+}
+MGA_INLINE int64_t mga_irint64(double v)
+{
+    int64_t r;
+    __asm__ __volatile__("fistpll %0" : "=m"(r) : "t"(v) : "st");
+    return r;
+}
+#  define MGA_FISTP 1
+#elif defined(__WATCOMC__) && defined(__386__)
+int32_t mga_irint(double v);
+#pragma aux mga_irint = \
+    "sub esp, 4" \
+    "fistp dword ptr [esp]" \
+    "pop eax" \
+    parm [8087] value [eax] modify exact [eax 8087];
+int64_t mga_irint64(double v);
+#pragma aux mga_irint64 = \
+    "sub esp, 8" \
+    "fistp qword ptr [esp]" \
+    "pop eax" \
+    "pop edx" \
+    parm [8087] value [edx eax] modify exact [eax edx 8087];
+#  define MGA_FISTP 1
+#endif
+
+#ifdef MGA_FISTP
+MGA_INLINE int32_t mga_ifloor(double v)
+{
+    int32_t r = mga_irint(v);
+    if ((double)r > v) {
+        r--;
+        if ((double)r > v)
+            r--;
+    }
+    return r;
+}
+MGA_INLINE int32_t mga_itrunc(double v)
+{
+    int32_t r = mga_ifloor(v);
+    return v < 0 && (double)r != v ? r + 1 : r;
+}
+MGA_INLINE int64_t mga_ifloor64(double v)
+{
+    int64_t r = mga_irint64(v);
+    if ((double)r > v) {
+        r--;
+        if ((double)r > v)
+            r--;
+    }
+    return r;
+}
+MGA_INLINE int64_t mga_itrunc64(double v)
+{
+    int64_t r = mga_ifloor64(v);
+    return v < 0 && (double)r != v ? r + 1 : r;
+}
+#else
+/* Other targets (the x86-64 host build): the plain conversions. */
+MGA_INLINE int32_t mga_itrunc(double v) { return (int32_t)v; }
+MGA_INLINE int32_t mga_ifloor(double v) { int32_t r = (int32_t)v; return (double)r > v ? r - 1 : r; }
+MGA_INLINE int64_t mga_itrunc64(double v) { return (int64_t)v; }
+MGA_INLINE int64_t mga_ifloor64(double v) { int64_t r = (int64_t)v; return (double)r > v ? r - 1 : r; }
+#  if defined(__GNUC__)
+MGA_INLINE int32_t mga_irint(double v) { return (int32_t)__builtin_lrint(v); }
+MGA_INLINE int64_t mga_irint64(double v) { return (int64_t)__builtin_llrint(v); }
+#  endif
+#endif
+
 /* floor() without the C maths library (the DLL links no libm). Exact for
  * |v| < 2^31; larger magnitudes are returned unchanged (already integral
  * at double precision for our uses, or clamped by the caller). */
 MGA_INLINE double mga_floor(double v)
 {
     double t;
+    if (v > -2147483647.0 && v < 2147483647.0)
+        return (double)mga_ifloor(v);
     if (v >= 2147483647.0 || v <= -2147483647.0)
         return v;
-    t = (double)(int32_t)v;
+    t = (double)(int32_t)v;             /* NaN */
     return t > v ? t - 1.0 : t;
 }
 
