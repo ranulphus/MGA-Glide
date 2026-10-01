@@ -172,5 +172,15 @@ void dac_set_ramp(const uint8_t ramp[256]);
 /* fifo.c: the single choke point for register writes (PRD §10). */
 void fifo_reserve(int n);
 void fifo_reset(void);
+/* fifo_reserve's fast path, inline: most reservations fit the slots the
+ * last FIFOSTATUS read found free, and cost no call. */
+extern int mga_fifo_free;
+MGA_INLINE void fifo_need(int n)
+{
+    if (mga_fifo_free >= n)
+        mga_fifo_free -= n;
+    else
+        fifo_reserve(n);
+}
 
 #endif

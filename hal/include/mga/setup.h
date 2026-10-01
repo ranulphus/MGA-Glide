@@ -45,6 +45,13 @@ typedef struct { uint32_t tris, traps, culled_empty; } mga_setup_stats;
 extern mga_setup_stats setup_stats;
 
 void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri_ctx *ctx);
+/* setup_triangle leaves out writes of values a register already holds
+ * (increments, DWGCTL, texture sizes: they keep their value across draws).
+ * Code that writes those registers otherwise tells it: engine_init (reset,
+ * mode set) calls setup_invalidate, the engine's fills, TLUT loads and
+ * ILOADs setup_forget_dwgctl. */
+void setup_invalidate(void);
+void setup_forget_dwgctl(void);
 
 /* Exposed for unit tests: one edge at its first row. */
 typedef struct { int32_t x; int32_t ar_step, ar_err, ar_dec; int neg; } mga_edge;

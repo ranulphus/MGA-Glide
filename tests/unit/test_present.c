@@ -13,6 +13,7 @@
 
 mga_chip mga;
 volatile uint8_t *mga_mmio, *mga_fb;
+int mga_fifo_free;                  /* stays 0: every reservation reaches the stub */
 void fifo_reserve(int n) { (void)n; }
 void fifo_reset(void) {}
 uint32_t sys_time_us(void) { static uint32_t t; return t += 10; }

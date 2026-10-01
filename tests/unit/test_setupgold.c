@@ -13,6 +13,11 @@
  * draw does not. tests/unit/data/setupgold-<abi>.txt holds the hashes made
  * before the triangle-path performance work (2026-10-01).
  *
+ * It also checks FIFO pacing (PRD R3) on every path: each register write
+ * must have a slot reserved by fifo_reserve beforehand (or follow a sync,
+ * which empties the FIFO), and no reservation may exceed the chip's FIFO
+ * depth (it could never be granted).
+ *
  * SETUPGOLD_UPDATE=1 rewrites the file. SETUPGOLD_DUMP=<scenario> prints the
  * hash of every draw of that scenario (to bisect a difference). */
 #include "unit.h"
@@ -30,8 +35,19 @@
 
 mga_chip mga;
 volatile uint8_t *mga_mmio, *mga_fb;
-void fifo_reserve(int n) { (void)n; }
-void fifo_reset(void) {}
+int mga_fifo_free;                  /* stays 0: every reservation reaches fifo_reserve */
+static long credit, unpaced, oversize, writes;
+void fifo_reserve(int n)
+{
+    if (n > mga.fifo_depth)
+        oversize++;
+    credit += n;
+}
+void fifo_reset(void)
+{
+    if (credit < mga.fifo_depth)    /* engine_sync: the FIFO is empty */
+        credit = mga.fifo_depth;
+}
 uint32_t sys_time_us(void) { static uint32_t t; return t += 10; }
 void sys_delay_us(uint32_t us) { (void)us; }
 
@@ -94,6 +110,11 @@ static void hook(uint32_t off, uint32_t v)
 {
     int exec = ((off >= 0x1C00 && off < 0x1E00) || (off >= 0x2C00 && off < 0x2E00)) && (off & 0x300) == 0x100;
     uint32_t a = exec ? off & ~0x100u : off;
+    writes++;
+    if (--credit < 0) {
+        unpaced++;
+        credit = 0;
+    }
     if (a >= 0x4000)
         return;
     if (mga.has_dual_tex && banked(a)) {
@@ -262,8 +283,48 @@ static void interleave(void)
     }
 }
 
+/* A convex polygon whose attributes all lie on one plane (as a game's
+ * surfaces do), drawn as a fan: its triangles share most register values,
+ * which is where the setup leaves writes out. */
+typedef struct { double a, bx, by; } lin;
+static double lin_at(const lin *l, double x, double y) { return l->a + l->bx * x + l->by * y; }
+static void rnd_lin(lin *l, double lo, double hi, double slope)
+{
+    l->a = rndf(lo, hi);
+    l->bx = rndf(-slope, slope);
+    l->by = rndf(-slope, slope);
+}
+
+static int fan_poly(mga_svtx *p, int z32)
+{
+    lin z, r, g, b, a, f, s, t, s1, t1, q;
+    double cx = rndf(0, W), cy = rndf(0, H), rad = rndf(2, 200), ang = rndf(0, 6.283);
+    int n = rndi(3, 8), i;
+    rnd_lin(&z, 0, z32 ? 4.0e9 : 60000.0, z32 ? 1e6 : 40.0);
+    rnd_lin(&r, 0, 255, 0.5); rnd_lin(&g, 0, 255, 0.5); rnd_lin(&b, 0, 255, 0.5);
+    rnd_lin(&a, 0, 255, 0.5); rnd_lin(&f, 0, 255, 0.5);
+    rnd_lin(&q, 0.05, 1.5, 0.001);
+    rnd_lin(&s, -3, 3, 0.02); rnd_lin(&t, -3, 3, 0.02); rnd_lin(&s1, -9, 9, 0.05); rnd_lin(&t1, -9, 9, 0.05);
+    if (chance(30)) { r.bx = r.by = g.bx = g.by = b.bx = b.by = 0; }       /* flat colour */
+    for (i = 0; i < n; i++) {
+        double x = cx + rad * cos(ang + 6.283 * i / n), y = cy + rad * sin(ang + 6.283 * i / n);
+        double qq = lin_at(&q, x, y);
+        memset(&p[i], 0, sizeof p[i]);
+        p[i].X16 = (int32_t)(x * 16.0);
+        p[i].Y16 = (int32_t)(y * 16.0);
+        p[i].z = lin_at(&z, x, y);
+        if (p[i].z < 0) p[i].z = 0;
+        p[i].r = (float)lin_at(&r, x, y); p[i].g = (float)lin_at(&g, x, y); p[i].b = (float)lin_at(&b, x, y);
+        p[i].a = (float)lin_at(&a, x, y); p[i].fog = (float)lin_at(&f, x, y);
+        p[i].q = (float)qq;
+        p[i].s = (float)(lin_at(&s, x, y) * qq); p[i].t = (float)(lin_at(&t, x, y) * qq);
+        p[i].s1 = (float)(lin_at(&s1, x, y) * qq); p[i].t1 = (float)(lin_at(&t1, x, y) * qq);
+    }
+    return n;
+}
+
 static void scenario(const char *name, mga_family fam, int voodoo, int extreme, int n, FILE *out,
-                     const char *want_file)
+                     const char *want_file, int fans)
 {
     int i;
     const char *dump = getenv("SETUPGOLD_DUMP");
@@ -281,19 +342,20 @@ static void scenario(const char *name, mga_family fam, int voodoo, int extreme, 
     m1_tc2 = m1_tw = m1_th = 0;
     run_hash = 0xCBF29CE484222325ull;
     draws = 0;
+    credit = unpaced = oversize = writes = 0;
     dumping = dump && !strcmp(dump, name);
-    seed = 0x9E3779B9u ^ (uint32_t)(fam * 7919 + voodoo * 104729 + extreme * 1299709);
+    seed = 0x9E3779B9u ^ (uint32_t)(fam * 7919 + voodoo * 104729 + extreme * 1299709 + fans * 15485863);
     engine_init(1024, 16);
     rnd_target();
     engine_set_clip(0, 0, W, H);
     rnd_tex(&ts0);
     rnd_tex(&ts1);
     for (i = 0; i < n; i++) {
-        mga_svtx a, b, c;
+        mga_svtx a, b, c, poly[8];
         mga_tri_ctx ctx;
         uint32_t f = 0;
-        int z32;
-        if (chance(4))
+        int z32, np = 0, j;
+        if (chance(fans ? 15 : 4))
             interleave();
         memset(&ctx, 0, sizeof ctx);
         if (chance(85)) f |= MGA_S_COLOR;
@@ -315,6 +377,18 @@ static void scenario(const char *name, mga_family fam, int voodoo, int extreme, 
         ctx.tex_tw = ts0.w_log2; ctx.tex_th = ts0.h_log2;
         ctx.tex_tw1 = ts1.w_log2; ctx.tex_th1 = ts1.h_log2;
         ctx.texctl2_1 = ts1.texctl2 | TEXCTL2_DUALTEX;
+        if (fans) {
+            np = fan_poly(poly, z32);
+            for (j = 1; j + 1 < np; j++) {
+                a = poly[0]; b = poly[j]; c = poly[j + 1];
+                if (f & MGA_S_TEX)
+                    tex_adjust_coords(&a, &b, &c, &ts0);
+                if (f & MGA_S_TEX2)
+                    tex_adjust_coords1(&a, &b, &c, &ts1);
+                setup_triangle(&a, &b, &c, &ctx);
+            }
+            continue;
+        }
         rnd_vtx(&a, extreme, z32);
         rnd_vtx(&b, extreme, z32);
         rnd_vtx(&c, extreme, z32);
@@ -329,6 +403,11 @@ static void scenario(const char *name, mga_family fam, int voodoo, int extreme, 
     }
     refrast_write_hook = NULL;
     FPU_LEAVE();
+    if (unpaced || oversize)
+        fprintf(stderr, "setupgold: %s: %ld writes without a reserved FIFO slot, %ld reservations beyond %d\n", name,
+                unpaced, oversize, mga.fifo_depth);
+    CHECK(unpaced == 0 && oversize == 0);
+    printf("setupgold: %-16s %5u draws, %6ld register writes\n", name, draws, writes);
     if (out)
         fprintf(out, "%s %u %016llx\n", name, draws, (unsigned long long)run_hash);
     else {
@@ -355,11 +434,13 @@ static void scenario(const char *name, mga_family fam, int voodoo, int extreme, 
 
 int unit_main(void)
 {
-    static const struct { const char *name; mga_family fam; int voodoo, extreme; } sc[] = {
-        { "g100-exact", MGA_FAMILY_G100, 0, 0 }, { "g100-voodoo", MGA_FAMILY_G100, 1, 0 },
-        { "g200-exact", MGA_FAMILY_G200, 0, 0 }, { "g200-voodoo", MGA_FAMILY_G200, 1, 0 },
-        { "g400-exact", MGA_FAMILY_G400, 0, 0 }, { "g400-voodoo", MGA_FAMILY_G400, 1, 0 },
-        { "g200-extreme", MGA_FAMILY_G200, 0, 1 }, { "g400-extreme", MGA_FAMILY_G400, 1, 1 },
+    static const struct { const char *name; mga_family fam; int voodoo, extreme, fans; } sc[] = {
+        { "g100-exact", MGA_FAMILY_G100, 0, 0, 0 }, { "g100-voodoo", MGA_FAMILY_G100, 1, 0, 0 },
+        { "g200-exact", MGA_FAMILY_G200, 0, 0, 0 }, { "g200-voodoo", MGA_FAMILY_G200, 1, 0, 0 },
+        { "g400-exact", MGA_FAMILY_G400, 0, 0, 0 }, { "g400-voodoo", MGA_FAMILY_G400, 1, 0, 0 },
+        { "g200-extreme", MGA_FAMILY_G200, 0, 1, 0 }, { "g400-extreme", MGA_FAMILY_G400, 1, 1, 0 },
+        { "g100-fans", MGA_FAMILY_G100, 0, 0, 1 }, { "g200-fans", MGA_FAMILY_G200, 0, 0, 1 },
+        { "g400-fans", MGA_FAMILY_G400, 0, 0, 1 }, { "g400-fans-voodoo", MGA_FAMILY_G400, 1, 0, 1 },
     };
     const char *file = sizeof(void *) == 4 ? "tests/unit/data/setupgold-host32.txt"
                                            : "tests/unit/data/setupgold-host64.txt";
@@ -374,7 +455,7 @@ int unit_main(void)
         fprintf(out, "# tests/unit/test_setupgold.c: scenario, draws, hash of the register state at each draw\n");
     }
     for (i = 0; i < sizeof sc / sizeof sc[0]; i++)
-        scenario(sc[i].name, sc[i].fam, sc[i].voodoo, sc[i].extreme, 4000, out, file);
+        scenario(sc[i].name, sc[i].fam, sc[i].voodoo, sc[i].extreme, sc[i].fans ? 1500 : 4000, out, file, sc[i].fans);
     if (out) {
         fclose(out);
         printf("setupgold: wrote %s\n", file);

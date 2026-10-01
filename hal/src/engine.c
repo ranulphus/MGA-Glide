@@ -4,6 +4,7 @@
 #include "mga/mmio.h"
 #include "mga/regs_mga.h"
 #include "mga/sys.h"
+#include "mga/setup.h"
 
 static mga_target cur;
 uint32_t engine_resets, engine_timeouts;
@@ -39,6 +40,7 @@ static uint32_t maccess_for(int bpp, int zbits)
 
 void engine_init(int pitch_px, int bpp)
 {
+    setup_invalidate();                     /* after a reset or a mode set nothing is known */
     engine_sync(200000);
     fifo_reset();
     fifo_reserve(10);
@@ -196,6 +198,7 @@ static void solid_fill(int x, int y, int w, int h, uint32_t fcol)
     if (w <= 0 || h <= 0)
         return;
     fifo_reserve(4);
+    setup_forget_dwgctl();
     MGA_WR32(MGAREG_DWGCTL, DWG_OPCOD_TRAP | DWG_ATYPE_RSTR | DWG_SOLID | DWG_ARZERO |
                             DWG_SGNZERO | DWG_SHFTZERO | DWG_BOP_COPY | DWG_TRANSC |
                             DWG_BLTMOD_BMONOLEF);
@@ -273,6 +276,7 @@ void engine_tlut_load(uint32_t off, int first, int count)
     MGA_WR32(MGAREG_AR0, src + (uint32_t)count - 1);
     MGA_WR32(MGAREG_AR3, src);
     MGA_WR32(MGAREG_FXBNDRY, 0);
+    setup_forget_dwgctl();
     MGA_WR32(MGAREG_DWGCTL, 0x0E0C6098u);          /* BITBLT, RSTR, linear, SRC, sgnzero, shftzero */
     MGA_WR32(MGAREG_YDSTLEN + MGAREG_EXEC, ((uint32_t)first << 16) | (uint32_t)count);
     fifo_reserve(1);
@@ -314,6 +318,7 @@ int engine_iload_begin(uint32_t off, int pitch_px, int bpp, int x, int y, int w,
     MGA_WR32(MGAREG_AR3, 0);
     MGA_WR32(MGAREG_AR5, 0);
     MGA_WR32(MGAREG_FXBNDRY, ((uint32_t)(x + w - 1) << 16) | (uint32_t)x);
+    setup_forget_dwgctl();
     MGA_WR32(MGAREG_DWGCTL, DWG_OPCOD_ILOAD | DWG_ATYPE_RPL | DWG_SGNZERO | DWG_SHFTZERO | DWG_BOP_COPY |
                             DWG_BLTMOD_BFCOL | DWG_CLIPDIS);
     MGA_WR32(MGAREG_YDSTLEN + MGAREG_EXEC, ((uint32_t)y << 16) | (uint32_t)h);
