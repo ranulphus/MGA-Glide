@@ -10,10 +10,23 @@
 #include <string.h>
 
 /* The Voodoo converts float vertices to 12.4 fixed point by truncation
- * toward zero; games that follow 3dfx's advice pre-snap to 1/16 anyway. */
+ * toward zero; games that follow 3dfx's advice pre-snap to 1/16 anyway.
+ * v * 16 is exact, so the FISTP truncation (mga/fp.h) gives the cast's
+ * value without its control-word changes. */
 static int32_t snap16(float v)
 {
+    double x = (double)(v * 16.0f);
+    if (x > -2147483647.0 && x < 2147483647.0)
+        return mga_itrunc(x);
     return (int32_t)(v * 16.0f);
+}
+
+/* (int)mga_floor(x), without a cast's control-word changes in range. */
+static int32_t floor_i(double x)
+{
+    if (x > -2147483647.0 && x < 2147483647.0)
+        return mga_ifloor(x);
+    return (int32_t)mga_floor(x);
 }
 
 static uint32_t zmode_for(GrCmpFnc_t f, int reversed)
@@ -49,8 +62,8 @@ static void vtx(mga_svtx *o, const GrVertex *v, int wmode, int csrc, int asrc, i
     if (mg.scaled) {
         /* After the Voodoo's truncation to 1/16 pixel, so coverage scales
          * the same way everywhere. */
-        o->X16 = (int32_t)mga_floor(o->X16 * mg.sx);
-        o->Y16 = (int32_t)mga_floor(o->Y16 * mg.sy);
+        o->X16 = floor_i(o->X16 * mg.sx);
+        o->Y16 = floor_i(o->Y16 * mg.sy);
     }
     if (wmode)
         o->z = mg_wdepth_from_oow(v->oow, mg.zbits);
@@ -165,9 +178,9 @@ static int lod_at(const lod_planes *L, double px, double py)
     if (g <= 0)
         return -64 * 4;
     /* quarter levels: floor(4 * log2(sqrt g)) = floor(2 * log2 g) */
-    lam = (int)mga_floor(2.0 * log2d(g));
+    lam = floor_i(2.0 * log2d(g));
     if (mg.scaled)
-        lam -= (int)mga_floor(2.0 * log2d(mg.sx * mg.sy) + 0.5);   /* more pixels per texel: finer levels */
+        lam -= floor_i(2.0 * log2d(mg.sx * mg.sy) + 0.5);   /* more pixels per texel: finer levels */
     return lam + (int)(tmu0.lod_bias * 4.0f + (tmu0.lod_bias >= 0 ? 0.5f : -0.5f));
 }
 

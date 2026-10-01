@@ -32,9 +32,12 @@ unsigned mg_wcode_from_oow(double oow)
 {
     uint64_t w;
     int e;
+    double x;
     if (oow >= 1.0)
         return 0;
-    w = (uint64_t)(oow * 4294967296.0);
+    x = oow * 4294967296.0;
+    /* Truncation without the cast's control-word changes (mga/fp.h). */
+    w = x >= 0.0 && x < 4611686018427387904.0 ? (uint64_t)mga_itrunc64(x) : (uint64_t)(oow * 4294967296.0);
     if (!(w & 0xFFFF0000u))
         return 0xF001;
     for (e = 0; e < 16 && !((w >> 16) & (0x8000u >> e)); e++)
