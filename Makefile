@@ -72,6 +72,31 @@ build/ow/GLIDE2X.OVL: $(RT_OBJS) build/ow/mgahal.lib build/ow/glide2x.lnk
 	$(Q)$(PYTHON) tools/abi/lefix.py $@ >/dev/null
 runtime: build/ow/GLIDE2X.OVL
 
+# Profiling flavour (hal/include/mga/prof.h): the same runtime with stage
+# timers; MGAGLIDE stats=N adds an MGL-PROF line to each MGL-STAT. Pentium only.
+OWP := build/ow-prof
+RT_OBJS_PROF := $(RT_SRCS:%.c=$(OWP)/%.obj) $(OWP)/gen/stubs.obj $(OWP)/gen/api_names.obj $(OWP)/gen/thunks.obj
+$(OWP)/%.obj: %.c | build/gen/stamp
+	@mkdir -p $(dir $@)
+	$(Q)echo "  WCC     $< (prof)"
+	$(Q)$(WCC) $(OW_CFLAGS) -dMGA_PROF=1 $(if $(filter src/% hal/%,$<),$(OW_DLLFLAGS)) -ad=$(@:.obj=.d) -adt=$@ \
+	  -add=$< -adfs -fo=$@ $<
+$(OWP)/gen/%.obj: build/gen/%.c | build/gen/stamp
+	@mkdir -p $(dir $@)
+	$(Q)echo "  WCC     $< (prof)"
+	$(Q)$(WCC) $(OW_CFLAGS) -dMGA_PROF=1 $(OW_DLLFLAGS) -ad=$(@:.obj=.d) -adt=$@ -add=$< -adfs -fo=$@ $<
+$(OWP)/mgahal.lib: $(HAL_OW:%.c=$(OWP)/%.obj)
+	@rm -f $@
+	$(Q)echo "  WLIB    $@"
+	$(Q)$(WLIB) -q -b -n $@ $(addprefix +,$^)
+$(OWP)/GLIDE2X.OVL: $(RT_OBJS_PROF) $(OWP)/mgahal.lib build/ow/glide2x.lnk
+	$(Q)echo "  WLINK   $@"
+	$(Q)$(WLINK) @build/ow/glide2x.lnk name $@ option map=$(OWP)/GLIDE2X.map \
+	  $(addprefix file ,$(RT_OBJS_PROF)) library $(OWP)/mgahal.lib
+	$(Q)$(PYTHON) tools/abi/lefix.py $@ >/dev/null
+runtime-prof: $(OWP)/GLIDE2X.OVL
+.PHONY: runtime-prof
+
 # GLTRACE.OVL: the recording proxy in front of a retail runtime (docs/trace.md).
 PX_OBJS := build/ow/gen/proxy_thunks.obj build/ow/proxy/proxy.obj build/ow/proxy/leload.obj \
            build/ow/src/trace/trace.obj build/ow/src/trace/trfmt.obj build/ow/src/tex/texfmt.obj \
@@ -156,6 +181,7 @@ clean:
 
 help:
 	@echo "runtime        build build/ow/GLIDE2X.OVL (default)"
+	@echo "runtime-prof   build build/ow-prof/GLIDE2X.OVL with stage timers (MGL-PROF)"
 	@echo "check-exports  verify module name and exported names against the games"
 	@echo "check-clib     verify the DLL links only self-contained C-library code"
 	@echo "tests-host     build and run host unit tests"

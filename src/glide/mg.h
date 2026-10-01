@@ -126,6 +126,19 @@ typedef struct { uint32_t tris; uint32_t tri_processed, tri_drawn; } mg_stats_t;
 extern mg_stats_t mg_stats;
 void mg_frame_end(void);
 
+/* Glide's profiling stages (MGA_PROF builds, hal/include/mga/prof.h): the
+ * MGL-PROF line at each MGL-STAT. Time in LFB and texture API calls stays
+ * in app. */
+#include "mga/prof.h"
+enum {
+    PROF_G_VTX = PROF_CLIENT,   /* draw calls: vertices, culling, plans, bands (setup excluded) */
+    PROF_G_TEXBIND,             /* binding the level(s) and emitting texture state */
+    PROF_G_TEXDL,               /* converting and writing a level into VRAM */
+    PROF_G_DRAIN,               /* grBufferSwap waiting for the engine */
+    PROF_G_VSYNC,               /* grBufferSwap waiting for retrace */
+    PROF_G_SWAP                 /* the rest of grBufferSwap (present, flip, statistics) */
+};
+
 /* FPU control for entry points that do float maths (see fp.h). */
 #include "mga/fp.h"
 

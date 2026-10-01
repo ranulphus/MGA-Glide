@@ -59,22 +59,29 @@ GR_ENTRY(void, grBufferClear, (GrColor_t color, GrAlpha_t alpha, FxU16 depth))
 
 GR_ENTRY(void, grBufferSwap, (int swap_interval))
 {
-    int i, t;
+    int i, t, po;
     if (!mg.open)
         return;
+    po = PROF_SWITCH(PROF_G_DRAIN);
     engine_sync(200000);
+    PROF_BACK(PROF_G_SWAP);
     if (mg.present_scaled) {
         /* Scale the finished frame into the hidden display buffer; flip
          * that once the engine is done with it. */
         present(mg.buf_off[mg.back], 0);
+        PROF_BACK(PROF_G_DRAIN);
         engine_sync(200000);
+        PROF_BACK(PROF_G_VSYNC);
         for (i = 0; i < swap_interval; i++)
             engine_vsync_wait(100000);
+        PROF_BACK(PROF_G_SWAP);
         mg.disp_front ^= 1;
         vbe_set_display_start(mg.disp_off[mg.disp_front], mg.disp_pitch_px * (mg.bpp / 8), mg.bpp);
     } else {
+        PROF_BACK(PROF_G_VSYNC);
         for (i = 0; i < swap_interval; i++)
             engine_vsync_wait(100000);
+        PROF_BACK(PROF_G_SWAP);
         vbe_set_display_start(mg.buf_off[mg.back], mg.pitch_px * (mg.bpp / 8), mg.bpp);
     }
     t = mg.front;
@@ -86,6 +93,7 @@ GR_ENTRY(void, grBufferSwap, (int swap_interval))
     mg.frame++;
     tex_frame();
     mg_frame_end();
+    PROF_BACK(po);
 }
 
 GR_ENTRY(int, grBufferNumPending, (void)) { return 0; }

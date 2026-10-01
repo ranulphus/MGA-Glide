@@ -28,7 +28,7 @@ for f in tests/hal/smoke.c tests/hal/probe.c tests/hal/romdump.c tests/shim/hx.c
 # Loop C rig (Linux port is part of hal/).
 for f in tests/rig/mgarig.c $(git ls-files tools/rig); do copy "$f"; done
 # Loop A harness, 86Box build and patches, setup scripts, dev container.
-for f in $(git ls-files tools/loopa tools/86box tools/setup tools/docker tools/bench) tools/dev tools/imgcmp.py \
+for f in $(git ls-files tools/loopa tools/86box tools/setup tools/docker tools/bench) tools/perf/profsum.py tools/dev tools/imgcmp.py \
          tools/games/mkimage.sh; do copy "$f"; done      # mkimage.sh: run.py --game builds D: with it
 # Documents that describe the shared parts.
 for f in docs/loops.md docs/emulated-g200.md docs/emulated-g400.md docs/reference-gaps.md docs/bench.md docs/loop-c-results.md LICENSE; do copy "$f"; done

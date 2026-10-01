@@ -305,8 +305,10 @@ static void draw_band(const mga_svtx *a0, const mga_svtx *b0, const mga_svtx *c0
     mga_svtx sa = *a0, sb = *b0, sc = *c0;
     tex_level_hw hw;
     double sig_s, sig_t;
+    int po;
     if (F && F->on)
         fog_band(F, row0, row1, &sa, &sb, &sc);
+    po = PROF_SWITCH(PROF_G_TEXBIND);
     if (plan->tex_white || tex_bind_level(lod, o->var.kind ? &o->var : NULL, &hw) < 0) {
         tex_white(&hw);
         sig_s = sig_t = 0;
@@ -314,6 +316,7 @@ static void draw_band(const mga_svtx *a0, const mga_svtx *b0, const mga_svtx *c0
         sig_s = (double)hw.logical_maxdim / (256.0 * (1 << hw.w_log2));
         sig_t = (double)hw.logical_maxdim / (256.0 * (1 << hw.h_log2));
     }
+    PROF_BACK(po);
     if (!tmu0.combine_set)
         sig_s = sig_t = 0;               /* retail Glide: no s,t until a texture combine is set */
     sa.s *= (float)sig_s; sa.t *= (float)sig_t;
@@ -327,6 +330,7 @@ static void draw_band(const mga_svtx *a0, const mga_svtx *b0, const mga_svtx *c0
     {
         uint32_t mip_org[5];
         int mip_n = 0;
+        po = PROF_SWITCH(PROF_G_TEXBIND);
         if (o->mip_n > 1 && !plan->tex_white) {
             /* Bind the following levels while each is 8x8 or more (their
              * pitch then halves, as the G200 expects) and converts to the
@@ -343,6 +347,7 @@ static void draw_band(const mga_svtx *a0, const mga_svtx *b0, const mga_svtx *c0
             }
         }
         emit_texture_state(&hw, plan->modulate, o, mip_org, mip_n);
+        PROF_BACK(po);
     }
     ctx->tex_tw = hw.w_log2;
     ctx->tex_th = hw.h_log2;
@@ -773,26 +778,33 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
 
 GR_ENTRY(void, grDrawTriangle, (const GrVertex *a, const GrVertex *b, const GrVertex *c))
 {
+    int po;
     FPU_ENTER();
+    po = PROF_SWITCH(PROF_G_VTX);
     mg_draw_tri(a, b, c);
+    PROF_BACK(po);
     FPU_LEAVE();
 }
 
 GR_ENTRY(void, grDrawPolygonVertexList, (int nverts, const GrVertex vlist[]))
 {
-    int i;
+    int i, po;
     FPU_ENTER();
+    po = PROF_SWITCH(PROF_G_VTX);
     for (i = 2; i < nverts; i++)
         mg_draw_tri(&vlist[0], &vlist[i - 1], &vlist[i]);
+    PROF_BACK(po);
     FPU_LEAVE();
 }
 
 GR_ENTRY(void, grDrawPolygon, (int nverts, const int ilist[], const GrVertex vlist[]))
 {
-    int i;
+    int i, po;
     FPU_ENTER();
+    po = PROF_SWITCH(PROF_G_VTX);
     for (i = 2; i < nverts; i++)
         mg_draw_tri(&vlist[ilist[0]], &vlist[ilist[i - 1]], &vlist[ilist[i]]);
+    PROF_BACK(po);
     FPU_LEAVE();
 }
 
@@ -821,10 +833,13 @@ static void quad(const GrVertex *p, float x0, float y0, float x1, float y1)
 GR_ENTRY(void, grDrawPoint, (const GrVertex *pt))
 {
     float x, y;
+    int po;
     FPU_ENTER();
+    po = PROF_SWITCH(PROF_G_VTX);
     x = (float)mga_floor(pt->x);
     y = (float)mga_floor(pt->y);
     quad(pt, x, y, x + 1.0f, y + 1.0f);
+    PROF_BACK(po);
     FPU_LEAVE();
 }
 
@@ -832,8 +847,9 @@ GR_ENTRY(void, grDrawLine, (const GrVertex *v1, const GrVertex *v2))
 {
     GrVertex q[4];
     float dx, dy;
-    int i;
+    int i, po;
     FPU_ENTER();
+    po = PROF_SWITCH(PROF_G_VTX);
     dx = v2->x - v1->x; dy = v2->y - v1->y;
     q[0] = *v1; q[1] = *v2; q[2] = *v2; q[3] = *v1;
     if ((dx < 0 ? -dx : dx) >= (dy < 0 ? -dy : dy)) {
@@ -845,6 +861,7 @@ GR_ENTRY(void, grDrawLine, (const GrVertex *v1, const GrVertex *v2))
         mg_draw_tri(&q[0], &q[1], &q[2]);
         mg_draw_tri(&q[0], &q[2], &q[3]);
     }
+    PROF_BACK(po);
     FPU_LEAVE();
 }
 

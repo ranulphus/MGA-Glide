@@ -6,6 +6,7 @@
 #ifndef MGA_MMIO_H
 #define MGA_MMIO_H
 #include "mga/types.h"
+#include "mga/prof.h"
 
 extern volatile uint8_t *mga_mmio;
 
@@ -32,7 +33,7 @@ uint8_t  mga_host_rd8(uint32_t off);
 #  else
 #    define MGA_TRACE(off, v) ((void)0)
 #  endif
-#  define MGA_WR32(off, v) do { MGA_TRACE((off), (v)); \
+#  define MGA_WR32(off, v) do { MGA_TRACE((off), (v)); PROF_WR(); \
         *(volatile uint32_t *)(mga_mmio + (off)) = (uint32_t)(v); } while (0)
 #  define MGA_RD32(off)    (*(volatile uint32_t *)(mga_mmio + (off)))
 #  define MGA_WR8(off, v)  (*(volatile uint8_t *)(mga_mmio + (off)) = (uint8_t)(v))

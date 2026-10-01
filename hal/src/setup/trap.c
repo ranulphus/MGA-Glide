@@ -11,6 +11,7 @@
 #include "mga/mmio.h"
 #include "mga/regs_mga.h"
 #include "mga/fp.h"
+#include "mga/prof.h"
 
 mga_setup_stats setup_stats;
 
@@ -119,7 +120,22 @@ static int64_t z32_inc(double d)
     return (int64_t)mga_floor(d * 32768.0 + 0.5);
 }
 
+#ifdef MGA_PROF
+/* The setup in three stages (planes, increments, trapezoids), returning to
+ * the caller's stage. */
+static void setup_tri(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri_ctx *ctx);
 void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri_ctx *ctx)
+{
+    int o = PROF_SWITCH(PROF_SPLANE);
+    setup_tri(a, b, c, ctx);
+    PROF_BACK(o);
+}
+#  define SETUP_TRI static void setup_tri
+#else
+#  define SETUP_TRI void setup_triangle
+#endif
+
+SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri_ctx *ctx)
 {
     const mga_svtx *v[3], *t;
     int64_t area2, cross;
@@ -215,6 +231,7 @@ void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, con
     }
 
     /* Per-triangle increments. */
+    PROF_SWITCH(PROF_SINC);
     fifo_reserve(1);
     MGA_WR32(MGAREG_DWGCTL, ctx->dwgctl);
     if (flags & MGA_S_Z) {
@@ -277,6 +294,7 @@ void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, con
         MGA_WR32(MGAREG_TMR(5), (uint32_t)fx(pq.dy, 65536.0));
     }
 
+    PROF_SWITCH(PROF_STRAP);
     y_top = first_row(v[0]->Y16);
     y_mid = first_row(v[1]->Y16);
     y_bot = first_row(v[2]->Y16);

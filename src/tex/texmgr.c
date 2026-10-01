@@ -477,7 +477,7 @@ int tex_bind_level(GrLOD_t lod, const tex_variant *var, tex_level_hw *hw)
     }
     if (!r->hw_valid[lod]) {
         tex_level_hw *lv = &r->hw[lod];
-        int hw_w = 1 << lv->w_log2, hw_h = 1 << lv->h_log2, y;
+        int hw_w = 1 << lv->w_log2, hw_h = 1 << lv->h_log2, y, po = PROF_SWITCH(PROF_G_TEXDL);
         /* The level may still be read by queued draws. */
         engine_sync(200000);
         lv->hwfmt = tex_convert_level(r->fmt, r->shadow + r->shadow_off[lod], w, h, staging, hw_w, hw_w, hw_h,
@@ -485,6 +485,7 @@ int tex_bind_level(GrLOD_t lod, const tex_variant *var, tex_level_hw *hw)
         for (y = 0; y < hw_h; y++)
             memcpy((void *)(mga_fb + lv->org + (uint32_t)(y * hw_w * 2)), staging + y * hw_w, (size_t)hw_w * 2);
         r->hw_valid[lod] = 1;
+        PROF_BACK(po);
     }
     *hw = r->hw[lod];
     hw->logical_maxdim = w > h ? w : h;
