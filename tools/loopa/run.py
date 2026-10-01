@@ -693,7 +693,10 @@ def main():
     ap.add_argument("--keep-vm", action="store_true")
     ap.add_argument("--emit-config", action="store_true",
                     help="print the generated 86box.cfg, RUN.BAT and golden key, and exit (tools/loopa/cfgcheck.py)")
-    a = ap.parse_args()
+    # LOOPA_EXTRA_ARGS: more options for every job, whoever starts it (GLOS's
+    # survey loads a DPMI host this way into other repos' jobs).
+    import shlex
+    a = ap.parse_args(sys.argv[1:] + shlex.split(os.environ.get("LOOPA_EXTRA_ARGS", "")))
     sys.exit(emit_config(a) if a.emit_config else run(a))
 
 
