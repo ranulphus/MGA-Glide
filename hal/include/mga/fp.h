@@ -122,6 +122,16 @@ MGA_INLINE int64_t mga_irint64(double v) { return (int64_t)__builtin_llrint(v); 
 #  endif
 #endif
 
+/* lrint() for code inside FPU_ENTER (round to nearest): FISTP, corrected
+ * where 86Box's rounds a tiny negative to +1 (above). On an x87 in that
+ * mode the result is never more than half above v, so the step never
+ * fires; DJGPP's lrint() gets the 86Box case right, and so must this. */
+MGA_INLINE int32_t mga_irint_nearest(double v)
+{
+    int32_t r = mga_irint(v);
+    return (double)r - v > 0.5 ? r - 1 : r;
+}
+
 /* floor() without the C maths library (the DLL links no libm). Exact for
  * |v| < 2^31; larger magnitudes are returned unchanged (already integral
  * at double precision for our uses, or clamped by the caller). */

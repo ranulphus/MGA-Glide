@@ -210,6 +210,8 @@ static long fpcheck_run(void)
                         bad = "ifloor", got = mga_ifloor(v), want = (long long)want_floor[i];
                     else if ((double)mga_itrunc(v) != want_trunc[i])
                         bad = "itrunc", got = mga_itrunc(v), want = (long long)want_trunc[i];
+                    else if (m == 0 && (double)mga_irint_nearest(v) != want_rint[0][i])
+                        bad = "irint_nearest", got = mga_irint_nearest(v), want = (long long)want_rint[0][i];
                     else if ((double)mga_irint(v) != want_rint[m][i]) {
                         if (fpc_86box && m == 0 && v < 0 && v > -1.1102230246251565e-16 && mga_irint(v) == 1)
                             fpc_quirks++;
