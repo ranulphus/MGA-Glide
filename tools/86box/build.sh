@@ -46,16 +46,29 @@ fi
 ln -sfn "$(basename "$out")" "$BOX86_DIR/bin/86Box"
 
 roms=$BOX86_DIR/roms
+# The BF6 and Matrox ROMs for the Pentium II profile; the Shuttle HOT-433A and
+# the S3 Trio64V2/DX for the 486 profiles (run.py --machine, --card vbe).
+rom_dirs="/machines/bf6/ /video/matrox/ /machines/hot433/ /video/s3/"
 if [ "$(cat "$roms/.commit" 2>/dev/null)" != "$ROMS_COMMIT" ]; then
   rm -rf "$roms"
   git init -q "$roms"
   git -C "$roms" remote add origin "$ROMS_REPO"
   git -C "$roms" config core.sparseCheckout true
-  printf '%s\n' /machines/bf6/ /video/matrox/ > "$roms/.git/info/sparse-checkout"
+  printf '%s\n' $rom_dirs > "$roms/.git/info/sparse-checkout"
   git -C "$roms" fetch -q --depth 1 --filter=blob:none origin "$ROMS_COMMIT"
   git -C "$roms" checkout -q FETCH_HEAD
   echo "$ROMS_COMMIT" > "$roms/.commit"
   echo "86box: roms at $ROMS_COMMIT"
+fi
+# A checkout made with a shorter list gains the missing directories in place
+# (other jobs may be using it, so it is never removed for this).
+added=0
+for d in $rom_dirs; do
+  grep -qxF "$d" "$roms/.git/info/sparse-checkout" || { echo "$d" >> "$roms/.git/info/sparse-checkout"; added=1; }
+done
+if [ "$added" = 1 ]; then
+  git -C "$roms" read-tree -mu HEAD
+  echo "86box: roms gained $rom_dirs"
 fi
 # Genuine Matrox BIOSes for the emulated G200/G400/G450 (local patches 0004+).
 mbios=$roms/video/matrox/mgaglide
@@ -66,7 +79,8 @@ if [ ! -s "$mbios/900-33.bin" ] || [ ! -s "$mbios/897-21.bin" ] || [ ! -s "$mbio
   rm -f "$mbios/setup257.exe"
   echo "86box: Matrox BIOSes in $mbios"
 fi
-for f in machines/bf6/Beh_70.bin video/matrox/productiva8mbsdr.BIN video/matrox/mgaglide/900-33.bin; do
+for f in machines/bf6/Beh_70.bin video/matrox/productiva8mbsdr.BIN video/matrox/mgaglide/900-33.bin \
+         machines/hot433/2A4X5H21.BIN video/s3/86c775_2.bin; do
   [ -s "$roms/$f" ] || { echo "86box: missing ROM $f" >&2; exit 1; }
 done
 echo "86box: ready ($BOX86_DIR/bin/86Box, key $key)"

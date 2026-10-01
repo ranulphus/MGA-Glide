@@ -40,7 +40,7 @@ $(eval $(call dos_exe,GLPLAY,$(GLPLAY_OBJS)))
 $(eval $(call dos_exe,CONFORM,$(CONFORM_OBJS)))
 
 # 16-bit .COM helpers.
-DOS_TOOLS := UTEXIT SERSAY WAITSEC REBOOT VMODE KEYWAIT VECCHK SBCHK
+DOS_TOOLS := UTEXIT SERSAY WAITSEC REBOOT VMODE KEYWAIT VECCHK SBCHK VBEINFO
 define dos_com
 build/ow/dos/$(1).COM: tools/dos/$(2).c
 	@mkdir -p build/ow/dos/obj16
@@ -56,6 +56,7 @@ $(eval $(call dos_com,VMODE,vmode))
 $(eval $(call dos_com,KEYWAIT,keywait))
 $(eval $(call dos_com,VECCHK,vecchk))
 $(eval $(call dos_com,SBCHK,sbchk))
+$(eval $(call dos_com,VBEINFO,vbeinfo))
 
 dostools: $(DOS_TOOLS:%=build/ow/dos/%.COM)
 dostests: $(DOS_EXES) dostools

@@ -29,6 +29,10 @@ CASES = {
                         "--mem 128 --pre 'SET BLASTER=A220 I5 D1 H5 T6'",
     "joystick": "--exe build/djgpp/JOYTEST.EXE --card g200 --keys @HX-TEST,1:joy:axis:0:0",
     "cmd": "--card g400 --voodoo 0 --cmd 'SERSAY HX-START x' --cmd 'SERSAY HX-DONE 0'",
+    # Machine profiles and the generic VBE card.
+    "486dx2": "--machine 486dx2 --exe build/ow/dos/HELLO.EXE",
+    "486dx4": "--machine 486dx4 --voodoo 0 --exe build/ow/dos/HELLO.EXE",
+    "bf6-vbe": "--card vbe --exe build/ow/dos/HELLO.EXE",
 }
 
 

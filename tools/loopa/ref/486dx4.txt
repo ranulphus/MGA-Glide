@@ -1,3 +1,4 @@
+# 86box.cfg
 [General]
 confirm_exit = 0
 confirm_save = 0
@@ -5,37 +6,40 @@ confirm_reset = 0
 sound_gain = 0
 
 [Machine]
-machine = @MACHINE@
-cpu_family = @CPU_FAMILY@
-cpu_speed = @CPU_SPEED@
-cpu_multi = @CPU_MULTI@
+machine = hot433a
+cpu_family = idx4
+cpu_speed = 100000000
+cpu_multi = 3
 cpu_use_dynarec = 1
 fpu_type = internal
-mem_size = @MEM_KB@
+mem_size = 65536
 time_sync = disabled
 
-@MACHINE_EXTRA@[Video]
-gfxcard = @GFXCARD@
-voodoo = @VOODOO@
+[Shuttle HOT-433A]
+bios = hot433a_v451pg
 
-[@GFXNAME@]
-memory = @G100_MB@
+[Video]
+gfxcard = s3_trio64v2dx_pci
+voodoo = 0
+
+[S3 Trio64V2/DX PCI]
+memory = 4
 
 [3DFX Voodoo Graphics]
 type = voodoo
 framebuffer_memory = 2
 texture_memory = 2
-render_threads = @VOODOO_THREADS@
-recompiler = @VOODOO_RECOMPILER@
+render_threads = 1
+recompiler = 0
 bilinear = 1
 dithersub = 1
 
 [Input devices]
 keyboard_type = keyboard_ps2
-mouse_type = @MOUSE@
-@JOYSTICK@
+mouse_type = none
+
 [Sound]
-sndcard = @SNDCARD@
+sndcard = none
 
 [Storage controllers]
 hdc = internal
@@ -55,7 +59,7 @@ append = 0
 hdd_01_parameters = 63, 16, 1000, 0, ide
 hdd_01_fn = @CIMG@
 hdd_01_ide_channel = 0:0
-@EXTRA_HDD@
+
 
 [Floppy and CD-ROM drives]
 fdd_01_type = 35_2hd
@@ -68,3 +72,14 @@ unittester_enabled = 1
 
 [86Box Unit Tester]
 exit_enabled = 1
+
+# RUN.BAT
+SET PATH=C:\HX;A:\FREEDOS\BIN
+C:
+CD \TEST
+SERSAY HX-BOOT loop=A test=cfgcheck
+C:\TEST\HELLO.EXE 
+VMODE
+SERSAY HX-EXIT program returned without ending the run
+UTEXIT 124
+# golden ea26a1a0e106

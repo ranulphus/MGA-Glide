@@ -36,13 +36,42 @@ CWSDPMI = os.path.join(DJGPP_PREFIX, "dos", "CWSDPMI.EXE")
 
 
 
-# Matrox cards the harness can fit: 86Box internal name, config section.
+# Video cards the harness can fit: 86Box internal name, config section. The
+# Matrox cards are AGP in 86Box, so only the BF6 takes them; "vbe" is a
+# generic VESA 2.0 card with a linear framebuffer for the other profiles.
 CARDS = {
     "g100": ("productiva_g100", "Matrox Productiva G100"),
     "g200": ("millennium_g200", "Matrox Millennium G200 (MGA-Glide emulation)"),
     "g400": ("millennium_g400", "Matrox Millennium G400 (MGA-Glide emulation)"),
     "g450": ("millennium_g450", "Matrox Millennium G450 (MGA-Glide emulation)"),
+    "vbe": ("s3_trio64v2dx_pci", "S3 Trio64V2/DX PCI"),     # "Generic" BIOS: S3 86C775 with VBE 2.0
 }
+MATROX = ("g100", "g200", "g400", "g450")
+
+# Machine profiles (--machine): board, CPU, the board's own config section,
+# the default card, and the NVRAM cache (CMOS settings saved after the first
+# clean run, so later runs skip "press F1").
+PROFILES = {
+    "bf6": dict(machine="bf6", cpu_family="pentium2_deschutes", cpu_speed="350000000", cpu_multi="3.5",
+                extra="", card=None, nvr="nvr-bf6"),
+    # Shuttle HOT-433A (UMC 8881, PCI) with its AwardBIOS 4.51PG.
+    "486dx2": dict(machine="hot433a", cpu_family="i486dx2", cpu_speed="66666666", cpu_multi="2",
+                   extra="[Shuttle HOT-433A]\nbios = hot433a_v451pg\n\n", card="vbe", nvr="nvr-486dx2"),
+    # Intel iDX4-100: an SL-enhanced 486 with CR4.VME/PVI.
+    "486dx4": dict(machine="hot433a", cpu_family="idx4", cpu_speed="100000000", cpu_multi="3",
+                   extra="[Shuttle HOT-433A]\nbios = hot433a_v451pg\n\n", card="vbe", nvr="nvr-486dx4"),
+}
+
+
+def resolve_profile(a):
+    """Fill in --card from the profile and refuse a card the board can't take."""
+    prof = PROFILES[getattr(a, "machine", "bf6")]
+    if a.card is None:
+        a.card = prof["card"] or os.environ.get("MGA_CARD", "g100")
+    if a.card in MATROX and prof["machine"] != "bf6":
+        raise RuntimeError("--card %s: 86Box's Matrox cards are AGP; --machine %s has none (use --card vbe)"
+                           % (a.card, a.machine))
+    return prof
 
 def sh(cmd, **kw):
     return subprocess.run(cmd, check=True, **kw)
@@ -145,12 +174,18 @@ def build_config(vm, a, serial, cimg, bootimg, extra_hdd):
 
 def config_text(a, serial, cimg, bootimg, extra_hdd):
     tpl = open(os.path.join(HERE, "86box.cfg.in")).read()
+    prof = PROFILES[getattr(a, "machine", "bf6")]
     subst = {
+        "@MACHINE@": prof["machine"],
+        "@CPU_FAMILY@": prof["cpu_family"],
+        "@CPU_SPEED@": prof["cpu_speed"],
+        "@CPU_MULTI@": prof["cpu_multi"],
+        "@MACHINE_EXTRA@": prof["extra"],
         "@RENDERER@": "sdl_software",
         "@VOODOO@": "1" if a.voodoo else "0",
         "@VOODOO_RECOMPILER@": str(a.voodoo_recompiler),
         "@VOODOO_THREADS@": str(a.voodoo_threads),
-        "@G100_MB@": str(max(a.g100_mb, 16) if a.card in ("g400", "g450") else a.g100_mb),
+        "@G100_MB@": str(4 if a.card == "vbe" else max(a.g100_mb, 16) if a.card in ("g400", "g450") else a.g100_mb),
         # vpc.py passes a minimal options object: these have defaults.
         "@MEM_KB@": str(getattr(a, "mem", 64) * 1024),
         "@GFXCARD@": CARDS[a.card][0],
@@ -196,6 +231,7 @@ def emit_config(a):
     tools/loopa/cfgcheck.py compares this with tools/loopa/ref/."""
     if a.joystick == "none" and ":joy:" in a.keys:
         a.joystick = "4axis_4button"
+    resolve_profile(a)
     game = json.load(open(a.games_file))[a.game] if a.game else None
     exe_name = os.path.basename(a.exe).upper() if a.exe else None
     out = ["# 86box.cfg", config_text(a, "@SERIAL@", "@CIMG@", "@BOOTIMG@", ""),
@@ -241,6 +277,8 @@ def run(a):
     tmp = tempfile.mkdtemp(prefix="loopa-")
     result = {"name": a.name, "exe": a.exe, "args": a.args, "ovl": a.ovl, "status": "SETUP-ERROR"}
     try:
+        prof = resolve_profile(a)
+        result.update(machine=a.machine, card=a.card)
         gold = golden()
         bootimg = os.path.join(vm, "boot.img")
         cimg = os.path.join(vm, "c.img")
@@ -309,7 +347,7 @@ def run(a):
         if os.environ.get("BOX86_GDB"):
             cmd = ["gdb", "-q", "-batch", "-ex", "handle SIGUSR1 SIGUSR2 SIGPIPE nostop noprint",
                    "-ex", "run", "-ex", "thread apply all bt 12", "--args"] + cmd
-        nvr_cache = os.path.join(CACHE, "loopa", "nvr-bf6")
+        nvr_cache = os.path.join(CACHE, "loopa", prof["nvr"])
         if os.path.isdir(nvr_cache):
             shutil.copytree(nvr_cache, os.path.join(vm, "nvr"), dirs_exist_ok=True)
         errf = open(os.path.join(out, "stderr.log"), "wb")
@@ -530,8 +568,12 @@ def main():
     ap.add_argument("--voodoo-recompiler", type=int, default=int(os.environ.get("VOODOO_RECOMPILER", "0")))
     ap.add_argument("--g100-mb", type=int, default=8)
     ap.add_argument("--mem", type=int, default=64, help="the PC's RAM in MB (default 64; the BF6 takes up to 768)")
-    ap.add_argument("--card", choices=sorted(CARDS), default=os.environ.get("MGA_CARD", "g100"),
-                    help="Matrox card: g100, or g200 (the local emulation, patch 0004)")
+    ap.add_argument("--card", choices=sorted(CARDS), default=None,
+                    help="video card: a Matrox g100/g200/g400/g450 (BF6 only; default $MGA_CARD or g100), or vbe "
+                    "(S3 Trio64V2/DX, VESA 2.0; the default on the 486 profiles)")
+    ap.add_argument("--machine", choices=sorted(PROFILES), default="bf6",
+                    help="bf6 (Pentium II 350, the default), 486dx2 (i486DX2-66, no CR4) or 486dx4 "
+                    "(iDX4-100, VME/PVI), both on a Shuttle HOT-433A")
     ap.add_argument("--sound", default=None)
     ap.add_argument("--timeout", type=float, default=float(os.environ.get("LOOPA_TIMEOUT", 300)))
     ap.add_argument("--idle", type=float, default=float(os.environ.get("LOOPA_IDLE", 60)))

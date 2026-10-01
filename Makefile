@@ -207,7 +207,7 @@ help:
 -include $(shell find build -name '*.d' 2>/dev/null)
 
 # ---- Loop A (86Box) ------------------------------------------------------
-.PHONY: 86box loopa loopa-selftest loopa-cfgcheck
+.PHONY: 86box loopa loopa-selftest loopa-cfgcheck loopa-selftest-ext
 86box:
 	$(DEV) tools/86box/build.sh
 
@@ -215,6 +215,11 @@ help:
 # no emulator needed. After a deliberate change: tools/loopa/cfgcheck.py --update.
 loopa-cfgcheck:
 	$(PYTHON) tools/loopa/cfgcheck.py
+
+# The harness's machine options: 486 profiles, the VBE card, and more
+# (tools/loopa/selftest_ext.py; CHECKS="486 vbe" runs some).
+loopa-selftest-ext: dostests build/djgpp/STACKPG.EXE
+	$(DEV) $(PYTHON) tools/loopa/selftest_ext.py $(CHECKS)
 
 # make loopa TEST=hello [ARGS="--frames 10"] [OVL=build/ow/GLIDE2X.OVL]
 loopa: dostests
