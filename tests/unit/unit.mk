@@ -9,9 +9,15 @@ UNIT_test_texfmt := src/tex/texfmt.c
 UNIT_test_regtrace := hal/src/debug/regtrace.c
 UNIT_test_plan := hal/src/vbe.c tests/unit/refrast.c
 UNIT_test_present := hal/src/present.c hal/src/engine.c hal/src/texhw.c hal/src/setup/trap.c tests/unit/refrast.c
+UNIT_test_setupgold := hal/src/setup/trap.c hal/src/engine.c hal/src/texhw.c hal/src/present.c hal/src/chip.c \
+                       tests/unit/refrast.c
+# Also built 32-bit with x87 maths (HOST_CFLAGS32), the arithmetic the DOS
+# builds use: needs gcc-multilib (the dev container: tools/dev make tests-host).
+UNIT32_TESTS := test_trap test_setupgold
 
-tests-host: $(UNIT_TESTS:%=build/host/tests/%) build/ow/GLIDE2X.OVL
-	@set -e; for t in $(UNIT_TESTS:%=build/host/tests/%); do echo "== $$t"; FIXTURES_DIR=$(FIXTURES_DIR) $$t; done; \
+tests-host: $(UNIT_TESTS:%=build/host/tests/%) $(UNIT32_TESTS:%=build/host32/tests/%) build/ow/GLIDE2X.OVL
+	@set -e; for t in $(UNIT_TESTS:%=build/host/tests/%) $(UNIT32_TESTS:%=build/host32/tests/%); do \
+	  echo "== $$t"; FIXTURES_DIR=$(FIXTURES_DIR) $$t; done; \
 	  $(PYTHON) tools/ci/ow_loops.py; echo "tests-host: all passed"
 
 build/gen/glapi_names.c build/gen/glapi.h: build/gen/stamp
@@ -21,3 +27,8 @@ build/host/tests/%: tests/unit/%.c $(UNIT_COMMON) $$(UNIT_$$*) build/gen/stamp
 	@mkdir -p $(dir $@)
 	$(Q)echo "  CC      $@"
 	$(Q)$(HOST_CC) $(HOST_CFLAGS) -Itests/shim -o $@ $< $(UNIT_COMMON) $(UNIT_$*) -lm
+
+build/host32/tests/%: tests/unit/%.c $(UNIT_COMMON) $$(UNIT_$$*) build/gen/stamp
+	@mkdir -p $(dir $@)
+	$(Q)echo "  CC32    $@"
+	$(Q)$(HOST_CC) $(HOST_CFLAGS32) -Itests/shim -o $@ $< $(UNIT_COMMON) $(UNIT_$*) -lm

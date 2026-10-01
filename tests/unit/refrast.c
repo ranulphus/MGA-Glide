@@ -6,6 +6,7 @@
 #include <string.h>
 
 refrast_t *rr;
+void (*refrast_write_hook)(uint32_t off, uint32_t v);
 static int8_t dith5[256][2][2], dith6[256][2][2];
 
 void refrast_init(void)
@@ -155,6 +156,8 @@ void mga_host_wr32(uint32_t off, uint32_t v)
     int exec = 0;
     if (!rr)
         refrast_init();
+    if (refrast_write_hook)
+        refrast_write_hook(off, v);
     if (off >= 0x1C00 && off < 0x1E00 && (off & 0x100)) {
         exec = 1;
         off &= ~0x100u;

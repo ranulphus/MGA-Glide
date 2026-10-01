@@ -21,6 +21,9 @@ typedef struct {
 } refrast_t;
 
 extern refrast_t *rr;
+/* Called with every 32-bit register write before the model sees it (the
+ * offset as written, start alias included); NULL when unused. */
+extern void (*refrast_write_hook)(uint32_t off, uint32_t v);
 void refrast_init(void);
 uint16_t refrast_px16(int x, int y, uint32_t pitch, uint32_t origin_px);
 

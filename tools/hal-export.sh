@@ -21,7 +21,8 @@ copy() { mkdir -p "$dest/$(dirname "$1")"; cp -a "$1" "$dest/$1"; }
 # The HAL itself.
 for f in $(git ls-files hal); do copy "$f"; done
 # Host reference rasteriser and the setup unit test.
-for f in tests/unit/unit.c tests/unit/unit.h tests/unit/refrast.c tests/unit/refrast.h tests/unit/test_trap.c; do copy "$f"; done
+for f in tests/unit/unit.c tests/unit/unit.h tests/unit/refrast.c tests/unit/refrast.h tests/unit/test_trap.c \
+         tests/unit/test_setupgold.c tests/unit/data/setupgold-host64.txt tests/unit/data/setupgold-host32.txt; do copy "$f"; done
 # Smoke and bring-up programs, the guest shim and DOS helpers.
 for f in tests/hal/smoke.c tests/hal/probe.c tests/hal/romdump.c tests/shim/hx.c tests/shim/hx.h tests/shim/hello.c tests/shim/stackpg.c tests/shim/mousetst.c tests/shim/joytest.c tests/shim/sbbeep.c $(git ls-files tools/dos); do copy "$f"; done
 # Loop C rig (Linux port is part of hal/).
@@ -55,7 +56,7 @@ OWENV := env WATCOM=$(WATCOM) PATH=$(OWBIN):$(PATH) INCLUDE=$(WATCOM)/h
 WCC := $(OWENV) $(OWBIN)/wcc386
 OW_CFLAGS := -bt=dos -mf -3s -fp5 -fpi87 -zri -ei -j -zastd=c99 -zq -we -wx -i=hal/include -dMGA_OW=1 -oxt
 
-.PHONY: all hal-djgpp hal-host hal-ow tests-host smoke-djgpp dostests-djgpp dostools setup-djgpp setup-ow 86box clean
+.PHONY: all hal-djgpp hal-host hal-ow tests-host tests-host32 smoke-djgpp dostests-djgpp dostools setup-djgpp setup-ow 86box clean
 all: hal-djgpp hal-host tests-host
 
 build/djgpp/%.o: %.c
@@ -98,8 +99,26 @@ hal-host: build/host/libmgahal.a
 build/host/test_trap: tests/unit/test_trap.c tests/unit/unit.c tests/unit/refrast.c hal/src/setup/trap.c
 	@mkdir -p $(dir $@)
 	$(Q)$(CC) $(HOST_CFLAGS) -o $@ $^ -lm
-tests-host: build/host/test_trap
+# Register state at every draw against the goldens made before the triangle-path
+# performance work (tests/unit/test_setupgold.c); the 32-bit x87 build needs
+# gcc-multilib (tests-host32, e.g. in MGA-Glide's dev container).
+GOLD_SRCS := tests/unit/test_setupgold.c tests/unit/unit.c tests/unit/refrast.c hal/src/setup/trap.c \
+             hal/src/engine.c hal/src/texhw.c hal/src/present.c hal/src/chip.c
+build/host/test_setupgold: $(GOLD_SRCS)
+	@mkdir -p $(dir $@)
+	$(Q)$(CC) $(HOST_CFLAGS) -o $@ $^ -lm
+build/host32/test_trap: tests/unit/test_trap.c tests/unit/unit.c tests/unit/refrast.c hal/src/setup/trap.c
+	@mkdir -p $(dir $@)
+	$(Q)$(CC) $(HOST_CFLAGS) -m32 -mfpmath=387 -o $@ $^ -lm
+build/host32/test_setupgold: $(GOLD_SRCS)
+	@mkdir -p $(dir $@)
+	$(Q)$(CC) $(HOST_CFLAGS) -m32 -mfpmath=387 -o $@ $^ -lm
+tests-host: build/host/test_trap build/host/test_setupgold
 	build/host/test_trap
+	build/host/test_setupgold
+tests-host32: build/host32/test_trap build/host32/test_setupgold
+	build/host32/test_trap
+	build/host32/test_setupgold
 
 build/ow/%.obj: %.c
 	@mkdir -p $(dir $@)
@@ -142,7 +161,7 @@ MGA-Glide (Open Watcom, DOS/4GW) and DOS-GL (DJGPP):
 | Path | Contents |
 |---|---|
 | \`hal/\` | PCI, capabilities, VBE, FIFO pacing, engine, DAC, trapezoid setup; ports for DOS/4GW, DJGPP and the host |
-| \`tests/unit/\` | host reference rasteriser and the setup test |
+| \`tests/unit/\` | host reference rasteriser, the setup test and the setup goldens (register state at every draw) |
 | \`tests/hal/\` | \`smoke.c\` (any toolchain), \`probe.c\`, \`romdump.c\` |
 | \`tools/loopa/\`, \`tools/86box/\` | Loop A harness and the pinned 86Box with the local patches (never upstreamed): emulated G200, G400 and G450 on Matrox's own BIOSes; \`tools/games/mkimage.sh\` builds the game disk for \`run.py --game\` (the caller supplies the games list with \`--games-file\`) |
 | \`tools/bench/\` | Loop B: bench job runner, upload sink, capture helper, the 86Box virtual bench PC |
