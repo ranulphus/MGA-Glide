@@ -86,3 +86,9 @@ GTA 38.7 -> 27.2).
 4. FPCHECK passes on the bench CPUs.
 5. `MGL-PROF`/`DGL-PROF` there give the real cost of register writes and
    FIFOSTATUS reads per triangle.
+
+devserver's G200eR2 (2026-10-02, `docs/loop-c-results.md`): item 1 holds
+for DOS-GL's conformance tests and the rigperf scenes (frames byte-identical
+before and after); item 3 cannot be seen on that chip (its FIFOSTATUS does
+not count queued writes); for item 5 a FIFOSTATUS read costs 2.06 us there
+and a register write 212 ns.
