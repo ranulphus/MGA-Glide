@@ -415,6 +415,8 @@ def run(a):
             tail += hostio.com2_config(bridge.path)
             ports["com2"] = bridge.port
             result["com2_port"] = bridge.port
+            # Also now, for a debugger attaching while the job runs (GLOS's gdb test).
+            open(os.path.join(out, "com2.port"), "w").write("%d\n" % bridge.port)
         path = os.path.join(vm, "86box.cfg")
         open(path, "w").write(config_text(a, serial, cimg, bootimg, extra, tail))
         cfg = path
