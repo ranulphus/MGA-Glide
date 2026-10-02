@@ -5,6 +5,11 @@
  *   mgarig sync    write DWGSYNC and read it back
  *   mgarig trap    one flat TRAP fill into off-screen VRAM, read back
  *   mgarig tex     one TEXTURE_TRAP from an off-screen texture, read back
+ *   mgarig fifo    FIFO accounting while a long fill keeps the engine busy
+ *   mgarig fifodeep  up to 512 writes during one fill, stopping at 8 free
+ *   mgarig overlap a big triangle, then at once a small one: both whole?
+ *   mgarig bigtri  which sizes and shapes of flat triangle draw whole
+ *   mgarig cost    time of a FIFOSTATUS read and of a paced register write
  *
  * Every write goes to the MGA drawing registers or to VRAM from 4 MB up,
  * far from the VGA text console at the start of VRAM; nothing is shown on
@@ -94,6 +99,239 @@ static int check(const char *what, uint16_t want_in, uint16_t want_out, int xin,
     printf("%s: inside=%04x (want %04x) corner=%04x (want %04x) -> %s\n", what, in, want_in, out, want_out,
            in == want_in && out == want_out ? "PASS" : "FAIL");
     return in == want_in && out == want_out;
+}
+
+/* ---- FIFO accounting and bus costs (docs/setup-perf.md, for the bench) ---- */
+
+/* fifo_need() counts one entry per register write from the last FIFOSTATUS
+ * it read. While a long fill keeps the engine busy, the FIFO cannot drain,
+ * so FIFOSTATUS must fall by exactly one per write, from the depth, for the
+ * registers the setup writes. Stops two entries short of full: a write into
+ * a full FIFO is never made. 2 MB of VRAM from WORK. */
+static const uint32_t fifo_regs[] = { MGAREG_AR0, MGAREG_DR4, MGAREG_TMR0, MGAREG_ALPHASTART, MGAREG_FXBNDRY,
+                                      MGAREG_TEXWIDTH };
+#define NFIFO_REGS ((int)(sizeof fifo_regs / sizeof fifo_regs[0]))
+
+static void big_target(void)
+{
+    mga_target t;
+    engine_init(1024, 16);
+    memset(&t, 0, sizeof t);
+    t.color_off = WORK;
+    t.pitch_px = 1024;
+    t.bpp = 16;
+    t.zbits = 16;
+    engine_set_target(&t);
+    engine_set_clip(0, 0, 1024, 1024);
+}
+
+static int fifo_check(void)
+{
+    uint8_t got[128];
+    int depth = mga.fifo_depth, k, bad = 0, before, start, busy_end, after;
+    big_target();
+    if (idle("init"))
+        return 1;
+    before = MGA_RD8(MGAREG_FIFOSTATUS) & mga.fifo_mask;
+    engine_fill(0, 0, 1024, 1024, 0x1234);
+    start = MGA_RD8(MGAREG_FIFOSTATUS) & mga.fifo_mask;
+    for (k = 1; k <= depth - 2 && k < 128; k++) {
+        MGA_WR32(fifo_regs[k % NFIFO_REGS], 0);
+        got[k] = MGA_RD8(MGAREG_FIFOSTATUS) & mga.fifo_mask;
+    }
+    busy_end = (MGA_RD32(MGAREG_STATUS) & STATUS_DWGENGSTS) != 0;
+    if (idle("fifo fill"))
+        return 1;
+    after = MGA_RD8(MGAREG_FIFOSTATUS) & mga.fifo_mask;
+    for (k = 1; k <= depth - 2 && k < 128; k++)
+        if (got[k] != start - k) {
+            if (bad++ < 4)
+                printf("fifo: after write %d FIFOSTATUS free=%d (want %d)\n", k, got[k], start - k);
+        }
+    printf("fifo: depth=%d idle=%d after-fill-start=%d after-%d-writes=%d busy-at-end=%d idle-after=%d\n", depth,
+           before, start, depth - 2, got[depth - 2], busy_end, after);
+    if (!busy_end) {
+        printf("fifo: the fill ended before the writes did: INCONCLUSIVE\n");
+        return 1;
+    }
+    printf("fifo: one entry per write -> %s\n", !bad && before == depth && start == depth && after == depth ?
+           "PASS" : "FAIL");
+    return bad || before != depth || start != depth || after != depth;
+}
+
+/* Where the writes go when FIFOSTATUS does not count them (the G200eR2
+ * keeps reading 64 free through 62 writes to a busy engine): up to 512
+ * latched writes during one timed fill, stopping as soon as FIFOSTATUS
+ * shows 8 or fewer free. */
+static int fifo_deep(void)
+{
+    int k, first_drop = -1, min_free = 255, f = 0, busy_end;
+    uint32_t t0, tfill, tloop;
+    big_target();
+    if (idle("init"))
+        return 1;
+    t0 = sys_time_us();
+    engine_fill(0, 0, 1024, 1024, 0x2345);
+    if (idle("fill"))
+        return 1;
+    tfill = sys_time_us() - t0;
+    t0 = sys_time_us();
+    engine_fill(0, 0, 1024, 1024, 0x3456);
+    for (k = 1; k <= 512; k++) {
+        MGA_WR32(fifo_regs[k % NFIFO_REGS], 0);
+        f = MGA_RD8(MGAREG_FIFOSTATUS) & mga.fifo_mask;
+        if (f < mga.fifo_depth && first_drop < 0)
+            first_drop = k;
+        if (f < min_free)
+            min_free = f;
+        if (f <= 8)
+            break;
+    }
+    tloop = sys_time_us() - t0;
+    busy_end = (MGA_RD32(MGAREG_STATUS) & STATUS_DWGENGSTS) != 0;
+    if (idle("fifo deep"))
+        return 1;
+    printf("fifodeep: 1024x1024 fill alone %u us; during another: %d writes in %u us, FIFOSTATUS first below %d "
+           "after write %d, lowest %d, busy at end %d\n", tfill, k > 512 ? 512 : k, tloop, mga.fifo_depth,
+           first_drop, min_free, busy_end);
+    return 0;
+}
+
+/* Does the next triangle's setup reach the engine while it still draws the
+ * last one? A big flat triangle (upper-left half of 1024x1024), then at
+ * once a small one in the far corner; then the same with an idle wait
+ * between. Queued writes (what the HAL assumes) draw both whole either way. */
+static void flat_tri(int x0, int y0, int x1, int y1, int x2, int y2, int r, int g, int b)
+{
+    mga_svtx v[3];
+    mga_tri_ctx ctx;
+    int i;
+    memset(v, 0, sizeof v);
+    for (i = 0; i < 3; i++) { v[i].r = (float)r; v[i].g = (float)g; v[i].b = (float)b; v[i].a = 255; v[i].fog = 255; }
+    v[0].X16 = x0 * 16; v[0].Y16 = y0 * 16;
+    v[1].X16 = x1 * 16; v[1].Y16 = y1 * 16;
+    v[2].X16 = x2 * 16; v[2].Y16 = y2 * 16;
+    memset(&ctx, 0, sizeof ctx);
+    ctx.dwgctl = DWG_OPCOD_TRAP | DWG_ATYPE_I | DWG_ZMODE_NOZCMP | DWG_BOP_COPY;
+    ctx.clip_y0 = 0; ctx.clip_y1 = 1024;
+    setup_triangle(&v[0], &v[1], &v[2], &ctx);
+}
+
+static int overlap(void)
+{
+    static const int pt[][2] = { { 8, 8 }, { 900, 8 }, { 8, 900 }, { 400, 400 }, { 100, 700 }, { 700, 100 } };
+    volatile uint16_t *p = (volatile uint16_t *)(mga_fb + WORK);
+    int pass, i, bad_total = 0;
+    for (pass = 0; pass < 2; pass++) {
+        int bad, big = 0, small;
+        big_target();
+        engine_fill(0, 0, 1024, 1024, 0x0000);
+        if (idle("clear"))
+            return 1;
+        flat_tri(0, 0, 1020, 0, 0, 1020, 255, 255, 0);           /* yellow, about 520,000 pixels */
+        if (pass && idle("big"))
+            return 1;
+        flat_tri(960, 960, 1020, 960, 960, 1020, 0, 255, 0);     /* green, far corner */
+        if (idle("small"))
+            return 1;
+        for (i = 0; i < (int)(sizeof pt / sizeof pt[0]); i++)
+            if (p[pt[i][1] * 1024 + pt[i][0]] == 0xFFE0)
+                big++;
+        small = p[970 * 1024 + 970] == 0x07E0;
+        bad = big != (int)(sizeof pt / sizeof pt[0]) || !small;
+        printf("overlap %s: big triangle %d of %d points drawn, small %s -> %s\n",
+               pass ? "with an idle wait" : "back to back", big, (int)(sizeof pt / sizeof pt[0]),
+               small ? "drawn" : "missing", bad ? "FAIL" : "PASS");
+        bad_total += bad;
+    }
+    return bad_total != 0;
+}
+
+/* Which flat triangles the engine draws whole: right triangles (0,0),
+ * (w,0), (0,h) for a sweep of sizes, each counted on a 64x64 grid of
+ * samples against the points inside it. */
+static int bigtri(void)
+{
+    static const int sz[][2] = { { 64, 64 }, { 128, 128 }, { 256, 256 }, { 384, 384 }, { 512, 512 }, { 640, 640 },
+                                 { 768, 768 }, { 1020, 1020 }, { 1020, 64 }, { 64, 1020 }, { 1020, 256 },
+                                 { 256, 1020 }, { 600, 1020 }, { 1020, 600 } };
+    volatile uint16_t *p = (volatile uint16_t *)(mga_fb + WORK);
+    int k, bad = 0;
+    for (k = 0; k < (int)(sizeof sz / sizeof sz[0]); k++) {
+        int w = sz[k][0], h = sz[k][1], i, j, in = 0, got = 0, first_y = -1;
+        big_target();
+        engine_fill(0, 0, 1024, 1024, 0x0000);
+        if (idle("clear"))
+            return 1;
+        flat_tri(0, 0, w, 0, 0, h, 255, 255, 0);
+        if (idle("bigtri"))
+            return 1;
+        for (j = 0; j < 64; j++)
+            for (i = 0; i < 64; i++) {
+                int x = i * w / 64 + 1, y = j * h / 64 + 1;
+                if ((double)x / w + (double)y / h < 0.97) {     /* well inside */
+                    in++;
+                    if (p[y * 1024 + x] == 0xFFE0)
+                        got++;
+                    else if (first_y < 0)
+                        first_y = y;
+                }
+            }
+        printf("bigtri %4dx%-4d drawn %4d of %4d inside samples%s", w, h, got, in, got == in ? "\n" : "");
+        if (got != in)
+            printf(", first missing at row %d\n", first_y);
+        bad += got != in;
+    }
+    return bad != 0;
+}
+
+static int cmp_u32(const void *a, const void *b)
+{
+    uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
+    return x < y ? -1 : x > y;
+}
+
+/* What a register write and a FIFOSTATUS read cost on this bus: medians of
+ * 7 runs. Writes go to AR0 (latched, nothing drawn), 32 per reservation, so
+ * the reads they include are known: one per 32 writes. */
+static int cost(void)
+{
+    enum { N = 96000, REPS = 7 };
+    uint32_t tr[REPS], tw[REPS], tp[REPS];
+    int i, rep;
+    setup_target();
+    if (idle("init"))
+        return 1;
+    for (rep = 0; rep < REPS; rep++) {
+        uint32_t t0 = sys_time_us();
+        for (i = 0; i < N; i++)
+            (void)MGA_RD8(MGAREG_FIFOSTATUS);
+        tr[rep] = sys_time_us() - t0;
+        t0 = sys_time_us();
+        for (i = 0; i < N; i += 32) {
+            int j;
+            mga_fifo_free = 0;                  /* one FIFOSTATUS read per 32 writes */
+            fifo_reserve(32);
+            for (j = 0; j < 32; j++)
+                MGA_WR32(MGAREG_AR0, (uint32_t)(i + j));
+        }
+        (void)MGA_RD32(MGAREG_STATUS);
+        tw[rep] = sys_time_us() - t0;
+        t0 = sys_time_us();
+        for (i = 0; i < N; i++) {
+            fifo_need(1);
+            MGA_WR32(MGAREG_AR0, (uint32_t)i);
+        }
+        (void)MGA_RD32(MGAREG_STATUS);
+        tp[rep] = sys_time_us() - t0;
+    }
+    qsort(tr, REPS, sizeof tr[0], cmp_u32);
+    qsort(tw, REPS, sizeof tw[0], cmp_u32);
+    qsort(tp, REPS, sizeof tp[0], cmp_u32);
+    printf("cost: FIFOSTATUS read %.0f ns; register write %.1f ns (32 per reservation, its reads taken out); "
+           "fifo_need(1) + write %.1f ns\n", tr[REPS / 2] * 1000.0 / N,
+           (tw[REPS / 2] - tr[REPS / 2] / 32.0) * 1000.0 / N, tp[REPS / 2] * 1000.0 / N);
+    return idle("cost");
 }
 
 /* ---- Experiments: what the emulated G200 guesses (docs/emulated-g200.md) ----
@@ -419,6 +657,16 @@ int main(int argc, char **argv)
     }
     if (!strcmp(stage, "exp"))
         return experiments();
+    if (!strcmp(stage, "fifo"))
+        return fifo_check();
+    if (!strcmp(stage, "bigtri"))
+        return bigtri();
+    if (!strcmp(stage, "overlap"))
+        return overlap();
+    if (!strcmp(stage, "fifodeep"))
+        return fifo_deep();
+    if (!strcmp(stage, "cost"))
+        return cost();
     printf("unknown stage %s\n", stage);
     return 2;
 }
