@@ -82,4 +82,4 @@ C:\TEST\HELLO.EXE
 VMODE
 SERSAY HX-EXIT program returned without ending the run
 UTEXIT 124
-# golden himemx-6f1ec73a25a6
+# golden himemx-fb284a02241f
