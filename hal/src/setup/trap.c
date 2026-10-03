@@ -336,7 +336,7 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
     int64_t d_long = 0;
     double K = 1.0;
     int k = 0, k1 = 0, map1_sizes = 1;
-    int32_t y_top, y_mid, y_bot, part, lim;
+    int32_t y_top, y_mid, y_bot, part;
     int reduce;
     uint32_t flags = ctx->flags;
 
@@ -367,7 +367,7 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
          * DOS-GL's guard band keeps edges within 4000 pixels, Glide's
          * vertices within about 2048), the triangle is drawn as four, split
          * at its edges' midpoints. */
-        int32_t x0 = v[0]->X16, x1 = v[1]->X16, x2 = v[2]->X16, xmin, xmax, ey, ex;
+        int32_t x0 = v[0]->X16, x1 = v[1]->X16, x2 = v[2]->X16, xmin, xmax, ey, ex, lim;
         xmin = x0 < x1 ? x0 : x1;
         xmax = x0 < x1 ? x1 : x0;
         if (x2 < xmin) xmin = x2;
@@ -601,21 +601,22 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
              * than 2 pixels a row on the G100/G200, 32 on the G400), takes
              * the exact centre rule, which always does. The choice is the
              * edge's own, so a triangle sharing it chooses alike: no cracks. */
+            int32_t vl = ar_lim();
             edge_voodoo(v[0]->X16, v[0]->Y16, d_long, ys, &lng);
-            if (!edge_fits(&lng, lim)) {
-                edge_reduce(&lng, lim);
-                if (!edge_fits(&lng, lim)) {
+            if (!edge_fits(&lng, vl)) {
+                edge_reduce(&lng, vl);
+                if (!edge_fits(&lng, vl)) {
                     edge_exact(v[0]->X16, v[0]->Y16, v[2]->X16, v[2]->Y16, ys, &lng);
-                    edge_reduce(&lng, lim);
+                    edge_reduce(&lng, vl);
                     setup_stats.vfallback++;
                 }
             }
             edge_voodoo(sa->X16, sa->Y16, voodoo_slope(sa->X16, sa->Y16, sb->X16, sb->Y16), ys, &sht);
-            if (!edge_fits(&sht, lim)) {
-                edge_reduce(&sht, lim);
-                if (!edge_fits(&sht, lim)) {
+            if (!edge_fits(&sht, vl)) {
+                edge_reduce(&sht, vl);
+                if (!edge_fits(&sht, vl)) {
                     edge_exact(sa->X16, sa->Y16, sb->X16, sb->Y16, ys, &sht);
-                    edge_reduce(&sht, lim);
+                    edge_reduce(&sht, vl);
                     setup_stats.vfallback++;
                 }
             }
@@ -623,8 +624,8 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
             edge_exact(v[0]->X16, v[0]->Y16, v[2]->X16, v[2]->Y16, ys, &lng);
             edge_exact(sa->X16, sa->Y16, sb->X16, sb->Y16, ys, &sht);
             if (reduce) {
-                edge_reduce(&lng, lim);
-                edge_reduce(&sht, lim);
+                edge_reduce(&lng, ar_lim());
+                edge_reduce(&sht, ar_lim());
             }
         }
         if (mid_right) { el = lng; er = sht; } else { el = sht; er = lng; }
