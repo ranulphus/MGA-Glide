@@ -30,6 +30,7 @@ typedef struct {
     /* Capabilities (PRD §5.3; plan §3). */
     uint8_t    fifo_depth, fifo_mask;
     uint8_t    max_mip_levels;  /* 1 (G100), 5 (G200), 11 (G400) */
+    uint8_t    ar_bits;         /* AR0/2/4/5/6 width, signed: 18 (G100, G200), 22 (G400); 0 = unlimited */
     uint8_t    min_tex_dim;
     uint16_t   max_tex_size;
     unsigned   has_dwgsync:1, has_dstorg:1, has_ydstorg:1, zorg_ydst_relative:1,

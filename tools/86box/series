@@ -11,6 +11,7 @@ local/0008-mga-g400-g450.patch
 local/0009-mga-g400-dual-texture.patch
 local/0010-mga-tlut-rstr.patch
 local/0011-mga-display-zoom-and-flip.patch
+local/0012-mga-ar-field-widths.patch
 local/0101-sdl-monitor-key-and-pipe.patch
 local/0102-unittester-clean-exit-and-serial-flush.patch
 local/0103-cpu-restartable-interrupt-frame.patch

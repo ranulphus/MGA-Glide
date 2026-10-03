@@ -61,13 +61,37 @@ static int zpass(uint32_t z, uint32_t old, uint32_t mode)
     }
 }
 
+/* The chips' AR registers are narrower than 32 bits (G100/G200 specs: AR0,
+ * AR2, AR4, AR5, AR6 18 bits signed, AR1 and AR3 24; G400: 22 and 24), and
+ * the walk keeps its error terms in them: values wrap at the field width.
+ * refrast_ar_bits 32 is the ideal, wider than any value the setup writes. */
+int refrast_ar_bits = 32;
+
+static int32_t ar_wrap(int64_t v, int bits)
+{
+    uint32_t m, u;
+    if (bits >= 32)
+        return (int32_t)v;
+    m = (1u << bits) - 1;
+    u = (uint32_t)v & m;
+    return (int32_t)((u & (1u << (bits - 1))) ? (u | ~m) : u);
+}
+
+static int ar_width(int i) { return refrast_ar_bits >= 32 ? 32 : (i == 1 || i == 3) ? 24 : refrast_ar_bits; }
+
 static void edge_step(void)
 {
     uint32_t sgn = REG(MGAREG_SGN);
-    while (rr->ar[1] < 0 && rr->ar[0]) { rr->ar[1] += rr->ar[0]; rr->fxleft += (sgn & SGN_SDXL) ? -1 : 1; }
-    rr->ar[1] += rr->ar[2];
-    while (rr->ar[4] < 0 && rr->ar[6]) { rr->ar[4] += rr->ar[6]; rr->fxright += (sgn & SGN_SDXR) ? -1 : 1; }
-    rr->ar[4] += rr->ar[5];
+    while (rr->ar[1] < 0 && rr->ar[0]) {
+        rr->ar[1] = ar_wrap((int64_t)rr->ar[1] + rr->ar[0], ar_width(1));
+        rr->fxleft += (sgn & SGN_SDXL) ? -1 : 1;
+    }
+    rr->ar[1] = ar_wrap((int64_t)rr->ar[1] + rr->ar[2], ar_width(1));
+    while (rr->ar[4] < 0 && rr->ar[6]) {
+        rr->ar[4] = ar_wrap((int64_t)rr->ar[4] + rr->ar[6], ar_width(4));
+        rr->fxright += (sgn & SGN_SDXR) ? -1 : 1;
+    }
+    rr->ar[4] = ar_wrap((int64_t)rr->ar[4] + rr->ar[5], ar_width(4));
 }
 
 static void trap(uint32_t ydstlen)
@@ -89,7 +113,7 @@ static void trap(uint32_t ydstlen)
         uint32_t zb = rr->dr[0], rb = rr->dr[4], gb = rr->dr[8], bb = rr->dr[12];
         uint64_t zb32 = rr->dr_ext[0];
         int dx;
-        while (xl != xr) {
+        while (xl < xr) {                      /* crossed edges draw nothing (a G200eR2 does not) */
             if (xl >= cxl && xl <= cxr && (uint32_t)ylin >= ytop && (uint32_t)ylin <= ybot) {
                 if ((dwg & DWG_SOLID) || atype == DWG_ATYPE_RSTR || atype == DWG_ATYPE_RPL || atype == DWG_ATYPE_BLK) {
                     uint32_t fcol = REG(MGAREG_FCOL);
@@ -132,7 +156,7 @@ static void trap(uint32_t ydstlen)
             if (zw32) { rr->dr_ext[0] += rr->dr_ext[2]; rr->dr[0] = (uint32_t)(rr->dr_ext[0] >> 16); }
             else rr->dr[0] += rr->dr[2];
             rr->dr[4] += rr->dr[6]; rr->dr[8] += rr->dr[10]; rr->dr[12] += rr->dr[14];
-            if (xl > xr) xl--; else xl++;
+            xl++;
         }
         if (zw32) { rr->dr_ext[0] = zb32 + rr->dr_ext[3]; rr->dr[0] = (uint32_t)(rr->dr_ext[0] >> 16); }
         else rr->dr[0] = zb + rr->dr[3];
@@ -167,8 +191,14 @@ void mga_host_wr32(uint32_t off, uint32_t v)
     switch (off) {
     case MGAREG_AR0: case MGAREG_AR1: case MGAREG_AR2: case MGAREG_AR3:
     case MGAREG_AR4: case MGAREG_AR5: case MGAREG_AR6:
-        rr->ar[(off - MGAREG_AR0) >> 2] = (int32_t)v; break;
+        rr->ar[(off - MGAREG_AR0) >> 2] = ar_wrap((int32_t)v, ar_width((int)(off - MGAREG_AR0) >> 2)); break;
     case MGAREG_FXBNDRY: rr->fxleft = (int16_t)(v & 0xFFFF); rr->fxright = (int16_t)(v >> 16); break;
+    case MGAREG_DWGCTL:                         /* arzero and sgnzero act as DWGCTL is written */
+        if (v & DWG_ARZERO)
+            rr->ar[0] = rr->ar[1] = rr->ar[2] = rr->ar[4] = rr->ar[5] = rr->ar[6] = 0;
+        if (v & DWG_SGNZERO)
+            rr->reg[MGAREG_SGN >> 2] = 0;
+        break;
     case MGAREG_DR0: rr->dr[0] = v; rr->dr_ext[0] = (rr->dr_ext[0] & ~0xFFFFull) | ((uint64_t)v << 16); break;
     case MGAREG_DR2: rr->dr[2] = v; rr->dr_ext[2] = (rr->dr_ext[2] & ~0xFFFFull) | ((uint64_t)v << 16); break;
     case MGAREG_DR3: rr->dr[3] = v; rr->dr_ext[3] = (rr->dr_ext[3] & ~0xFFFFull) | ((uint64_t)v << 16); break;

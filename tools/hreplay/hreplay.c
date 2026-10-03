@@ -165,6 +165,7 @@ int main(int argc, char **argv)
         if (*p) p++;
     }
     refrast_init();
+    refrast_ar_bits = 18;               /* the G100 presented above, as 86Box models it (patch 0012) */
     hooks.in = io_in;
     hooks.out = io_out;
     host_set_io_hooks(&hooks);

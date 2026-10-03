@@ -21,6 +21,9 @@ typedef struct {
 } refrast_t;
 
 extern refrast_t *rr;
+/* Width of AR0, AR2, AR4, AR5 and AR6 (AR1 and AR3: 24 when narrower than
+ * 32): 18 on the G100 and G200, 22 on the G400, 32 (default) ideal. */
+extern int refrast_ar_bits;
 /* Called with every 32-bit register write before the model sees it (the
  * offset as written, start alias included); NULL when unused. */
 extern void (*refrast_write_hook)(uint32_t off, uint32_t v);

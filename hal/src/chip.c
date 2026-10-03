@@ -9,6 +9,7 @@ void mga_chip_caps(mga_chip *c)
     case MGA_FAMILY_G100:
         c->fifo_depth = 64; c->fifo_mask = 0x7F;
         c->max_mip_levels = 1; c->max_tex_size = 2048;
+        c->ar_bits = 18;
         c->has_ydstorg = 1; c->zorg_ydst_relative = 1;
         c->fog_textrap_only = 1; c->alphasel_tex_always = 1;
         break;
@@ -16,6 +17,7 @@ void mga_chip_caps(mga_chip *c)
     case MGA_FAMILY_G200E:
         c->fifo_depth = 64; c->fifo_mask = 0x7F;
         c->max_mip_levels = 5; c->max_tex_size = 2048;
+        c->ar_bits = 18;
         c->has_dwgsync = 1; c->has_dstorg = 1; c->has_ydstorg = 1;
         c->has_texctl2 = 1; c->has_alpha_blend = 1; c->has_alpha_test = 1;
         c->has_tlut = 1; c->has_specular = 1; c->has_decalblend = 1;
@@ -23,6 +25,7 @@ void mga_chip_caps(mga_chip *c)
     case MGA_FAMILY_G400:
         c->fifo_depth = 16; c->fifo_mask = 0x1F;
         c->max_mip_levels = 11; c->max_tex_size = 2048;
+        c->ar_bits = 22;
         c->has_dwgsync = 1; c->has_dstorg = 1;
         c->has_texctl2 = 1; c->has_alpha_blend = 1; c->has_alpha_test = 1;
         c->has_tlut = 1; c->has_specular = 1; c->has_decalblend = 1;

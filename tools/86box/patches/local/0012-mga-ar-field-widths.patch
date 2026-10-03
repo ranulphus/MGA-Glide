@@ -1,0 +1,217 @@
+diff --git a/src/video/vid_mga.c b/src/video/vid_mga.c
+index 2963a23..0a44d5d 100644
+--- a/src/video/vid_mga.c
++++ b/src/video/vid_mga.c
+@@ -5201,6 +5201,31 @@ g200_blend(mystique_t *mystique, int x, int *r, int *g, int *b, int a, int dest3
+     return 1;
+ }
+ 
++/* MGA-Glide local: AR0, AR2, AR4, AR5 and AR6 are 18 bits signed up to the
++ * G200 and 22 on the G400 (AR1 and AR3: 24), per the chips' specifications,
++ * and the trapezoid walk keeps its error terms in them, so they wrap there
++ * (a G200eR2 does: MGA-Glide docs/loop-c-results.md). Only TRAP and
++ * TEXTURE_TRAP are modelled; blits, lines and ILOAD keep the full values.
++ * Where the edges cross (right before left), the chip draws nothing. */
++static int32_t
++mga_ar_wrap(const mystique_t *mystique, int reg, int64_t v)
++{
++    int      bits = (reg == 1 || reg == 3) ? 24 : (mystique->type >= MGA_G400 ? 22 : 18);
++    uint32_t mask = (1u << bits) - 1;
++    uint32_t u    = (uint32_t) v & mask;
++
++    return (int32_t) ((u & (1u << (bits - 1))) ? (u | ~mask) : u);
++}
++
++static void
++mga_trap_ar_fields(mystique_t *mystique)
++{
++    static const int regs[6] = { 0, 1, 2, 4, 5, 6 };
++
++    for (int i = 0; i < 6; i++)
++        mystique->dwgreg.ar[regs[i]] = (uint32_t) mga_ar_wrap(mystique, regs[i], (int32_t) mystique->dwgreg.ar[regs[i]]);
++}
++
+ static void
+ blit_trap(mystique_t *mystique)
+ {
+@@ -5212,13 +5237,17 @@ blit_trap(mystique_t *mystique)
+     uint32_t  b_back;
+     int       z_write;
+     int       y;
+-    int       err_l = (int32_t)mystique->dwgreg.ar[1];
++    int       err_l;
+     uint32_t  a_back_g200 = 0;
+     const int dest32_g200 = ((mystique->maccess_running & MACCESS_PWIDTH_MASK) == MACCESS_PWIDTH_32);
+-    int       err_r = (int32_t)mystique->dwgreg.ar[4];
++    int       err_r;
+     const int trans_sel = (mystique->dwgreg.dwgctrl_running & DWGCTRL_TRANS_MASK) >> DWGCTRL_TRANS_SHIFT;
+     bool transc = !!(mystique->dwgreg.dwgctrl_running & DWGCTRL_TRANSC);
+ 
++    mga_trap_ar_fields(mystique);
++    err_l = (int32_t) mystique->dwgreg.ar[1];
++    err_r = (int32_t) mystique->dwgreg.ar[4];
++
+     switch (mystique->dwgreg.dwgctrl_running & DWGCTRL_ATYPE_MASK) {
+         case DWGCTRL_ATYPE_BLK:
+         case DWGCTRL_ATYPE_RPL:
+@@ -5229,10 +5258,8 @@ blit_trap(mystique_t *mystique)
+                 int                  yoff  = (mystique->dwgreg.yoff + mystique->dwgreg.ydst) & 7;
+                 int                  len;
+ 
+-                if (x_l > x_r)
+-                    len = x_l - x_r;
+-                else
+-                    len = x_r - x_l;
++                /* MGA-Glide local: crossed edges draw nothing, as on a G200eR2. */
++                len = (x_r > x_l) ? x_r - x_l : 0;
+ 
+                 while (len > 0) {
+                     if (x_l >= mystique->dwgreg.cxleft && x_l <= mystique->dwgreg.cxright && mystique->dwgreg.ydst_lin >= mystique->dwgreg.ytop && mystique->dwgreg.ydst_lin <= mystique->dwgreg.ybot && trans[x_l & 3]) {
+@@ -5272,16 +5299,16 @@ blit_trap(mystique_t *mystique)
+                 }
+ 
+                 while ((err_l < 0) && mystique->dwgreg.ar[0]) {
+-                    err_l += mystique->dwgreg.ar[0];
++                    err_l = mga_ar_wrap(mystique, 1, (int64_t) err_l + (int32_t) mystique->dwgreg.ar[0]);
+                     mystique->dwgreg.fxleft += (mystique->dwgreg.sgn.sdxl ? -1 : 1);
+                 }
+-                err_l += mystique->dwgreg.ar[2];
++                err_l = mga_ar_wrap(mystique, 1, (int64_t) err_l + (int32_t) mystique->dwgreg.ar[2]);
+ 
+                 while ((err_r < 0) && mystique->dwgreg.ar[6]) {
+-                    err_r += mystique->dwgreg.ar[6];
++                    err_r = mga_ar_wrap(mystique, 4, (int64_t) err_r + (int32_t) mystique->dwgreg.ar[6]);
+                     mystique->dwgreg.fxright += (mystique->dwgreg.sgn.sdxr ? -1 : 1);
+                 }
+-                err_r += mystique->dwgreg.ar[5];
++                err_r = mga_ar_wrap(mystique, 4, (int64_t) err_r + (int32_t) mystique->dwgreg.ar[5]);
+ 
+                 mystique->dwgreg.ydst++;
+                 mystique->dwgreg.ydst &= 0x7fffff;
+@@ -5299,10 +5326,8 @@ blit_trap(mystique_t *mystique)
+                 int                  yoff  = (mystique->dwgreg.yoff + mystique->dwgreg.ydst) & 7;
+                 int                  len;
+ 
+-                if (x_l > x_r)
+-                    len = x_l - x_r;
+-                else
+-                    len = x_r - x_l;
++                /* MGA-Glide local: crossed edges draw nothing, as on a G200eR2. */
++                len = (x_r > x_l) ? x_r - x_l : 0;
+ 
+                 while (len > 0) {
+                     if (x_l >= mystique->dwgreg.cxleft && x_l <= mystique->dwgreg.cxright && mystique->dwgreg.ydst_lin >= mystique->dwgreg.ytop && mystique->dwgreg.ydst_lin <= mystique->dwgreg.ybot && trans[x_l & 3]) {
+@@ -5355,16 +5380,16 @@ blit_trap(mystique_t *mystique)
+                 }
+ 
+                 while ((err_l < 0) && mystique->dwgreg.ar[0]) {
+-                    err_l += mystique->dwgreg.ar[0];
++                    err_l = mga_ar_wrap(mystique, 1, (int64_t) err_l + (int32_t) mystique->dwgreg.ar[0]);
+                     mystique->dwgreg.fxleft += (mystique->dwgreg.sgn.sdxl ? -1 : 1);
+                 }
+-                err_l += mystique->dwgreg.ar[2];
++                err_l = mga_ar_wrap(mystique, 1, (int64_t) err_l + (int32_t) mystique->dwgreg.ar[2]);
+ 
+                 while ((err_r < 0) && mystique->dwgreg.ar[6]) {
+-                    err_r += mystique->dwgreg.ar[6];
++                    err_r = mga_ar_wrap(mystique, 4, (int64_t) err_r + (int32_t) mystique->dwgreg.ar[6]);
+                     mystique->dwgreg.fxright += (mystique->dwgreg.sgn.sdxr ? -1 : 1);
+                 }
+-                err_r += mystique->dwgreg.ar[5];
++                err_r = mga_ar_wrap(mystique, 4, (int64_t) err_r + (int32_t) mystique->dwgreg.ar[5]);
+ 
+                 mystique->dwgreg.ydst++;
+                 mystique->dwgreg.ydst &= 0x7fffff;
+@@ -5394,7 +5419,7 @@ blit_trap(mystique_t *mystique)
+                 b_back = mystique->dwgreg.dr[12];
+                 a_back_g200 = mystique->dwgreg.alphastart;
+ 
+-                while (x_l != x_r) {
++                while (x_l < x_r) { /* MGA-Glide local: crossed edges draw nothing, as on a G200eR2 */
+                     if (x_l >= mystique->dwgreg.cxleft && x_l <= mystique->dwgreg.cxright && mystique->dwgreg.ydst_lin >= mystique->dwgreg.ytop && mystique->dwgreg.ydst_lin <= mystique->dwgreg.ybot && trans[x_l & 3]) {
+                         bool z_check_pass = false;
+                         if (mystique->maccess_running & MACCESS_ZWIDTH) {
+@@ -5478,10 +5503,7 @@ trap_next_g200:
+                     mystique->dwgreg.dr[8] += mystique->dwgreg.dr[10];
+                     mystique->dwgreg.dr[12] += mystique->dwgreg.dr[14];
+ 
+-                    if (x_l > x_r)
+-                        x_l--;
+-                    else
+-                        x_l++;
++                    x_l++;
+                 }
+ 
+                 if (mystique->maccess_running & MACCESS_ZWIDTH) {
+@@ -5497,16 +5519,16 @@ trap_next_g200:
+                 mystique->dwgreg.dr[12] = b_back + mystique->dwgreg.dr[15];
+ 
+                 while ((int32_t) mystique->dwgreg.ar[1] < 0 && mystique->dwgreg.ar[0]) {
+-                    mystique->dwgreg.ar[1] += mystique->dwgreg.ar[0];
++                    mystique->dwgreg.ar[1] = (uint32_t) mga_ar_wrap(mystique, 1, (int64_t) (int32_t) mystique->dwgreg.ar[1] + (int32_t) mystique->dwgreg.ar[0]);
+                     mystique->dwgreg.fxleft += (mystique->dwgreg.sgn.sdxl ? -1 : 1);
+                 }
+-                mystique->dwgreg.ar[1] += mystique->dwgreg.ar[2];
++                mystique->dwgreg.ar[1] = (uint32_t) mga_ar_wrap(mystique, 1, (int64_t) (int32_t) mystique->dwgreg.ar[1] + (int32_t) mystique->dwgreg.ar[2]);
+ 
+                 while ((int32_t) mystique->dwgreg.ar[4] < 0 && mystique->dwgreg.ar[6]) {
+-                    mystique->dwgreg.ar[4] += mystique->dwgreg.ar[6];
++                    mystique->dwgreg.ar[4] = (uint32_t) mga_ar_wrap(mystique, 4, (int64_t) (int32_t) mystique->dwgreg.ar[4] + (int32_t) mystique->dwgreg.ar[6]);
+                     mystique->dwgreg.fxright += (mystique->dwgreg.sgn.sdxr ? -1 : 1);
+                 }
+-                mystique->dwgreg.ar[4] += mystique->dwgreg.ar[5];
++                mystique->dwgreg.ar[4] = (uint32_t) mga_ar_wrap(mystique, 4, (int64_t) (int32_t) mystique->dwgreg.ar[4] + (int32_t) mystique->dwgreg.ar[5]);
+ 
+                 dx = (int16_t) ((mystique->dwgreg.fxleft - old_x_l) & 0xffff);
+                 if (mystique->maccess_running & MACCESS_ZWIDTH) {
+@@ -5999,6 +6021,8 @@ blit_texture_trap(mystique_t *mystique)
+     const int trans_sel = (mystique->dwgreg.dwgctrl_running & DWGCTRL_TRANS_MASK) >> DWGCTRL_TRANS_SHIFT;
+     const int dest32    = ((mystique->maccess_running & MACCESS_PWIDTH_MASK) == MACCESS_PWIDTH_32);
+ 
++    mga_trap_ar_fields(mystique);
++
+     switch (mystique->dwgreg.dwgctrl_running & DWGCTRL_ATYPE_MASK) {
+         case DWGCTRL_ATYPE_I:
+         case DWGCTRL_ATYPE_ZI:
+@@ -6031,7 +6055,7 @@ blit_texture_trap(mystique_t *mystique)
+                 spec_back[1] = mystique->dwgreg.specstart[1];
+                 spec_back[2] = mystique->dwgreg.specstart[2];
+ 
+-                while (x_l != x_r) {
++                while (x_l < x_r) { /* MGA-Glide local: crossed edges draw nothing, as on a G200eR2 */
+                     if (x_l >= mystique->dwgreg.cxleft && x_l <= mystique->dwgreg.cxright && mystique->dwgreg.ydst_lin >= mystique->dwgreg.ytop && mystique->dwgreg.ydst_lin <= mystique->dwgreg.ybot && trans[x_l & 3]) {
+                         bool z_check_pass = false;
+                         if (mystique->maccess_running & MACCESS_ZWIDTH) {
+@@ -6257,10 +6281,7 @@ blit_texture_trap(mystique_t *mystique)
+                         }
+                     }
+ skip_pixel:
+-                    if (x_l > x_r)
+-                        x_l--;
+-                    else
+-                        x_l++;
++                    x_l++;
+ 
+                     if (mystique->maccess_running & MACCESS_ZWIDTH) {
+                         mystique->dwgreg.extended_dr[0] += mystique->dwgreg.extended_dr[2];
+@@ -6314,16 +6335,16 @@ skip_pixel:
+                     mystique->dwgreg.specstart[c] = (spec_back[c] + mystique->dwgreg.specyinc[c]) & 0xFFFFFF;
+ 
+                 while ((int32_t) mystique->dwgreg.ar[1] < 0 && mystique->dwgreg.ar[0]) {
+-                    mystique->dwgreg.ar[1] += mystique->dwgreg.ar[0];
++                    mystique->dwgreg.ar[1] = (uint32_t) mga_ar_wrap(mystique, 1, (int64_t) (int32_t) mystique->dwgreg.ar[1] + (int32_t) mystique->dwgreg.ar[0]);
+                     mystique->dwgreg.fxleft += (mystique->dwgreg.sgn.sdxl ? -1 : 1);
+                 }
+-                mystique->dwgreg.ar[1] += mystique->dwgreg.ar[2];
++                mystique->dwgreg.ar[1] = (uint32_t) mga_ar_wrap(mystique, 1, (int64_t) (int32_t) mystique->dwgreg.ar[1] + (int32_t) mystique->dwgreg.ar[2]);
+ 
+                 while ((int32_t) mystique->dwgreg.ar[4] < 0 && mystique->dwgreg.ar[6]) {
+-                    mystique->dwgreg.ar[4] += mystique->dwgreg.ar[6];
++                    mystique->dwgreg.ar[4] = (uint32_t) mga_ar_wrap(mystique, 4, (int64_t) (int32_t) mystique->dwgreg.ar[4] + (int32_t) mystique->dwgreg.ar[6]);
+                     mystique->dwgreg.fxright += (mystique->dwgreg.sgn.sdxr ? -1 : 1);
+                 }
+-                mystique->dwgreg.ar[4] += mystique->dwgreg.ar[5];
++                mystique->dwgreg.ar[4] = (uint32_t) mga_ar_wrap(mystique, 4, (int64_t) (int32_t) mystique->dwgreg.ar[4] + (int32_t) mystique->dwgreg.ar[5]);
+ 
+                 dx = (int16_t) ((mystique->dwgreg.fxleft - old_x_l) & 0xffff);
+                 if (mystique->maccess_running & MACCESS_ZWIDTH) {
