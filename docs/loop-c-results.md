@@ -103,7 +103,17 @@ them with refrast:
   leaves every row's column the same (exact edges fit up to 8191 pixels);
   a Voodoo edge that still does not fit takes the exact centre rule; a
   triangle over 8191 pixels is drawn as four. Its frames match refrast
-  pixel for pixel, 17 of 17.
+  pixel for pixel, 17 of 17. A triangle whose edges fit as they are (the
+  usual case) costs one 32-bit check of its extent: GLQuake's library time
+  went from 6,479 to 6,560 emulated cycles a triangle (+1.25%, DOS-GL PROF
+  build, G450, two runs each).
+- In Loop A with patch 0012, exact edges draw the ideal (32-bit) frames:
+  DOS-GL's conformance and Quake on the G200 match frames from before the
+  fix made on the old 86Box. Voodoo edges drawn with the centre rule differ
+  from the Voodoo by a pixel here and there: GTA one pixel a frame on the
+  G200, Screamer Rally 17-44 on the G200 and one on the G400/G450 (edges
+  flatter than 32 pixels a row near the horizon); every replay passes its
+  Voodoo comparison with the same fractions as before.
 
 86Box local patch 0012 and refrast now model both (refrast also clears AR
 and SGN on DWGCTL's arzero and sgnzero, as 86Box does). `tlutfar` (a
