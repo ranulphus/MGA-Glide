@@ -285,8 +285,16 @@ conform-ci: runtime dostests
 	MGA_CARD=g450 $(PYTHON) tools/conform/run.py check
 
 # Loop C rig program (static x86-64 Linux, for cuda6; docs/loop-c-results.md).
-build/mgarig: tests/rig/mgarig.c $(HAL_COMMON) hal/port/linux.c $(wildcard hal/include/mga/*.h)
+build/mgarig: tests/rig/mgarig.c tests/rig/edgecal.h $(HAL_COMMON) hal/port/linux.c $(wildcard hal/include/mga/*.h)
 	$(Q)echo "  CC      $@"
 	$(Q)$(HOST_CC) -static -O2 -std=gnu99 -Wall -Wextra -Werror -Ihal/include -o $@ tests/rig/mgarig.c \
 	  hal/src/engine.c hal/src/fifo.c hal/src/chip.c hal/src/pci.c hal/src/setup/trap.c hal/port/linux.c -lm
-rig: build/mgarig
+# mgarig edgecal's frames from a chip against refrast (docs/loop-c-results.md):
+#   build/edgecmp g200e DIR
+build/edgecmp: tests/rig/edgecmp.c tests/rig/edgecal.h tests/unit/refrast.c hal/src/setup/trap.c hal/src/engine.c \
+               hal/src/texhw.c hal/src/present.c hal/src/chip.c $(wildcard hal/include/mga/*.h)
+	@mkdir -p $(dir $@)
+	$(Q)echo "  CC      $@"
+	$(Q)$(HOST_CC) $(HOST_CFLAGS) -O2 -Itests/shim -Itests/unit -Itests/rig -o $@ tests/rig/edgecmp.c tests/unit/refrast.c \
+	  hal/src/setup/trap.c hal/src/engine.c hal/src/texhw.c hal/src/present.c hal/src/chip.c -lm
+rig: build/mgarig build/edgecmp

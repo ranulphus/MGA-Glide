@@ -9,6 +9,8 @@
  *   mgarig fifodeep  up to 512 writes during one fill, stopping at 8 free
  *   mgarig overlap a big triangle, then at once a small one: both whole?
  *   mgarig bigtri  which sizes and shapes of flat triangle draw whole
+ *   mgarig edgecal the edgecal.h triangles to files, before and after the fix
+ *   mgarig tlutfar a TLUT load whose AR0 is past 18 bits against a near one
  *   mgarig cost    time of a FIFOSTATUS read and of a paced register write
  *
  * Every write goes to the MGA drawing registers or to VRAM from 4 MB up,
@@ -19,6 +21,7 @@
 #include "mga/regs_mga.h"
 #include "mga/setup.h"
 #include "mga/sys.h"
+#include "edgecal.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -283,6 +286,67 @@ static int bigtri(void)
         bad += got != in;
     }
     return bad != 0;
+}
+
+/* The edgecal triangles (edgecal.h), each drawn flat twice: with the AR
+ * limit off (mga.ar_bits 0: the values before the fix) and as the HAL
+ * draws them for this chip. Each 1024x1024 result goes to
+ * edgecal-NN-off.raw / edgecal-NN-fix.raw (16-bit pixels) for
+ * tests/rig/edgecmp.c. A walk with wrapped terms can be slow: 2 s each,
+ * then an engine reset and a stop. */
+static int edgecal(void)
+{
+    static uint16_t img[EDGECAL_W * EDGECAL_H];
+    volatile uint16_t *p = (volatile uint16_t *)(mga_fb + WORK);
+    int chip_bits = mga.ar_bits, k, pass;
+    for (k = 0; k < EDGECAL_N; k++)
+        for (pass = 0; pass < 2; pass++) {
+            const edgecal_tri *t = &edgecal_tris[k];
+            mga_svtx v[3];
+            mga_tri_ctx ctx;
+            char name[64];
+            FILE *f;
+            uint32_t t0;
+            long lit = 0;
+            int i;
+            big_target();
+            engine_fill(0, 0, EDGECAL_W, EDGECAL_H, 0x0000);
+            if (idle("clear"))
+                return 1;
+            memset(v, 0, sizeof v);
+            for (i = 0; i < 3; i++) {
+                v[i].r = 255; v[i].g = 255; v[i].a = 255; v[i].fog = 255;
+                v[i].X16 = t->X16[i]; v[i].Y16 = t->Y16[i];
+            }
+            memset(&ctx, 0, sizeof ctx);
+            ctx.dwgctl = DWG_OPCOD_TRAP | DWG_ATYPE_I | DWG_ZMODE_NOZCMP | DWG_BOP_COPY;
+            ctx.flags = t->flags;
+            ctx.clip_y0 = 0;
+            ctx.clip_y1 = EDGECAL_H;
+            mga.ar_bits = (uint8_t)(pass ? chip_bits : 0);
+            setup_invalidate();
+            setup_triangle(&v[0], &v[1], &v[2], &ctx);
+            mga.ar_bits = (uint8_t)chip_bits;
+            t0 = sys_time_us();
+            while (MGA_RD32(MGAREG_STATUS) & STATUS_DWGENGSTS)
+                if (sys_time_us() - t0 > 2000000) {
+                    printf("edgecal %s %s: engine still busy after 2 s: reset, stop\n", t->name, pass ? "fix" : "off");
+                    engine_reset();
+                    return 1;
+                }
+            for (i = 0; i < EDGECAL_W * EDGECAL_H; i++)
+                lit += (img[i] = p[i]) != 0;
+            snprintf(name, sizeof name, "edgecal-%02d-%s.raw", k, pass ? "fix" : "off");
+            f = fopen(name, "wb");
+            if (!f || fwrite(img, sizeof img, 1, f) != 1) {
+                printf("edgecal: cannot write %s\n", name);
+                return 1;
+            }
+            fclose(f);
+            printf("edgecal %-16s %s: %7ld pixels drawn in %u us\n", t->name, pass ? "fix" : "off", lit,
+                   sys_time_us() - t0);
+        }
+    return 0;
 }
 
 static int cmp_u32(const void *a, const void *b)
@@ -581,6 +645,55 @@ static int experiments(void)
     return 0;
 }
 
+/* Does a BITBLT honour AR0 past 18 bits? engine_tlut_load's AR0 (the
+ * source's end, in pixels) passes 2^17 whenever the palette sits above
+ * 256 KB of VRAM, as DOS-GL's does. 16 entries are loaded from 64 KB (AR0
+ * small) and from 6 MB (AR0 about 3 million), an 8x8 TW8 texture of indices
+ * 0..15 is drawn after each, and the two results must match. */
+static int tlutfar(void)
+{
+    static const uint32_t offs[2] = { 64u << 10, 6u << 20 };
+    static uint32_t got[2][64];
+    volatile uint8_t *t8 = mga_fb + TEXBASE;
+    int pass, i, same = 1, distinct = 0;
+    for (pass = 0; pass < 2; pass++) {
+        volatile uint16_t *lut = (volatile uint16_t *)(mga_fb + offs[pass]);
+        uint32_t t0;
+        for (i = 0; i < 16; i++)
+            lut[i] = (uint16_t)(((i * 2) << 11) | ((63 - i * 4) << 5) | (i + 8));
+        for (i = 0; i < 64; i++)
+            t8[i] = (uint8_t)(i & 15);
+        target32();
+        engine_fill(0, 0, 64, 64, 0x000000);
+        if (idle("clear"))
+            return 1;
+        engine_tlut_load(offs[pass], 0, 16);
+        t0 = sys_time_us();
+        while (MGA_RD32(MGAREG_STATUS) & STATUS_DWGENGSTS)
+            if (sys_time_us() - t0 > 2000000) {
+                printf("tlutfar %s: engine still busy after 2 s: reset, stop\n", pass ? "far" : "near");
+                engine_reset();
+                return 1;
+            }
+        tex_regs(TEXBASE, TEXCTL_TW8, 8, 0, NEAREST);
+        alphactrl(OPAQUE | ALPHACTRL_ALPHASEL(ALPHASEL_DIFFUSE));
+        quad(0, 0, 8, 8, 0, 0, 1, 1, TT, MGA_S_TEX, 3, 3, 255, 255, 255, 255);
+        if (idle("tlutfar draw"))
+            return 1;
+        for (i = 0; i < 64; i++)
+            got[pass][i] = px32(i % 8, i / 8);
+        printf("tlutfar %s (palette at %u KB): texels 0-3 %06x %06x %06x %06x\n", pass ? "far" : "near",
+               offs[pass] >> 10, got[pass][0], got[pass][1], got[pass][2], got[pass][3]);
+    }
+    for (i = 0; i < 64; i++) {
+        same &= got[0][i] == got[1][i];
+        distinct += i < 16 && i > 0 && got[0][i] != got[0][i - 1];
+    }
+    printf("tlutfar: near and far %s; %d of 15 neighbouring entries differ in the near load -> %s\n",
+           same ? "match" : "DIFFER", distinct, same && distinct == 15 ? "PASS" : "FAIL");
+    return !(same && distinct == 15);
+}
+
 int main(int argc, char **argv)
 {
     const char *stage = argc > 1 ? argv[1] : "regs";
@@ -659,6 +772,10 @@ int main(int argc, char **argv)
         return experiments();
     if (!strcmp(stage, "fifo"))
         return fifo_check();
+    if (!strcmp(stage, "tlutfar"))
+        return tlutfar();
+    if (!strcmp(stage, "edgecal"))
+        return edgecal();
     if (!strcmp(stage, "bigtri"))
         return bigtri();
     if (!strcmp(stage, "overlap"))
