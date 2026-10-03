@@ -1,0 +1,21 @@
+--- a/src/unix/sdl_main.c
++++ b/src/unix/sdl_main.c
+@@ -1,3 +1,4 @@
++#include <signal.h>
+ #include <stdbool.h>
+ #include <stdint.h>
+ #include <wchar.h>
+@@ -368,6 +369,13 @@
+     SDL_Event event;
+     int       ret = 0;
+ 
++#ifdef SIGPIPE
++    /* A host socket that SLiRP writes to after its peer has gone (an SSH
++       client that closed first) raises SIGPIPE, whose default action ends
++       the emulator. Ignore it, as QEMU does: the write fails with EPIPE and
++       SLiRP closes the connection. (Windows has no SIGPIPE.) */
++    signal(SIGPIPE, SIG_IGN);
++#endif
+     SDL_Init(0);
+     ret = pc_init(argc, argv);
+     if (ret == 0)

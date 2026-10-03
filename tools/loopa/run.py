@@ -472,6 +472,13 @@ def run(a):
         seg_i, anchor_pos, serial_text = 0, 0, ""
         sends = [hostio.parse_tcp_send(t) for t in a.tcp_send]
         senders = []
+        steps = None
+        if a.ssh_steps:                         # H7: SSH steps against the guest (GLOS's agent)
+            if "net:22" not in ports:
+                raise RuntimeError("--ssh-steps needs --net (with guest port 22 forwarded)")
+            steps = hostio.SshSteps(hostio.parse_ssh_steps(a.ssh_steps), ports["net:22"], a.ssh_key, a.ssh_user,
+                                    serial, out, os.path.dirname(os.path.abspath(a.ssh_steps)))
+            steps.start()
 
         def console(cmd):
             try:
@@ -541,6 +548,9 @@ def run(a):
             if now - last_change > a.idle and now - t0 > a.boot_grace:
                 status = "HANG"
                 break
+            if steps is not None and steps.failed:
+                status = "FAIL"                 # an SSH step failed: no use waiting for the guest
+                break
             time.sleep(0.25)
         if p.poll() is None and status in ("HANG", "TIMEOUT"):
             # Leave a picture of the emulated display for diagnosis.
@@ -578,6 +588,9 @@ def run(a):
             t.join(timeout=10)
         if senders:
             result["tcp_send"] = [t.result for t in senders]
+        if steps:
+            steps.join(timeout=30)
+            result["ssh_steps"] = steps.results
         if a.com2:
             bridge.stop()
         result["elapsed_s"] = round(time.time() - t0, 1)
@@ -605,6 +618,8 @@ def run(a):
         elif status == "NO-EXIT":
             status = "PASS" if info["done"] == 0 else "FAIL"
             result["note"] = "unit tester exit did not end 86Box"
+        if steps and status == "PASS" and (steps.failed or steps.is_alive()):
+            status = "FAIL"                     # the guest ended well, the SSH steps didn't
         result["status"] = status
         # Collect guest output files and convert images.
         files = os.path.join(out, "files")
@@ -682,6 +697,11 @@ def main():
     ap.add_argument("--tcp-send", action="append", default=[], metavar="ANCHOR|TARGET|TEXT",
                     help="when ANCHOR appears on the serial line (in order), connect to TARGET (com2, or "
                     "net:GUESTPORT), send TEXT and CR LF, and keep the reply in OUT/tcp-N.txt")
+    ap.add_argument("--ssh-steps", metavar="FILE", help="SSH steps against the guest's port 22 (GLOS): wait, "
+                    "exec, expect rc|out|err, put, get, shot (tools/loopa/hostio.py); results in result.json "
+                    "ssh_steps and OUT/ssh.log; a failed step fails the job")
+    ap.add_argument("--ssh-key", metavar="FILE", help="the private key for --ssh-steps")
+    ap.add_argument("--ssh-user", default="glos", help="the user for --ssh-steps")
     ap.add_argument("--wrap", default="", help="prefix for the program's command line in RUN.BAT "
                     "(e.g. C:\\GLOS\\GLOS.EXE /RUN), for --exe and --game jobs")
     ap.add_argument("--dynarec", type=int, choices=(0, 1), default=1, help="86Box's dynamic recompiler")
@@ -700,6 +720,10 @@ def main():
     # survey loads a DPMI host this way into other repos' jobs).
     import shlex
     a = ap.parse_args(sys.argv[1:] + shlex.split(os.environ.get("LOOPA_EXTRA_ARGS", "")))
+    if a.ssh_steps and not (a.ssh_key and a.net):
+        ap.error("--ssh-steps needs --ssh-key and --net")
+    if a.ssh_steps:
+        hostio.parse_ssh_steps(a.ssh_steps)     # a bad steps file fails now, not mid-run
     sys.exit(emit_config(a) if a.emit_config else run(a))
 
 

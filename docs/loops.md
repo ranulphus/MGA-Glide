@@ -98,6 +98,7 @@ with `tools/loopa/ref/`. It needs no emulator; after a deliberate change,
 | `--net CARD` | A network card on SLiRP (`ne2k` ISA at 300h IRQ 10, `ne2kpci`, `rtl8139c+`, `i82557`, `i82558`) with host TCP ports forwarded into the guest: `--net-fwd [HOST:]GUEST`, default guest port 22 on a free host port, recorded in `result.json`. `--net-dos` puts the Crynwr NE2000 packet driver and mTCP's DHCP and NC on C:. |
 | `--com2` | COM2 on a pty (86Box's named-pipe device opens it directly) that run.py relays to a TCP port on 127.0.0.1 (`result.json` `com2_port`; the guest's output also goes to `com2.log`): the route for a gdb stub in the guest. |
 | `--tcp-send ANCHOR\|TARGET\|TEXT` | Once ANCHOR is on the serial line, connects to TARGET (`com2` or `net:GUESTPORT`), sends TEXT and CR LF, and keeps the reply in `tcp-N.txt`. |
+| `--ssh-steps FILE --ssh-key KEY` | SSH steps against the guest's forwarded port 22 (GLOS's agent; needs `--net`), run in order once 86Box starts: `wait TEXT` (on the serial line), `exec COMMAND` (output in `ssh-N.out`/`.err`), `expect rc N`, `expect out TEXT`, `expect err TEXT`, `put LOCAL REMOTE` and `get REMOTE LOCAL` (scp; LOCAL relative to the steps file and the output directory), `shot NAME` (`glos shot` into `NAME.png`). The first failure ends the list and fails the job; every step is in `ssh.log` and `result.json` `ssh_steps`. `--ssh-user` defaults to `glos`. |
 | `--wrap PREFIX` | Puts PREFIX in front of the program's command line (`GLOS.EXE /RUN ...`). |
 | `--dynarec 0` | Runs 86Box's interpreter instead of the dynamic recompiler. |
 
@@ -139,6 +140,9 @@ It found six places where 86Box differed. Local patches fix them:
 - **0108:** the redirection bitmap applies at IOPL 3.
 - **0109:** POPFD never loads VIF or VIP.
 - **0110:** a byte port's two bitmap bytes must be inside the TSS limit.
+- **0111:** the emulator ignores SIGPIPE. Found by GLOS's SSH tests: when a client closed its connection while
+  SLiRP was still writing to the host socket, the write raised SIGPIPE and its default action ended 86Box
+  (status CRASH, exit -13). QEMU ignores it the same way.
 
 `tests/cpu/known-86box.txt` lists any remaining deviation the check accepts.
 It is empty; the RTC firing with register C unread and PGE having no effect

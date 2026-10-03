@@ -158,3 +158,121 @@ class TcpSend(threading.Thread):
             self.result["error"] = str(e)
         open(self.out, "wb").write(got)
         self.result["got"] = len(got)
+
+
+# --ssh-steps FILE: SSH steps against the guest (GLOS's agent), one per line:
+#   wait TEXT          until TEXT is on the serial line (240 s)
+#   exec COMMAND       ssh COMMAND; its stdout and stderr go to ssh-N.out/.err
+#   expect rc N        the last exec's exit status was N
+#   expect out TEXT    ... its stdout held TEXT
+#   expect err TEXT    ... its stderr held TEXT
+#   put LOCAL REMOTE   scp a host file (relative to the job's directory) to the guest
+#   get REMOTE LOCAL   scp a guest file into the output directory
+#   shot NAME          "glos shot" into NAME.png in the output directory
+# Blank lines and lines starting with # are skipped. A failed step ends the
+# list; every step is reported in result.json and ssh.log.
+def parse_ssh_steps(path):
+    steps = []
+    for n, line in enumerate(open(path), 1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        verb, _, rest = line.partition(" ")
+        if verb not in ("wait", "exec", "expect", "put", "get", "shot"):
+            raise ValueError("%s:%d: unknown step %r" % (path, n, verb))
+        if verb == "expect" and rest.split(" ", 1)[0] not in ("rc", "out", "err"):
+            raise ValueError("%s:%d: expect rc|out|err" % (path, n))
+        if verb in ("put", "get") and len(rest.split()) != 2:
+            raise ValueError("%s:%d: %s takes two paths" % (path, n, verb))
+        steps.append((n, verb, rest))
+    return steps
+
+
+class SshSteps(threading.Thread):
+    """The --ssh-steps list, run in order with OpenSSH's ssh and scp against
+    the guest's forwarded port 22 (the host key is not checked: Loop A's
+    guests are fresh every run)."""
+
+    def __init__(self, steps, port, key, user, serial, out, base):
+        super().__init__(daemon=True)
+        self.steps, self.port, self.key, self.user = steps, port, key, user
+        self.serial, self.out, self.base = serial, out, base
+        self.results, self.failed = [], False
+        self.opts = ["-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no",
+                     "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR", "-o", "ConnectTimeout=60",
+                     "-i", key]
+
+    def _run(self, argv, timeout=600):
+        import subprocess
+        try:
+            p = subprocess.run(argv, capture_output=True, timeout=timeout)
+            return p.returncode, p.stdout, p.stderr
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return -1, b"", str(e).encode()
+
+    def run(self):
+        import shutil
+        import tempfile
+        if not shutil.which("ssh"):
+            self.results.append({"line": 0, "step": "ssh", "ok": False, "note": "no ssh client"})
+            self.failed = True
+            return
+        tmp = tempfile.mkdtemp()
+        key = os.path.join(tmp, "key")         # ssh wants a private key only its owner can read
+        shutil.copyfile(self.key, key)
+        os.chmod(key, 0o600)
+        self.opts[-1] = key
+        try:
+            self._steps()
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def _steps(self):
+        last = (None, b"", b"")
+        n_exec = 0
+        log = open(os.path.join(self.out, "ssh.log"), "w")
+        target = "%s@127.0.0.1" % self.user
+        for n, verb, rest in self.steps:
+            ok, note, t0 = True, "", time.time()
+            if verb == "wait":
+                while time.time() - t0 < 240:
+                    if rest in open(self.serial, "rb").read().decode("latin-1"):
+                        break
+                    time.sleep(0.5)
+                else:
+                    ok, note = False, "not seen"
+            elif verb in ("exec", "shot"):
+                cmd = rest if verb == "exec" else "glos shot"
+                last = self._run(["ssh", "-p", str(self.port)] + self.opts + [target, cmd])
+                n_exec += 1
+                if verb == "exec":
+                    open(os.path.join(self.out, "ssh-%d.out" % n_exec), "wb").write(last[1])
+                    open(os.path.join(self.out, "ssh-%d.err" % n_exec), "wb").write(last[2])
+                    note = "rc=%d" % last[0]
+                else:
+                    open(os.path.join(self.out, rest + ".png"), "wb").write(last[1])
+                    ok = last[0] == 0 and last[1][:8] == b"\x89PNG\r\n\x1a\n"
+                    note = "%d bytes" % len(last[1])
+            elif verb == "expect":
+                what, _, val = rest.partition(" ")
+                if what == "rc":
+                    ok = last[0] == int(val)
+                else:
+                    ok = val.encode("latin-1") in (last[1] if what == "out" else last[2])
+                note = "rc=%s" % last[0]
+            else:
+                a, b = rest.split()
+                if verb == "put":
+                    src, dst = os.path.join(self.base, a), "%s:%s" % (target, b)
+                else:
+                    src, dst = "%s:%s" % (target, a), os.path.join(self.out, b)
+                rc, _, err = self._run(["scp", "-P", str(self.port)] + self.opts + [src, dst])
+                ok, note = rc == 0, "rc=%d %s" % (rc, err.decode("latin-1").strip()[-120:])
+            self.results.append({"line": n, "step": "%s %s" % (verb, rest), "ok": ok,
+                                 "secs": round(time.time() - t0, 1), "note": note})
+            log.write("%-4s %3d %s %s (%s)\n" % ("ok" if ok else "FAIL", n, verb, rest, note))
+            log.flush()
+            if not ok:
+                self.failed = True
+                break
+        log.close()
