@@ -74,17 +74,39 @@ engine limits, and the meshes (textured mesh 31.9 -> 30.4 us) change
 little. The Xeon's CPU time is small here; on a Pentium II the CPU saving
 (about 30%, `docs/setup-perf.md`) adds to this.
 
-**Tall triangles overflow AR0-AR6.** The G200 specification gives AR0, AR2,
-AR4, AR5 and AR6 18 bits, signed (AR1 24). Exact-mode edges write
-`AR0/AR6 = 256 * dY` and `AR2/AR5 = -16 * 16 * |dX|` (1/16-pixel units
-twice), and the engine's error terms wrap at 18 bits. `bigtri` (right
-triangles (0,0), (w,0), (0,h)): every shape up to 768 rows tall draws
-whole, any width; every shape 1020 rows tall does not (64x1020 stops after
-about 16 rows). A model of the TRAP walk with 18-bit wrapping registers
-(`while (AR4 < 0) { AR4 += AR6; x++ } AR4 += AR5` in 18 bits) gives
-silicon's sample counts for 12 of the 14 shapes and breaks the same two
-others; 19-bit or wider registers draw all 14 whole. 86Box and
-`tests/unit/refrast.c` keep 32 bits, so Loop A never showed it. DOS-GL's
-conformance frames on this chip show it (t04, t07, t09, t17, t18, t20, t27:
-background and floor triangles that reach far outside the screen); the
-same field widths are in the retail G200 specification.
+**Edges overflow AR0-AR6.** Every Matrox specification from the Millennium
+to the G200 gives AR0, AR2, AR4, AR5 and AR6 18 bits, signed (AR1, AR3: 24);
+the G400's gives them 22. The trapezoid walk (`while (AR1 < 0) { AR1 +=
+AR0; x += dir } AR1 += AR2`, the same with AR4, AR6, AR5) keeps its error
+terms in them, so values wrap. The setup wrote exact edges as
+`AR0/AR6 = 256 * dY`, `AR2/AR5 = -256 * |dX|` (1/16 pixel twice) and
+Voodoo edges as `AR0/AR6 = 65536`, `AR2/AR5 = -|slope|` in 16.16: on the
+G100/G200 exact edges over about 512 pixels and Voodoo edges flatter than
+2 pixels a row drew wrong (on the G400, Voodoo edges flatter than about 32).
+`bigtri` showed it first (right triangles 1020 rows tall stop early), and
+DOS-GL's conformance frames on this chip (t04, t07, t09, t15, t17, t18,
+t20, t27: big background and floor triangles). 86Box and
+`tests/unit/refrast.c` kept 32 bits, so Loop A never showed it.
+
+`mgarig edgecal` (2026-10-03, `tests/rig/edgecal.h`: 17 triangles, tall,
+wide, sub-pixel, off-screen, Voodoo slopes 1.5 to 64) draws each with the
+old values and with the setup's, and `build/edgecmp g200e DIR` compares
+them with refrast:
+
+- The model: refrast with 18-bit fields whose sums wrap, and **crossed
+  spans (right edge before left) drawing nothing**, reproduces the old
+  values' frames pixel for pixel, 17 of 17, including every Voodoo slope.
+  (86Box had drawn crossed spans backwards; with the walk right they occur
+  only from overflowed edges.)
+- The fix (`hal/src/setup/trap.c`): an edge that does not fit has a factor
+  of 2 common to S and D divided out, with the remainder floored, which
+  leaves every row's column the same (exact edges fit up to 8191 pixels);
+  a Voodoo edge that still does not fit takes the exact centre rule; a
+  triangle over 8191 pixels is drawn as four. Its frames match refrast
+  pixel for pixel, 17 of 17.
+
+86Box local patch 0012 and refrast now model both (refrast also clears AR
+and SGN on DWGCTL's arzero and sgnzero, as 86Box does). `tlutfar` (a
+TLUT load whose AR0, a source address in pixels, is past 2^17, as DOS-GL's
+is) drew white both times: the probe's TW8 set-up is incomplete, so whether
+blits honour AR0's 18 bits is still open.

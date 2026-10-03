@@ -12,8 +12,11 @@ runtime's G400-family path can be exercised before the physical cards
 Both build on the emulated G200 (`docs/emulated-g200.md`): the drawing
 engine, blending, alpha test, specular and mipmaps are the G200 model's.
 Patch `0009-mga-g400-dual-texture.patch` adds the second texture map and
-the combiner (below). Neither models CRTC2, the MAVEN or the WARP setup
-engine; the runtimes do not use them.
+the combiner (below). Patch `0012-mga-ar-field-widths.patch` gives the
+trapezoid walk the G400 specification's 22-bit AR fields (18 before the
+G400) and lets crossed spans draw nothing, as a G200eR2 does
+(`docs/loop-c-results.md`). Neither models CRTC2, the MAVEN or the WARP
+setup engine; the runtimes do not use them.
 
 ## Dual texturing (patch 0009)
 

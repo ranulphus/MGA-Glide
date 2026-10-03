@@ -91,7 +91,9 @@ behaviours were then confirmed on the G200eR2 (Loop C).
 ## Checked on the G200eR2 (Loop C)
 
 Texel expansion, TW15 alpha, blend arithmetic, blending in plain `TRAP`,
-mip level rounding and colour keys under bilinear filtering: see
+mip level rounding, colour keys under bilinear filtering, and the
+trapezoid walk's 18-bit AR fields with crossed spans drawing nothing
+(local patch 0012, for every chip before the G400): see
 `docs/loop-c-results.md`. Still unchecked: large `fthres` values, the
 two-level (trilinear) modes, `DSTORG` alignment rules, and anything that
 might differ between the G200eR2 and a retail G200 (Loop B).
