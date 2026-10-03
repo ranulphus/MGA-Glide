@@ -115,14 +115,14 @@ static int64_t floordiv_pos(int64_t a, int32_t b, int64_t *r)
  * [-|S|, D), in AR fields of mga.ar_bits bits, signed (18 on the G100 and
  * G200, 22 on the G400; 0: no limit): they fit when D < 2^(b-1) and
  * |S| <= 2^(b-1). */
-static int64_t ar_lim(void)
+static int32_t ar_lim(void)
 {
-    return mga.ar_bits ? (int64_t)1 << (mga.ar_bits - 1) : (int64_t)1 << 40;
+    return mga.ar_bits ? (int32_t)1 << (mga.ar_bits - 1) : 0x7FFFFFFF;
 }
 
 static int edge_fits(const mga_edge *e)
 {
-    int64_t lim = ar_lim();
+    int32_t lim = ar_lim();
     return e->ar_step < lim && e->ar_dec >= -lim;
 }
 
@@ -135,17 +135,19 @@ static int edge_fits(const mga_edge *e)
  * are multiples of 16 (1/16 pixel twice), so they fit up to 8191 pixels. */
 static void edge_set(int64_t x0, int64_t r0, int64_t S, int64_t D, mga_edge *e)
 {
-    int64_t lim = ar_lim();
-    while ((D >= lim || S > lim || S < -lim) && !((D | S) & 1)) {
-        D >>= 1;
-        S /= 2;
-        r0 >>= 1;
+    /* The registers are 32 bits: the values are narrowed first (as they
+     * always were) and the fit and the division done in 32 bits. */
+    int32_t lim = ar_lim(), d = (int32_t)D, s = (int32_t)S, r = (int32_t)r0;
+    while ((d >= lim || s > lim || s < -lim) && !((d | s) & 1)) {
+        d >>= 1;
+        s /= 2;
+        r >>= 1;
     }
     e->x = (int32_t)x0;
-    e->neg = S < 0;
-    e->ar_step = (int32_t)D;
-    e->ar_dec = (int32_t)(S < 0 ? S : -S);
-    e->ar_err = (int32_t)((S < 0 ? r0 : (D - 1 - r0)) + e->ar_dec);
+    e->neg = s < 0;
+    e->ar_step = d;
+    e->ar_dec = s < 0 ? s : -s;
+    e->ar_err = (s < 0 ? r : d - 1 - r) + e->ar_dec;
 }
 
 static void edge_from_line(int64_t N0, int64_t S, int64_t D, mga_edge *e)
