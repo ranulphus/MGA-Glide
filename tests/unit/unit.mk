@@ -11,10 +11,11 @@ UNIT_test_plan := hal/src/vbe.c tests/unit/refrast.c
 UNIT_test_present := hal/src/present.c hal/src/engine.c hal/src/texhw.c hal/src/setup/trap.c tests/unit/refrast.c
 UNIT_test_setupgold := hal/src/setup/trap.c hal/src/engine.c hal/src/texhw.c hal/src/present.c hal/src/chip.c \
                        tests/unit/refrast.c
+UNIT_test_edges := $(UNIT_test_setupgold)
 # Also built 32-bit with x87 maths (HOST_CFLAGS32), the arithmetic the DOS
 # builds use: needs gcc-multilib (the dev container: tools/dev make tests-host).
 UNIT_test_fp :=
-UNIT32_TESTS := test_trap test_setupgold test_fp
+UNIT32_TESTS := test_trap test_setupgold test_fp test_edges
 
 tests-host: $(UNIT_TESTS:%=build/host/tests/%) $(UNIT32_TESTS:%=build/host32/tests/%) build/ow/GLIDE2X.OVL
 	@set -e; for t in $(UNIT_TESTS:%=build/host/tests/%) $(UNIT32_TESTS:%=build/host32/tests/%); do \

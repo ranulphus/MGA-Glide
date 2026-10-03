@@ -37,6 +37,7 @@ mga_chip mga;
 volatile uint8_t *mga_mmio, *mga_fb;
 int mga_fifo_free;                  /* stays 0: every reservation reaches fifo_reserve */
 static long credit, unpaced, oversize, writes, reads;
+static long ar_overflow;            /* trapezoids whose AR values exceed the chip's fields (mga.ar_bits; AR1: 24) */
 static int model_free;              /* fifo.c's credit, against a FIFO that is always empty (as in 86Box) */
 void fifo_reserve(int n)
 {
@@ -137,6 +138,21 @@ static void hook(uint32_t off, uint32_t v)
             m1_th = (int)(v >> 31);
     } else
         plain[a >> 2] = v;
+    if (exec && ((plain[MGAREG_DWGCTL >> 2] & 15) == 4 || (plain[MGAREG_DWGCTL >> 2] & 15) == 6)) {
+        /* A trapezoid starts: its edge terms must fit the chip's AR fields
+         * (blits use AR0 and AR3 as addresses, outside this). */
+        static const int ar[6] = { 0, 1, 2, 4, 5, 6 };
+        int i;
+        for (i = 0; i < 6; i++) {
+            int bits = ar[i] == 1 ? 24 : mga.ar_bits;
+            int32_t sv = (int32_t)plain[(MGAREG_AR0 >> 2) + ar[i]];
+            if (bits && bits < 32 && (sv < -(1 << (bits - 1)) || sv > (1 << (bits - 1)) - 1)) {
+                ar_overflow++;
+                if (getenv("SETUPGOLD_ARDUMP"))
+                    fprintf(stderr, "setupgold: AR%d = %d at a trapezoid\n", ar[i], sv);
+            }
+        }
+    }
     if (exec)
         state_hash(a, v);
 }
@@ -349,7 +365,7 @@ static void scenario(const char *name, mga_family fam, int voodoo, int extreme, 
     m1_tc2 = m1_tw = m1_th = 0;
     run_hash = 0xCBF29CE484222325ull;
     draws = 0;
-    credit = unpaced = oversize = writes = reads = 0;
+    credit = unpaced = oversize = writes = reads = ar_overflow = 0;
     model_free = 0;
     dumping = dump && !strcmp(dump, name);
     seed = 0x9E3779B9u ^ (uint32_t)(fam * 7919 + voodoo * 104729 + extreme * 1299709 + fans * 15485863);
@@ -415,7 +431,11 @@ static void scenario(const char *name, mga_family fam, int voodoo, int extreme, 
         fprintf(stderr, "setupgold: %s: %ld writes without a reserved FIFO slot, %ld reservations beyond %d\n", name,
                 unpaced, oversize, mga.fifo_depth);
     CHECK(unpaced == 0 && oversize == 0);
-    printf("setupgold: %-16s %5u draws, %6ld register writes, %6ld FIFOSTATUS reads\n", name, draws, writes, reads);
+    if (ar_overflow)
+        fprintf(stderr, "setupgold: %s: %ld AR values beyond the chip's fields at trapezoid starts\n", name, ar_overflow);
+    CHECK(ar_overflow == 0);
+    printf("setupgold: %-16s %5u draws, %6ld register writes, %6ld FIFOSTATUS reads, %5ld AR values too wide\n", name,
+           draws, writes, reads, ar_overflow);
     if (out)
         fprintf(out, "%s %u %016llx\n", name, draws, (unsigned long long)run_hash);
     else {

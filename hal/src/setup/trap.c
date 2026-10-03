@@ -111,11 +111,36 @@ static int64_t floordiv_pos(int64_t a, int32_t b, int64_t *r)
     }
 }
 
+/* The chip keeps an edge's D, -|S| and its error term, which stays in
+ * [-|S|, D), in AR fields of mga.ar_bits bits, signed (18 on the G100 and
+ * G200, 22 on the G400; 0: no limit): they fit when D < 2^(b-1) and
+ * |S| <= 2^(b-1). */
+static int64_t ar_lim(void)
+{
+    return mga.ar_bits ? (int64_t)1 << (mga.ar_bits - 1) : (int64_t)1 << 40;
+}
+
+static int edge_fits(const mga_edge *e)
+{
+    int64_t lim = ar_lim();
+    return e->ar_step < lim && e->ar_dec >= -lim;
+}
+
 /* An edge whose first covered column on row k (k = 0 at the trapezoid's
  * first row) is x_k = floor((N0 + S*k) / D), D > 0. The engine walks it
- * with: while (AR1 < 0) { AR1 += AR0; x += dir; } AR1 += AR2. */
+ * with: while (AR1 < 0) { AR1 += AR0; x += dir; } AR1 += AR2.
+ * A factor of 2 common to S and D comes out, with r0 = N0 - x0*D floored,
+ * and every x_k stays the same (floor(floor(a/2) / b) = floor(a / 2b)):
+ * done while the edge does not fit the chip's fields. Exact edges' S and D
+ * are multiples of 16 (1/16 pixel twice), so they fit up to 8191 pixels. */
 static void edge_set(int64_t x0, int64_t r0, int64_t S, int64_t D, mga_edge *e)
 {
+    int64_t lim = ar_lim();
+    while ((D >= lim || S > lim || S < -lim) && !((D | S) & 1)) {
+        D >>= 1;
+        S /= 2;
+        r0 >>= 1;
+    }
     e->x = (int32_t)x0;
     e->neg = S < 0;
     e->ar_step = (int32_t)D;
@@ -238,6 +263,8 @@ static int prescale(double ms, double mq, double *K)
  * are used up, never because a group did not fit what was left. */
 #define WR(reg, val) do { fifo_need(1); MGA_WR32((reg), (val)); } while (0)
 
+static void split4(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri_ctx *ctx);
+
 #ifdef MGA_PROF
 /* The setup in three stages (planes, increments, trapezoids), returning to
  * the caller's stage. */
@@ -249,9 +276,40 @@ void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, con
     PROF_BACK(o);
 }
 #  define SETUP_TRI static void setup_tri
+#  define SETUP_SELF setup_tri
 #else
 #  define SETUP_TRI void setup_triangle
+#  define SETUP_SELF setup_triangle
 #endif
+
+/* The midpoint of two vertices: position rounded down to 1/16 pixel (the
+ * same whichever comes first), attributes averaged; all are linear in
+ * screen space (s, t and q are s/w, t/w, 1/w). */
+static void midpoint(const mga_svtx *p, const mga_svtx *q, mga_svtx *m)
+{
+    m->X16 = (int32_t)(((int64_t)p->X16 + q->X16) >> 1);
+    m->Y16 = (int32_t)(((int64_t)p->Y16 + q->Y16) >> 1);
+    m->z = (p->z + q->z) * 0.5;
+    m->r = (p->r + q->r) * 0.5f; m->g = (p->g + q->g) * 0.5f;
+    m->b = (p->b + q->b) * 0.5f; m->a = (p->a + q->a) * 0.5f;
+    m->fog = (p->fog + q->fog) * 0.5f;
+    m->sr = (p->sr + q->sr) * 0.5f; m->sg = (p->sg + q->sg) * 0.5f; m->sb = (p->sb + q->sb) * 0.5f;
+    m->s = (p->s + q->s) * 0.5f; m->t = (p->t + q->t) * 0.5f; m->q = (p->q + q->q) * 0.5f;
+    m->s1 = (p->s1 + q->s1) * 0.5f; m->t1 = (p->t1 + q->t1) * 0.5f;
+}
+
+static void split4(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri_ctx *ctx)
+{
+    mga_svtx ab, bc, ca;
+    midpoint(a, b, &ab);
+    midpoint(b, c, &bc);
+    midpoint(c, a, &ca);
+    setup_stats.splits++;
+    SETUP_SELF(a, &ab, &ca, ctx);
+    SETUP_SELF(&ab, b, &bc, ctx);
+    SETUP_SELF(&ca, &bc, c, ctx);
+    SETUP_SELF(&ab, &bc, &ca, ctx);
+}
 
 SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri_ctx *ctx)
 {
@@ -286,6 +344,23 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
         return;
     }
     mid_right = cross < 0;
+    {
+        /* An exact edge fits once divided by 16 if |dX16| <= 2^(b-1) and
+         * dY16 < 2^(b-1), over 8191 pixels on the G100/G200 otherwise: only
+         * from callers that do not clip (DOS-GL's guard band keeps edges
+         * within 4000 pixels, Glide's vertices within about 2048). Such a
+         * triangle is drawn as four, split at its edges' midpoints. */
+        int32_t xmin = v[0]->X16, xmax = v[0]->X16;
+        int i;
+        for (i = 1; i < 3; i++) {
+            if (v[i]->X16 < xmin) xmin = v[i]->X16;
+            if (v[i]->X16 > xmax) xmax = v[i]->X16;
+        }
+        if ((int64_t)v[2]->Y16 - v[0]->Y16 >= ar_lim() || (int64_t)xmax - xmin > ar_lim()) {
+            split4(v[0], v[1], v[2], ctx);
+            return;
+        }
+    }
     setup_stats.tris++;
 
     /* Plane gradients in pixel units (area of the sorted triangle). */
@@ -502,8 +577,20 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
         if (ye <= ys)
             continue;
         if (flags & MGA_S_VOODOO_EDGES) {
+            /* An edge whose Voodoo slope does not fit (flatter than 2 pixels a
+             * row on the G100/G200, 32 on the G400) takes the exact centre
+             * rule, which always does. The choice is the edge's own, so a
+             * triangle sharing it chooses alike: no cracks. */
             edge_voodoo(v[0]->X16, v[0]->Y16, d_long, ys, &lng);
+            if (!edge_fits(&lng)) {
+                setup_edge(v[0]->X16, v[0]->Y16, v[2]->X16, v[2]->Y16, ys, &lng);
+                setup_stats.vfallback++;
+            }
             setup_edge_voodoo(sa->X16, sa->Y16, sb->X16, sb->Y16, ys, &sht);
+            if (!edge_fits(&sht)) {
+                setup_edge(sa->X16, sa->Y16, sb->X16, sb->Y16, ys, &sht);
+                setup_stats.vfallback++;
+            }
         } else {
             setup_edge(v[0]->X16, v[0]->Y16, v[2]->X16, v[2]->Y16, ys, &lng);
             setup_edge(sa->X16, sa->Y16, sb->X16, sb->Y16, ys, &sht);

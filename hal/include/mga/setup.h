@@ -41,7 +41,11 @@ typedef struct {
 } mga_tri_ctx;
 
 /* Statistics for benchmarks and tests. */
-typedef struct { uint32_t tris, traps, culled_empty; } mga_setup_stats;
+typedef struct {
+    uint32_t tris, traps, culled_empty;
+    uint32_t vfallback;        /* Voodoo edges too flat for the AR fields: drawn with the centre rule */
+    uint32_t splits;           /* triangles over 8191 pixels on the G100/G200: drawn as four */
+} mga_setup_stats;
 extern mga_setup_stats setup_stats;
 
 void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri_ctx *ctx);

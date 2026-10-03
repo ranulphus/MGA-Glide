@@ -3,6 +3,7 @@
 #include "glide/mg.h"
 #include "trace/trace.h"
 #include "mga/sys.h"
+#include "mga/setup.h"
 
 mg_stats_t mg_stats;
 
@@ -61,7 +62,8 @@ void mg_frame_end(void)
         if ((int)mg.frame == mg_config.snap[i])
             mg_line("MGL-SNAP %u", mg.frame);
     if (mg_config.stats_every && mg.frame % (unsigned)mg_config.stats_every == 0) {
-        mg_line("MGL-STAT frame=%u tris=%u", mg.frame, mg_stats.tris);
+        mg_line("MGL-STAT frame=%u tris=%u vfallback=%u splits=%u", mg.frame, mg_stats.tris,
+                setup_stats.vfallback, setup_stats.splits);     /* totals: edges too flat, triangles too big */
         mg_stats.tris = 0;
 #ifdef MGA_PROF
         prof_line();
