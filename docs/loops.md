@@ -132,9 +132,10 @@ monitor depends on.
   - global pages;
   - the RTC rate;
   - FPU error reporting;
-  - IOPL changes under the dynarec.
+  - IOPL changes under the dynarec;
+  - a load past a segment's limit, from code the dynarec has compiled (case V).
 
-It found six places where 86Box differed. Local patches fix them:
+It found six places where 86Box differed, and GLOS's DJGPP tests a seventh. Local patches fix them:
 - **0106:** a VME-redirected INT pushes IF = VIF and IOPL = 3.
 - **0107:** INT3 and INTO in V86 mode go through the IDT.
 - **0108:** the redirection bitmap applies at IOPL 3.
@@ -143,6 +144,10 @@ It found six places where 86Box differed. Local patches fix them:
 - **0111:** the emulator ignores SIGPIPE. Found by GLOS's SSH tests: when a client closed its connection while
   SLiRP was still writing to the host socket, the write raised SIGPIPE and its default action ended 86Box
   (status CRASH, exit -13). QEMU ignores it the same way.
+- **0112:** the dynarec checks segment limits on loads, as it did on stores. Found by GLOS's M4b with DJGPP's
+  djtst205: DJGPP turns Ctrl-C and its timer into signals by cutting DS's limit to 4 KB in the IRQ handler, and
+  in a loop that only reads, the fault never came, under any DPMI host. Flat segments (DOS/4GW) compile as
+  before; V86TEST case V covers it.
 
 `tests/cpu/known-86box.txt` lists any remaining deviation the check accepts.
 It is empty; the RTC firing with register C unread and PGE having no effect

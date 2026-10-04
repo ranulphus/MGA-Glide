@@ -182,6 +182,26 @@ try_wr_cr4:
         incl    %eax
         ret
 
+/* u32 try_rd_fs(u32 sel, u32 off): a load through FS = sel at off: 0, or
+   1 + the vector of its fault (case V). The same instruction on every call,
+   so the dynarec runs it from one compiled block. */
+        .globl  try_rd_fs
+try_rd_fs:
+        pushl   %fs
+        movl    8(%esp), %eax
+        movw    %ax, %fs
+        movl    12(%esp), %edx
+        movl    $9f, fixup_eip
+        movl    %fs:(%edx), %eax
+        movl    $0, fixup_eip
+        popl    %fs
+        xorl    %eax, %eax
+        ret
+9:      popl    %fs
+        movl    kfault_vec, %eax
+        incl    %eax
+        ret
+
 /* u32 fpu_fault(void): 1/0 with the zero-divide exception unmasked, then
    FWAIT with interrupts enabled. 0 if nothing happened at the FWAIT, else
    1 + the vector (#MF is 16; an IRQ 13 is counted by trap_c instead). */

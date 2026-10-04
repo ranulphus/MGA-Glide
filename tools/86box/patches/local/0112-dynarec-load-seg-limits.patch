@@ -1,0 +1,68 @@
+MGA-Glide local patch 0112: the old dynarec's loads check the segment limit.
+
+Stores call CHECK_SEG_LIMITS (codegen_ops_mov.h); loads never did, so a read
+past a segment's limit in recompiled code doesn't fault, while the interpreter
+faults. DJGPP turns Ctrl-C and its timer into signals by cutting DS's limit to
+4 KB inside the IRQ handler: in a loop that only reads, the fault never came,
+under any DPMI host (found by GLOS M4b with djtst205's HANG). Each load helper
+now checks first; CHECK_SEG_LIMITS does nothing for a flat DS or SS, so flat
+programs (DOS/4GW) compile as before.
+
+--- a/src/codegen/codegen_ops_x86-64.h
++++ b/src/codegen/codegen_ops_x86-64.h
+@@ -911,6 +911,7 @@
+ static __inline void
+ MEM_LOAD_ADDR_EA_B(x86seg *seg)
+ {
++    CHECK_SEG_LIMITS(seg, 0); /* MGA-Glide 0112: loads check the limit, as stores do */
+     if ((seg == &cpu_state.seg_ds && codegen_flat_ds && !(cpu_cur_status & CPU_STATUS_NOTFLATDS)) || (seg == &cpu_state.seg_ss && codegen_flat_ss && !(cpu_cur_status & CPU_STATUS_NOTFLATSS))) {
+         addbyte(0x31); /*XOR ECX, ECX*/
+         addbyte(0xc9);
+@@ -978,6 +979,7 @@
+ static __inline void
+ MEM_LOAD_ADDR_EA_W(x86seg *seg)
+ {
++    CHECK_SEG_LIMITS(seg, 1); /* MGA-Glide 0112: loads check the limit, as stores do */
+     if ((seg == &cpu_state.seg_ds && codegen_flat_ds && !(cpu_cur_status & CPU_STATUS_NOTFLATDS)) || (seg == &cpu_state.seg_ss && codegen_flat_ss && !(cpu_cur_status & CPU_STATUS_NOTFLATSS))) {
+         addbyte(0x31); /*XOR ECX, ECX*/
+         addbyte(0xc9);
+@@ -1066,6 +1068,7 @@
+ static __inline void
+ MEM_LOAD_ADDR_EA_L(x86seg *seg)
+ {
++    CHECK_SEG_LIMITS(seg, 3); /* MGA-Glide 0112: loads check the limit, as stores do */
+     if ((seg == &cpu_state.seg_ds && codegen_flat_ds && !(cpu_cur_status & CPU_STATUS_NOTFLATDS)) || (seg == &cpu_state.seg_ss && codegen_flat_ss && !(cpu_cur_status & CPU_STATUS_NOTFLATSS))) {
+         addbyte(0x31); /*XOR ECX, ECX*/
+         addbyte(0xc9);
+@@ -1138,6 +1141,7 @@
+ static __inline void
+ MEM_LOAD_ADDR_EA_Q(x86seg *seg)
+ {
++    CHECK_SEG_LIMITS(seg, 7); /* MGA-Glide 0112: loads check the limit, as stores do */
+     if ((seg == &cpu_state.seg_ds && codegen_flat_ds && !(cpu_cur_status & CPU_STATUS_NOTFLATDS)) || (seg == &cpu_state.seg_ss && codegen_flat_ss && !(cpu_cur_status & CPU_STATUS_NOTFLATSS))) {
+         addbyte(0x31); /*XOR ECX, ECX*/
+         addbyte(0xc9);
+@@ -5435,6 +5439,7 @@
+ static __inline int
+ MEM_LOAD_ADDR_EA_B_NO_ABRT(x86seg *seg)
+ {
++    CHECK_SEG_LIMITS(seg, 0); /* MGA-Glide 0112: loads check the limit, as stores do */
+     if ((seg == &cpu_state.seg_ds && codegen_flat_ds && !(cpu_cur_status & CPU_STATUS_NOTFLATDS)) || (seg == &cpu_state.seg_ss && codegen_flat_ss && !(cpu_cur_status & CPU_STATUS_NOTFLATSS))) {
+         addbyte(0x31); /*XOR ECX, ECX*/
+         addbyte(0xc9);
+@@ -5501,6 +5506,7 @@
+ static __inline int
+ MEM_LOAD_ADDR_EA_W_NO_ABRT(x86seg *seg)
+ {
++    CHECK_SEG_LIMITS(seg, 1); /* MGA-Glide 0112: loads check the limit, as stores do */
+     if ((seg == &cpu_state.seg_ds && codegen_flat_ds && !(cpu_cur_status & CPU_STATUS_NOTFLATDS)) || (seg == &cpu_state.seg_ss && codegen_flat_ss && !(cpu_cur_status & CPU_STATUS_NOTFLATSS))) {
+         addbyte(0x31); /*XOR ECX, ECX*/
+         addbyte(0xc9);
+@@ -5573,6 +5579,7 @@
+ static __inline int
+ MEM_LOAD_ADDR_EA_L_NO_ABRT(x86seg *seg)
+ {
++    CHECK_SEG_LIMITS(seg, 3); /* MGA-Glide 0112: loads check the limit, as stores do */
+     if ((seg == &cpu_state.seg_ds && codegen_flat_ds && !(cpu_cur_status & CPU_STATUS_NOTFLATDS)) || (seg == &cpu_state.seg_ss && codegen_flat_ss && !(cpu_cur_status & CPU_STATUS_NOTFLATSS))) {
+         addbyte(0x31); /*XOR ECX, ECX*/
+         addbyte(0xc9);

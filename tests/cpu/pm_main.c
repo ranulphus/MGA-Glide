@@ -35,6 +35,8 @@ typedef unsigned char u8;
 #define SEL_UCODE   0x3B
 #define SEL_UDATA   0x43
 #define SEL_USTACK16 0x4B
+#define SEL_LIMBIG  0x50                        /* case V: 4 GB data */
+#define SEL_LIMSMALL 0x58                       /* case V: 4 KB data */
 
 #define TEST_LIN    0x007F0000u                 /* a page in the 4-8 MB table for mapping tests */
 
@@ -57,6 +59,7 @@ extern u32 try_wr8(u32 addr, u32 v);
 extern u32 try_rd_cr4(u32 *v);
 extern u32 try_wr_cr4(u32 v);
 extern u32 fpu_fault(void);
+extern u32 try_rd_fs(u32 sel, u32 off);
 extern u32 ksave_esp, trap_vec, fixup_eip, kfault_vec;
 extern struct { u32 off; u16 sel; } __attribute__((packed)) ret_farptr;
 extern char __user_start[], __user_end[], user_stack[], user_stack_top[];
@@ -731,6 +734,21 @@ static void case_u(void)
     res("U-iopl-change-same-code", bad == 0, "%u of 30 runs behaved wrongly", bad);
 }
 
+/* A load past a segment's limit faults, also from code the dynarec compiled
+   while the limit was large: DJGPP's Ctrl-C and timer signals cut DS's limit
+   to 4 KB in the IRQ handler so the next access faults (86Box's old dynarec
+   checked limits on stores only; local patch 0112). */
+static void case_v(void)
+{
+    u32 i, r, bad = 0;
+    set_desc(SEL_LIMBIG, 0, 0xFFFFF, 0x92, 0xC0);
+    set_desc(SEL_LIMSMALL, 0, 0xFFF, 0x92, 0x40);
+    for (i = 0; i < 2000; i++)
+        bad += try_rd_fs(SEL_LIMBIG, 0x2000) != 0;
+    r = try_rd_fs(SEL_LIMSMALL, 0x2000);
+    res("V-load-past-limit", r == 14 && bad == 0, "fault=%u (expect #GP) in-limit faults=%u", r ? r - 1 : 0, bad);
+}
+
 static void open_user_pages(void)
 {
     u32 a;
@@ -778,6 +796,7 @@ u32 pm_main(struct bootinfo *b)
     case_q();
     case_t();
     case_u();
+    case_v();
     res("monitor", df_count == 0, "double faults=%u spurious irqs=%u", df_count, spurious);
 
     if (cr4_ok) try_wr_cr4(cr4_init);
