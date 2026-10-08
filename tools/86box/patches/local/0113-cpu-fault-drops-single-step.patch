@@ -1,0 +1,85 @@
+MGA-Glide local patch 0113: a faulting instruction takes no single-step trap.
+
+The interpreter sets `trap` from EFLAGS.TF as each instruction starts and
+raises #DB after it. An exception that x86_int() delivers during the
+instruction (#UD from x86illegal() and NOTRM, #DE, #BR, #NM, #MF) left it set,
+so once the gate had cleared TF the #DB was taken at the handler's first
+instruction, in ring 0. Silicon takes the single-step trap only after an
+instruction that completes (SDM vol. 3, 17.3.1.4); a fault discards it, and
+stepping resumes when the handler returns with TF set. Found by GLOS (M4c):
+lDebugX stepping V86 code onto an ARPL, GLOS's breakpoint into its monitor,
+gave a stray ring-0 #DB with DR6 = 0.
+
+x86_int() and x86_doabrt() now drop the TF trap (bit 0) before delivering;
+a task gate on the way may still set the new task's T bit. Without
+USE_DEBUG_REGS_486 the dynarec's interpreter kept TF's own value (100h) in
+`trap`, so no `trap & 1` test ever matched: DR6.BS was never set for a
+single step, which is why the stray #DB showed DR6 = 0. `trap` now holds TF
+in bit 0 in every build, and exec386() sets DR6 as exec386_dynarec_int()
+does. The abort path's stale bit was harmless (the next instruction
+overwrites it) unless a task gate set the T bit on the way. V86TEST case W.
+
+diff --git a/src/cpu/386_common.c b/src/cpu/386_common.c
+index d6de784..ed67c39 100644
+--- a/src/cpu/386_common.c
++++ b/src/cpu/386_common.c
+@@ -1605,6 +1605,12 @@ x86_int(int num)
+ {
+     uint32_t addr;
+ 
++    /* MGA-Glide 0113: an exception delivered here ends the instruction that
++       raised it, and only an instruction that completes takes the single-step
++       trap (SDM vol. 3, 17.3.1.4), so drop the one set up from TF. Left set,
++       it raised a #DB in the handler once its gate had cleared TF. A task
++       gate on the way may set trap again, for the new task's T bit. */
++    trap &= ~1;
+     flags_rebuild();
+     cpu_state.pc = cpu_state.oldpc;
+ 
+diff --git a/src/cpu/386_dynarec.c b/src/cpu/386_dynarec.c
+index fe8b94b..85ea33b 100644
+--- a/src/cpu/386_dynarec.c
++++ b/src/cpu/386_dynarec.c
+@@ -410,7 +410,7 @@ exec386_dynarec_int(void)
+ #    ifdef USE_DEBUG_REGS_486
+             trap = (trap & ~1) | (!!(cpu_state.flags & T_FLAG));
+ #    else
+-            trap = cpu_state.flags & T_FLAG;
++            trap = !!(cpu_state.flags & T_FLAG); /* MGA-Glide 0113: bit 0, as x86_int() and DR6.BS expect */
+ #    endif
+ 
+             cpu_state.pc++;
+@@ -1338,7 +1338,7 @@ exec386(int32_t cycs)
+ #ifdef USE_DEBUG_REGS_486
+                 trap = (trap & ~1) | (!!(cpu_state.flags & T_FLAG));
+ #else
+-                trap = cpu_state.flags & T_FLAG;
++                trap = !!(cpu_state.flags & T_FLAG); /* MGA-Glide 0113: bit 0, as x86_int() and DR6.BS expect */
+ #endif
+ 
+                 cpu_state.pc++;
+@@ -1412,11 +1412,10 @@ block_ended:
+                 x86_int(16);
+             } else if (trap) {
+                 flags_rebuild();
+-#ifdef USE_DEBUG_REGS_486
++                /* MGA-Glide 0113: DR6 says why, as exec386_dynarec_int() does */
+                 if (trap & 2) dr[6] |= 0x8000;
+                 if (trap & 1) dr[6] |= 0x4000;
+                 if (trap & 16) dr[6] |= 0x2000;
+-#endif
+                 trap = 0;
+                 oldcs = CS;
+                 cpu_state.oldpc = cpu_state.pc;
+diff --git a/src/cpu/x86seg.c b/src/cpu/x86seg.c
+index 1318a35..8e60f0e 100644
+--- a/src/cpu/x86seg.c
++++ b/src/cpu/x86seg.c
+@@ -89,6 +89,7 @@ x86_doabrt_2386(int x86_abrt)
+ x86_doabrt(int x86_abrt)
+ #endif
+ {
++    trap &= ~1; /* MGA-Glide 0113: a faulting instruction takes no single-step trap */
+ #ifndef USE_NEW_DYNAREC
+     CS = oldcs;
+ #endif

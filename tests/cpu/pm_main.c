@@ -70,6 +70,7 @@ SNIP(v86_pushfd); SNIP(v86_popfd); SNIP(v86_int21); SNIP(v86_iret); SNIP(v86_ire
 SNIP(v86_int3); SNIP(v86_into); SNIP(v86_bound); SNIP(v86_in8); SNIP(v86_in16); SNIP(v86_in32);
 SNIP(v86_insb); SNIP(v86_cli_pushf); SNIP(v86_sti_pushf); SNIP(v86_popf_tf); SNIP(v86_popf_if);
 SNIP(v86_int60); SNIP(v86_int61); SNIP(v86_pushf_pop); SNIP(v86_rd1000); SNIP(v86_wr1000);
+SNIP(v86_step_ud); SNIP(v86_step_gp);
 extern const char v86_int60_h[];
 
 /* ---- small runtime */
@@ -250,6 +251,36 @@ static void eoi(int irq)
     outb(0x20, 0x20);
 }
 
+/* Case W: while step_on, every trap from the code under test is logged
+   (vector, EIP; 100h added to the vector of one taken in ring 0). A #DB
+   resumes what it interrupted; the monitor skips an ARPL (#UD) or CLI (#GP)
+   in V86 mode and returns to it, TF still set in the image. */
+#define STEP_MAX 12
+static u32 step_on, step_n, step_vec[STEP_MAX], step_eip[STEP_MAX], step_dr6[STEP_MAX];
+
+static int step_trap(struct frame *f)
+{
+    u32 vm = f->eflags & EF_VM;
+    u8 op;
+    if (step_n < STEP_MAX) {
+        step_vec[step_n] = f->vec | (vm ? 0 : 0x100);
+        step_eip[step_n] = f->eip;
+        if (f->vec == 1) {
+            __asm__ volatile("mov %%dr6, %0" : "=r"(step_dr6[step_n]));
+            __asm__ volatile("mov %0, %%dr6" :: "r"(0u));
+        }
+    }
+    step_n++;
+    if (f->vec == 1)
+        return 1;
+    if (!vm || (f->vec != 6 && f->vec != 13))
+        return 0;
+    op = v86lin[f->eip & 0xFFFF];
+    if (op == 0x63) { f->eip += 2; return 1; }          /* ARPL AX, AX */
+    if (op == 0xFA) { f->eip += 1; return 1; }          /* CLI */
+    return 0;                                           /* the HLT that ends the snippet */
+}
+
 u32 trap_c(struct frame *f)
 {
     u32 v = f->vec;
@@ -270,6 +301,8 @@ u32 trap_c(struct frame *f)
         spurious++;
         return 0;
     }
+    if (step_on && in_user && step_trap(f))             /* case W */
+        return 0;
     memcpy(&tf, f, sizeof tf);
     tf_addr = (u32)f;
     tf_cr2 = rd_cr2();
@@ -749,6 +782,70 @@ static void case_v(void)
     res("V-load-past-limit", r == 14 && bad == 0, "fault=%u (expect #GP) in-limit faults=%u", r ? r - 1 : 0, bad);
 }
 
+/* A trap EFLAGS.TF would raise follows only an instruction that completes
+   (SDM vol. 3, 17.3.1.4): single-stepping V86 code onto an instruction that
+   faults gives the fault, and no #DB, neither in V86 mode nor in the
+   handler; the handler skips the instruction, returns with TF still set and
+   stepping goes on, one #DB per instruction (86Box raised a #DB in the
+   ring-0 handler after a #UD, which GLOS saw from lDebugX, and never set
+   DR6.BS; local patch 0113). Log entries are vector@EIP; one taken in ring 0
+   shows its EIP from stub_base (60h: the #UD stub's first instruction) and
+   DR6. The handler clears DR6 after each #DB. */
+static char step_txt[STEP_MAX * 24 + 4];
+
+static char *hex_(char *p, u32 v)
+{
+    char b[8];
+    int i = 0;
+    do { b[i++] = "0123456789abcdef"[v & 15]; } while (v >>= 4);
+    while (i) *p++ = b[--i];
+    return p;
+}
+
+static u32 step_db, step_db_bs;         /* V86 single-step #DBs, and those with DR6.BS */
+
+static void step_case(const char *name, const char *s, const char *e, const u32 *want, u32 n)
+{
+    u32 i, v, ok, r0 = 0;
+    char *p = step_txt;
+    step_n = 0;
+    step_on = 1;
+    v = v86(s, e, 0, EF_TF, 0, 0);
+    step_on = 0;
+    ok = v == 13 && step_n == n;
+    for (i = 0; i < step_n && i < STEP_MAX; i++) {
+        r0 += step_vec[i] >= 0x100;
+        if (step_vec[i] == 1) {
+            step_db++;
+            step_db_bs += (step_dr6[i] & 0x4000) != 0;
+        }
+        ok &= i < n && step_vec[i] == want[2 * i] && step_eip[i] == want[2 * i + 1];
+        p = hex_(p, step_vec[i] & 0xFF);
+        *p++ = '@';
+        if (step_vec[i] >= 0x100) {
+            *p++ = 'r'; *p++ = '0'; *p++ = '+';
+            p = hex_(p, step_eip[i] - (u32)stub_base);
+            *p++ = '/'; *p++ = 'd'; *p++ = 'r'; *p++ = '6'; *p++ = '=';
+            p = hex_(p, step_dr6[i]);
+        } else
+            p = hex_(p, step_eip[i]);
+        *p++ = ' ';
+    }
+    *p = 0;
+    res(name, ok, "traps %s(%u, %u in ring 0; expect no ring-0 #DB, one #DB per completed instruction)",
+        step_txt, step_n, r0);
+}
+
+static void case_w(void)
+{
+    static const u32 ud[] = { 1, 1, 6, 1, 1, 4, 1, 5, 13, 5 };
+    static const u32 gp[] = { 1, 1, 13, 1, 1, 3, 1, 4, 13, 4 };
+    set_cr4(cr4_now & ~(CR4_VME | CR4_PVI));
+    step_case("W-step-onto-ud", v86_step_ud, v86_step_ud_end, ud, 5);
+    step_case("W-step-onto-gp", v86_step_gp, v86_step_gp_end, gp, 5);
+    res("W-step-dr6-bs", step_db && step_db_bs == step_db, "%u of %u single-step #DBs set DR6.BS", step_db_bs, step_db);
+}
+
 static void open_user_pages(void)
 {
     u32 a;
@@ -797,6 +894,7 @@ u32 pm_main(struct bootinfo *b)
     case_t();
     case_u();
     case_v();
+    case_w();
     res("monitor", df_count == 0, "double faults=%u spurious irqs=%u", df_count, spurious);
 
     if (cr4_ok) try_wr_cr4(cr4_init);

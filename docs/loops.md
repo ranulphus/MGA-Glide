@@ -133,9 +133,10 @@ monitor depends on.
   - the RTC rate;
   - FPU error reporting;
   - IOPL changes under the dynarec;
-  - a load past a segment's limit, from code the dynarec has compiled (case V).
+  - a load past a segment's limit, from code the dynarec has compiled (case V);
+  - single-stepping onto an instruction that faults (case W).
 
-It found six places where 86Box differed, and GLOS's DJGPP tests a seventh. Local patches fix them:
+It found six places where 86Box differed, and GLOS's tests found more. Local patches fix them:
 - **0106:** a VME-redirected INT pushes IF = VIF and IOPL = 3.
 - **0107:** INT3 and INTO in V86 mode go through the IDT.
 - **0108:** the redirection bitmap applies at IOPL 3.
@@ -148,6 +149,11 @@ It found six places where 86Box differed, and GLOS's DJGPP tests a seventh. Loca
   djtst205: DJGPP turns Ctrl-C and its timer into signals by cutting DS's limit to 4 KB in the IRQ handler, and
   in a loop that only reads, the fault never came, under any DPMI host. Flat segments (DOS/4GW) compile as
   before; V86TEST case V covers it.
+- **0113:** a faulting instruction takes no single-step trap. Found by GLOS's M4c: lDebugX stepping V86 code
+  onto an ARPL (#UD in V86 mode, GLOS's breakpoint into its monitor) got a #DB in GLOS's ring-0 #UD handler.
+  An exception raised during the instruction (#UD, #DE, #BR, #NM) left the TF trap pending, and it was taken
+  at the handler's first instruction once the gate had cleared TF. DR6.BS was never set for a single step
+  either (DR6 read 0). V86TEST case W.
 
 `tests/cpu/known-86box.txt` lists any remaining deviation the check accepts.
 It is empty; the RTC firing with register C unread and PGE having no effect

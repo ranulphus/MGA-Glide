@@ -159,6 +159,23 @@ v86_pushf_pop: pushfw
         hlt
 v86_pushf_pop_end:
 
+/* Case W: single-stepped (TF set) onto an instruction that faults to the
+   monitor, which skips it: ARPL is #UD in V86 mode, CLI #GP at IOPL 0. */
+        snip    v86_step_ud
+v86_step_ud: nop
+        arpl    %ax, %ax
+        nop
+        nop
+        hlt
+v86_step_ud_end:
+        snip    v86_step_gp
+v86_step_gp: nop
+        cli
+        nop
+        nop
+        hlt
+v86_step_gp_end:
+
 /* Page faults on the scratch segment's second page (offset 1000h). */
         snip    v86_rd1000
 v86_rd1000: movb 0x1000, %al
