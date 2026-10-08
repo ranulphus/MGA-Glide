@@ -135,7 +135,8 @@ monitor depends on.
   - IOPL changes under the dynarec;
   - a load past a segment's limit, from code the dynarec has compiled (case V);
   - single-stepping onto an instruction that faults (case W);
-  - EFLAGS.ID after an IRETD, on CPUs with and without CPUID (case X).
+  - EFLAGS.ID after an IRETD, on CPUs with and without CPUID (case X);
+  - DR0-DR3 execute and data breakpoints (case Y).
 
 It found six places where 86Box differed, and GLOS's tests found more. Local patches fix them:
 - **0106:** a VME-redirected INT pushes IF = VIF and IOPL = 3.
@@ -159,6 +160,11 @@ It found six places where 86Box differed, and GLOS's tests found more. Local pat
   with ID set (into V86 mode, to ring 0 or ring 3) kept ID, and the next trap frame showed it: GLOS builds the
   V86 FLAGS image from that frame, so lDebugX saw ID toggle and ran CPUID into #UD. An IRETD in V86 mode at
   IOPL 3 now loads RF, AC and ID. V86TEST case X.
+- **0115:** 86Box is built with its debug-register support (the DEBUGREGS486 option), so DR0-DR3 execute and
+  data breakpoints fire on every profile: none did before, and GLOS's DPMI watchpoints (0B00h) never
+  triggered. While a data breakpoint is enabled, or an execute breakpoint is near the code being run, the
+  dynarec interprets; with DR7 clear, compiled code is unchanged. The Pentium II's CPUID now reports DE, as
+  silicon does. V86TEST case Y.
 
 `tests/cpu/known-86box.txt` lists any remaining deviation the check accepts.
 It is empty; the RTC firing with register C unread and PGE having no effect

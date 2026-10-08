@@ -1,0 +1,29 @@
+MGA-Glide local patch 0115: build 86Box's debug-register support (DEBUGREGS486).
+
+Without the DEBUGREGS486 option no DR0-DR3 breakpoint fires on a 486 or
+later CPU (all our profiles): MOV to DR7 is kept, but nothing checks it.
+86Box already has the support behind the option: an execute breakpoint is a
+fault before the instruction (cpu_386_check_instruction_fault()), a data
+breakpoint a trap after the access (mem_debug_check_addr() from the memory
+helpers, whose fast paths step aside while DR7 enables a breakpoint), I/O
+breakpoints with CR4.DE, DR7.GD, and DR6 for each. While a data breakpoint is
+enabled, or an execute breakpoint lies in the page being run or the next,
+the dynarec interprets (dr_blocks_cache()), so recompiled code needs no
+checks and runs as before when DR7 is clear. The option also reports CPUID's
+DE bit where the CPU has it, sets RF on IRET/POPF images as silicon does and
+keeps TF's trap in bit 0 of `trap`. GLOS's DPMI watchpoints (0B00h) need it.
+V86TEST case Y.
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 4f936c5..2f6ae3f 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -131,7 +131,7 @@ option(MINITRACE    "Enable Chrome tracing using the modified minitrace library"
+ option(GDBSTUB      "Enable GDB stub server for debugging"                       OFF)
+ option(DEV_BRANCH   "Development branch"                                         OFF)
+ option(DISCORD      "Discord Rich Presence support"                              ON)
+-option(DEBUGREGS486 "Enable debug register opeartion on 486+ CPUs"               OFF)
++option(DEBUGREGS486 "Enable debug register opeartion on 486+ CPUs"               ON) # MGA-Glide 0115
+ option(LIBASAN      "Enable compilation with the addresss sanitizer"             OFF)
+ option(QT           "Use the Qt-based user interface"                            ON)
+ option(SDL2         "Use SDL2 instead of SDL3"                                   OFF)

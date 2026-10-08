@@ -220,6 +220,48 @@ iretd_r0:
         popfl
         ret
 
+/* Case Y, debug-register breakpoints: try_dr_exec runs the NOP at
+   dr_exec_at, try_dr_write stores v at p, try_dr_read loads from p. Each
+   gives 0, or 1 + the vector of a trap or fault (trap_c continues at
+   fixup_eip); the instruction after the access is at dr_write_after or
+   dr_read_after. */
+        .globl  try_dr_exec, dr_exec_at, try_dr_write, dr_write_after, try_dr_read, dr_read_after
+try_dr_exec:
+        movl    $9f, fixup_eip
+dr_exec_at:
+        nop
+        movl    $0, fixup_eip
+        xorl    %eax, %eax
+        ret
+9:      movl    kfault_vec, %eax
+        incl    %eax
+        ret
+
+try_dr_write:
+        movl    4(%esp), %edx
+        movl    8(%esp), %eax
+        movl    $9f, fixup_eip
+        movl    %eax, (%edx)
+dr_write_after:
+        movl    $0, fixup_eip
+        xorl    %eax, %eax
+        ret
+9:      movl    kfault_vec, %eax
+        incl    %eax
+        ret
+
+try_dr_read:
+        movl    4(%esp), %edx
+        movl    $9f, fixup_eip
+        movl    (%edx), %eax
+dr_read_after:
+        movl    $0, fixup_eip
+        xorl    %eax, %eax
+        ret
+9:      movl    kfault_vec, %eax
+        incl    %eax
+        ret
+
 /* u32 fpu_fault(void): 1/0 with the zero-divide exception unmasked, then
    FWAIT with interrupts enabled. 0 if nothing happened at the FWAIT, else
    1 + the vector (#MF is 16; an IRQ 13 is counted by trap_c instead). */

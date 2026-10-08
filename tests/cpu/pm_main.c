@@ -61,6 +61,8 @@ extern u32 try_wr_cr4(u32 v);
 extern u32 fpu_fault(void);
 extern u32 try_rd_fs(u32 sel, u32 off);
 extern u32 iretd_r0(u32 eflags);
+extern u32 try_dr_exec(void), try_dr_write(volatile u32 *p, u32 v), try_dr_read(volatile u32 *p);
+extern char dr_exec_at[], dr_write_after[], dr_read_after[];
 extern u32 ksave_esp, trap_vec, fixup_eip, kfault_vec;
 extern struct { u32 off; u16 sel; } __attribute__((packed)) ret_farptr;
 extern char __user_start[], __user_end[], user_stack[], user_stack_top[];
@@ -877,6 +879,78 @@ static void case_x(void)
         "pushfd=%x trap_frame=%x (cpuid=%u: expect ID=%u in both)", f, tf.eflags, has_id, has_id);
 }
 
+/* DR0-DR3 breakpoints fire where DR7 enables them (SDM vol. 3, 17.2): an
+   execute breakpoint is a fault before the instruction, a data breakpoint a
+   trap after the access, with DR6.Bn set; in ring 0, ring 3 and V86 mode,
+   also from code the dynarec compiled before DR7 was set. GLOS's DPMI
+   watchpoints (0B00h) rely on them (86Box built them only with
+   DEBUGREGS486; local patch 0115). */
+#define WR_DR(n, v) __asm__ volatile("mov %0, %%dr" #n :: "r"((u32)(v)))
+#define RD_DR(n, v) __asm__ volatile("mov %%dr" #n ", %0" : "=r"(v))
+#define DR7_LE_GE   0x300u
+#define DR7_L0      0x001u
+#define DR7_L1      0x004u
+#define DR7_RW1(rw, len) (((u32)(rw) << 20) | ((u32)(len) << 22))
+
+static volatile u32 y_var __attribute__((aligned(4)));
+
+static void dr_arm(u32 dr0, u32 dr1, u32 dr7)
+{
+    WR_DR(6, 0);
+    WR_DR(0, dr0);
+    WR_DR(1, dr1);
+    WR_DR(7, dr7 | DR7_LE_GE);
+}
+
+static u32 dr_done(void)
+{
+    u32 dr6;
+    RD_DR(6, dr6);
+    WR_DR(7, 0);
+    WR_DR(6, 0);
+    return dr6;
+}
+
+static void case_y(void)
+{
+    u32 i, r, v, dr6, bad = 0;
+    for (i = 0; i < 2000; i++)                          /* compiled by the dynarec first */
+        bad += try_dr_exec() + try_dr_write(&y_var, i) + try_dr_read(&y_var);
+    dr_arm((u32)dr_exec_at, 0, DR7_L0);
+    r = try_dr_exec();
+    dr6 = dr_done();
+    res("Y-dr-exec-ring0", r == 2 && tf.eip == (u32)dr_exec_at && (dr6 & 1) && !bad,
+        "fault=%u eip=%x dr6=%x (expect #DB before the instruction, B0) unarmed faults=%u",
+        r ? r - 1 : 0, tf.eip - (u32)dr_exec_at, dr6, bad);
+    y_var = 0;
+    dr_arm(0, (u32)&y_var, DR7_L1 | DR7_RW1(1, 3));
+    r = try_dr_write(&y_var, 0x5A5A);
+    dr6 = dr_done();
+    res("Y-dr-write-ring0", r == 2 && tf.eip == (u32)dr_write_after && (dr6 & 2) && y_var == 0x5A5A,
+        "trap=%u eip=%x dr6=%x stored=%x (expect #DB after the store, B1)",
+        r ? r - 1 : 0, tf.eip - (u32)dr_write_after, dr6, y_var);
+    dr_arm(0, (u32)&y_var, DR7_L1 | DR7_RW1(3, 3));
+    r = try_dr_read(&y_var);
+    dr6 = dr_done();
+    res("Y-dr-read-ring0", r == 2 && tf.eip == (u32)dr_read_after && (dr6 & 2),
+        "trap=%u eip=%x dr6=%x (expect #DB after the load, B1)", r ? r - 1 : 0, tf.eip - (u32)dr_read_after, dr6);
+    dr_arm(0, (u32)user_stack, DR7_L1 | DR7_RW1(1, 0));
+    v = R3(r3_wr, 0, 0x77, (u32)user_stack);
+    dr6 = dr_done();
+    res("Y-dr-write-ring3", v == 1 && tf.eip == (u32)r3_wr + 2 && (dr6 & 2),
+        "vec=%u eip=%x dr6=%x (expect #DB after the store, B1)", v, tf.eip - (u32)r3_wr, dr6);
+    dr_arm((u32)v86lin + 3, 0, DR7_L0);
+    v = V86(v86_b, 0, 0, 0);
+    dr6 = dr_done();
+    res("Y-dr-exec-v86", v == 1 && (tf.eflags & EF_VM) && tf.eip == 3 && (dr6 & 1),
+        "vec=%u eip=%x dr6=%x (expect #DB before the HLT at 3, B0)", v, tf.eip, dr6);
+    dr_arm(0, (u32)v86lin + 0x1000, DR7_L1 | DR7_RW1(1, 0));
+    v = V86(v86_wr1000, 0, 0, 0);
+    dr6 = dr_done();
+    res("Y-dr-write-v86", v == 1 && (tf.eflags & EF_VM) && tf.eip == 5 && (dr6 & 2),
+        "vec=%u eip=%x dr6=%x (expect #DB after the store, at 5, B1)", v, tf.eip, dr6);
+}
+
 static void open_user_pages(void)
 {
     u32 a;
@@ -927,6 +1001,7 @@ u32 pm_main(struct bootinfo *b)
     case_v();
     case_w();
     case_x();
+    case_y();
     res("monitor", df_count == 0, "double faults=%u spurious irqs=%u", df_count, spurious);
 
     if (cr4_ok) try_wr_cr4(cr4_init);
