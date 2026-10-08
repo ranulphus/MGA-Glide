@@ -176,6 +176,24 @@ v86_step_gp: nop
         hlt
 v86_step_gp_end:
 
+/* Case X: the EFLAGS the V86 code sees (at IOPL 3), in EAX; then the same
+   after the V86 code's own IRETD loads EAX (the caller's) into EFLAGS. */
+        snip    v86_pushfd_pop
+v86_pushfd_pop: pushfl
+        popl    %eax
+        hlt
+v86_pushfd_pop_end:
+        snip    v86_iretd_id
+v86_iretd_id: pushl %eax
+        pushw   $0
+        pushw   %cs
+        pushl   $(1f - v86_iretd_id)
+        iretl
+1:      pushfl
+        popl    %eax
+        hlt
+v86_iretd_id_end:
+
 /* Page faults on the scratch segment's second page (offset 1000h). */
         snip    v86_rd1000
 v86_rd1000: movb 0x1000, %al
@@ -196,7 +214,7 @@ user_stack:
         .space  4096
 user_stack_top:
 
-        .globl  r3_hlt, r3_in8, r3_cli, r3_sti, r3_popf, r3_int41, r3_int42, r3_esp, r3_rd, r3_wr
+        .globl  r3_hlt, r3_in8, r3_cli, r3_sti, r3_popf, r3_int41, r3_int42, r3_esp, r3_rd, r3_wr, r3_pushfd
 r3_hlt: hlt
 r3_in8: movl    %ebx, %edx
         inb     %dx, %al
@@ -223,6 +241,9 @@ r3_esp: movl    %esp, %eax
 r3_rd:  movb    (%ebx), %al
         hlt
 r3_wr:  movb    %al, (%ebx)
+        hlt
+r3_pushfd: pushfl
+        popl    %eax
         hlt
 
         .section .note.GNU-stack, "", @progbits

@@ -60,17 +60,19 @@ extern u32 try_rd_cr4(u32 *v);
 extern u32 try_wr_cr4(u32 v);
 extern u32 fpu_fault(void);
 extern u32 try_rd_fs(u32 sel, u32 off);
+extern u32 iretd_r0(u32 eflags);
 extern u32 ksave_esp, trap_vec, fixup_eip, kfault_vec;
 extern struct { u32 off; u16 sel; } __attribute__((packed)) ret_farptr;
 extern char __user_start[], __user_end[], user_stack[], user_stack_top[];
-extern char r3_hlt[], r3_in8[], r3_cli[], r3_sti[], r3_popf[], r3_int41[], r3_int42[], r3_esp[], r3_rd[], r3_wr[];
+extern char r3_hlt[], r3_in8[], r3_cli[], r3_sti[], r3_popf[], r3_int41[], r3_int42[], r3_esp[], r3_rd[], r3_wr[],
+            r3_pushfd[];
 #define SNIP(n) extern const char n[], n##_end[]
 SNIP(v86_b); SNIP(v86_hlt); SNIP(v86_cli); SNIP(v86_sti); SNIP(v86_pushf); SNIP(v86_popf);
 SNIP(v86_pushfd); SNIP(v86_popfd); SNIP(v86_int21); SNIP(v86_iret); SNIP(v86_iretd);
 SNIP(v86_int3); SNIP(v86_into); SNIP(v86_bound); SNIP(v86_in8); SNIP(v86_in16); SNIP(v86_in32);
 SNIP(v86_insb); SNIP(v86_cli_pushf); SNIP(v86_sti_pushf); SNIP(v86_popf_tf); SNIP(v86_popf_if);
 SNIP(v86_int60); SNIP(v86_int61); SNIP(v86_pushf_pop); SNIP(v86_rd1000); SNIP(v86_wr1000);
-SNIP(v86_step_ud); SNIP(v86_step_gp);
+SNIP(v86_step_ud); SNIP(v86_step_gp); SNIP(v86_pushfd_pop); SNIP(v86_iretd_id);
 extern const char v86_int60_h[];
 
 /* ---- small runtime */
@@ -396,6 +398,7 @@ static int set_cr4(u32 v)
 /* ---- the cases */
 
 static u32 cr4_bits;                    /* bits that stick in CR4 */
+static u32 has_id;                      /* POPFD can change EFLAGS.ID: the CPU has CPUID */
 
 static void case_a(void)
 {
@@ -406,7 +409,8 @@ static void case_a(void)
     };
     __asm__ volatile("pushfl\n popl %0\n movl %0, %1\n xorl $0x200000, %1\n pushl %1\n popfl\n"
                      "pushfl\n popl %1\n pushl %0\n popfl" : "=&r"(f1), "=&r"(f2));
-    if ((f1 ^ f2) & EF_ID)
+    has_id = (f1 ^ f2) & EF_ID ? 1 : 0;
+    if (has_id)
         __asm__ volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(1));
     cr4_ok = try_rd_cr4(&cr4_now) == 0;
     puts_("HX-TEST cpu-A-features INFO cpuid=");
@@ -846,6 +850,33 @@ static void case_w(void)
     res("W-step-dr6-bs", step_db && step_db_bs == step_db, "%u of %u single-step #DBs set DR6.BS", step_db_bs, step_db);
 }
 
+/* EFLAGS.ID can be set only on a CPU that has CPUID, whichever instruction
+   loads it: an IRETD into V86 mode, in V86 mode at IOPL 3, to ring 3 or to
+   ring 0 must treat it as POPFD does, in PUSHFD and in the next trap frame.
+   86Box's IRETD loaded it on any CPU (into V86 mode with the whole high
+   word), so on a 486DX2 the frame showed ID: GLOS builds the V86 code's
+   FLAGS image from it, and lDebugX saw ID toggle and ran CPUID into #UD.
+   In V86 mode at IOPL 3 it loaded none of RF, AC or ID. Local patch 0114. */
+static void case_x(void)
+{
+    u32 v, f;
+    set_cr4(cr4_now & ~(CR4_VME | CR4_PVI));
+    v = V86(v86_pushfd_pop, EF_IOPL | EF_ID, 0, 0);
+    res("X-iretd-v86-id", v == 13 && !!(tf.eax & EF_ID) == has_id && !!(tf.eflags & EF_ID) == has_id,
+        "vec=%u pushfd=%x trap_frame=%x (cpuid=%u: expect ID=%u in both)", v, tf.eax, tf.eflags, has_id, has_id);
+    v = V86(v86_iretd_id, EF_IOPL, EF_ID | EF_IOPL | 2, 0);
+    res("X-iretd-in-v86-id", v == 13 && tf.eip == (u32)(v86_iretd_id_end - v86_iretd_id) - 1 &&
+        !!(tf.eax & EF_ID) == has_id && !!(tf.eflags & EF_ID) == has_id,
+        "vec=%u eip=%x pushfd=%x trap_frame=%x (IOPL 3; cpuid=%u: expect ID=%u in both)",
+        v, tf.eip, tf.eax, tf.eflags, has_id, has_id);
+    v = R3(r3_pushfd, EF_ID, 0, 0);
+    res("X-iretd-ring3-id", v == 13 && !!(tf.eax & EF_ID) == has_id && !!(tf.eflags & EF_ID) == has_id,
+        "vec=%u pushfd=%x trap_frame=%x (cpuid=%u: expect ID=%u in both)", v, tf.eax, tf.eflags, has_id, has_id);
+    f = iretd_r0(EF_ID | 2);
+    res("X-iretd-ring0-id", kfault_vec == 6 && !!(f & EF_ID) == has_id && !!(tf.eflags & EF_ID) == has_id,
+        "pushfd=%x trap_frame=%x (cpuid=%u: expect ID=%u in both)", f, tf.eflags, has_id, has_id);
+}
+
 static void open_user_pages(void)
 {
     u32 a;
@@ -895,6 +926,7 @@ u32 pm_main(struct bootinfo *b)
     case_u();
     case_v();
     case_w();
+    case_x();
     res("monitor", df_count == 0, "double faults=%u spurious irqs=%u", df_count, spurious);
 
     if (cr4_ok) try_wr_cr4(cr4_init);

@@ -18,6 +18,8 @@
 
 extern unsigned long __cdecl pm_call(unsigned gdtr, unsigned long cr3, unsigned long entry, unsigned long arg);
 extern void __cdecl pm_ret(void);
+extern unsigned long __cdecl rm_iretd(unsigned long eflags);
+extern unsigned long __cdecl rm_popfd(unsigned long eflags);
 
 static void put(char c)
 {
@@ -157,6 +159,23 @@ static void case_s(void)
     result("S-a20-restore", a20_on() == initial ? 1 : 0, d);
 }
 
+/* ---- X: a real-mode IRETD loads EFLAGS.ID as POPFD does: set where the
+   CPU has CPUID (PUSHFD shows only bits the CPU has, so on a 486DX2 this
+   sees no difference; the monitor's IRET cases read trap frames). */
+
+#define EF_ID 0x00200000UL
+
+static void case_x_real(void)
+{
+    unsigned long by_iretd, by_popfd;
+    char d[80];
+
+    by_iretd = rm_iretd(EF_ID | 2);
+    by_popfd = rm_popfd(EF_ID | 2);
+    sprintf(d, "iretd=%08lx popfd=%08lx (expect the same ID)", by_iretd, by_popfd);
+    result("X-iretd-real-id", (by_iretd & EF_ID) == (by_popfd & EF_ID), d);
+}
+
 /* ---- protected mode */
 
 static unsigned char gdt[8 * 5];
@@ -199,6 +218,7 @@ int main(int argc, char **argv)
 
     case_r();
     case_s();
+    case_x_real();
 
     f = fopen(path, "rb");
     if (!f || fread(&hdr, sizeof hdr, 1, f) != 1 || memcmp(hdr.magic, "V86P", 4)) {

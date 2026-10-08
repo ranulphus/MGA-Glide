@@ -1,0 +1,124 @@
+MGA-Glide local patch 0114: IRETD loads only the EFLAGS[31:16] bits the CPU has.
+
+POPFD masks the high word by CPU model (RF and VM; AC from the 486; ID with
+CPUID; VIF and VIP with VME), and PUSHFD shows only those, but IRETD did not
+mask: into V86 mode it loaded the whole word, and to the same or an outer
+level it loaded RF, AC and ID on any CPU. So on a 486DX2 an IRETD with ID set
+kept ID in EFLAGS, and the next exception frame showed it: a V86 monitor that
+builds the FLAGS image from the frame (GLOS) let lDebugX see ID toggle, take
+CPUID to be there and run it into #UD. cpu_eflags_hi_mask() gives the model's
+bits; IRETD into V86 mode, to ring 0-3, in real mode and a task switch's
+EFLAGS go through it (VM is in every mask, so V86 entry is unchanged). An
+IRETD in V86 mode at IOPL 3 loaded none of the high word; it now loads RF, AC
+and ID as the model has them (SDM: IRET), so a CPU with CPUID can set ID that
+way too. V86TEST case X.
+
+diff --git a/src/cpu/cpu.h b/src/cpu/cpu.h
+index 23e7d51..f140e54 100644
+--- a/src/cpu/cpu.h
++++ b/src/cpu/cpu.h
+@@ -605,6 +605,22 @@ extern msr_t    msr;
+ extern uint8_t  opcode;
+ extern int      cpl_override;
+ extern int      CPUID;
++
++/* MGA-Glide 0114: the EFLAGS[31:16] bits this CPU model has, as POPFD masks
++   them: RF and VM, AC from the 486, ID with CPUID, VIF and VIP with VME. Every
++   load of the high word (IRETD, a task switch) goes through it, so a CPU
++   without CPUID never shows ID set. */
++static inline uint16_t
++cpu_eflags_hi_mask(void)
++{
++    if (cpu_CR4_mask & CR4_VME)
++        return 0x3f;
++    if (CPUID)
++        return 0x27;
++    if (is486 || isibm486)
++        return 0x07;
++    return 0x03;
++}
+ extern uint64_t xt_cpu_multi;
+ extern int      isa_cycles;
+ extern int      cpu_inited;
+diff --git a/src/cpu/x86_ops_ret.h b/src/cpu/x86_ops_ret.h
+index 8bf72e9..8a07a08 100644
+--- a/src/cpu/x86_ops_ret.h
++++ b/src/cpu/x86_ops_ret.h
+@@ -280,13 +280,13 @@ opIRETD(UNUSED(uint32_t fetchdat))
+             cpu_state.pc     = readmeml(ss, ESP);
+             new_cs           = readmemw(ss, ESP + 4);
+             cpu_state.flags  = (readmemw(ss, ESP + 8) & 0xffd5) | 2;
+-            cpu_state.eflags = readmemw(ss, ESP + 10);
++            cpu_state.eflags = readmemw(ss, ESP + 10) & cpu_eflags_hi_mask(); /* MGA-Glide 0114 */
+             ESP += 12;
+         } else {
+             cpu_state.pc     = readmeml(ss, SP);
+             new_cs           = readmemw(ss, ((SP + 4) & 0xffff));
+             cpu_state.flags  = (readmemw(ss, (SP + 8) & 0xffff) & 0xffd5) | 2;
+-            cpu_state.eflags = readmemw(ss, (SP + 10) & 0xffff);
++            cpu_state.eflags = readmemw(ss, (SP + 10) & 0xffff) & cpu_eflags_hi_mask(); /* MGA-Glide 0114 */
+             SP += 12;
+         }
+         op_loadcs(new_cs);
+diff --git a/src/cpu/x86_ops_ret_2386.h b/src/cpu/x86_ops_ret_2386.h
+index 02233fd..569c660 100644
+--- a/src/cpu/x86_ops_ret_2386.h
++++ b/src/cpu/x86_ops_ret_2386.h
+@@ -274,13 +274,13 @@ opIRETD(UNUSED(uint32_t fetchdat))
+             cpu_state.pc     = readmeml(ss, ESP);
+             new_cs           = readmemw(ss, ESP + 4);
+             cpu_state.flags  = (readmemw(ss, ESP + 8) & 0xffd5) | 2;
+-            cpu_state.eflags = readmemw(ss, ESP + 10);
++            cpu_state.eflags = readmemw(ss, ESP + 10) & cpu_eflags_hi_mask(); /* MGA-Glide 0114 */
+             ESP += 12;
+         } else {
+             cpu_state.pc     = readmeml(ss, SP);
+             new_cs           = readmemw(ss, ((SP + 4) & 0xffff));
+             cpu_state.flags  = (readmemw(ss, (SP + 8) & 0xffff) & 0xffd5) | 2;
+-            cpu_state.eflags = readmemw(ss, (SP + 10) & 0xffff);
++            cpu_state.eflags = readmemw(ss, (SP + 10) & 0xffff) & cpu_eflags_hi_mask(); /* MGA-Glide 0114 */
+             SP += 12;
+         }
+         op_loadcs(new_cs);
+diff --git a/src/cpu/x86seg.c b/src/cpu/x86seg.c
+index 8e60f0e..4ca13b8 100644
+--- a/src/cpu/x86seg.c
++++ b/src/cpu/x86seg.c
+@@ -1891,6 +1891,11 @@ pmodeiret(int is32)
+         cpu_state.seg_cs.ar_high = 0x10;
+         CS                       = seg;
+         cpu_state.flags          = (cpu_state.flags & 0x3000) | (tempflags & 0xcfd5) | 2;
++        /* MGA-Glide 0114: IRETD in V86 mode (IOPL 3) loads RF, AC and ID as
++           the model has them; VM, VIF and VIP stay (SDM: IRET). */
++        if (is32)
++            cpu_state.eflags = (cpu_state.eflags & ~(RF_FLAG | AC_FLAG | VID_FLAG)) |
++                               ((tempflags >> 16) & (RF_FLAG | AC_FLAG | VID_FLAG) & cpu_eflags_hi_mask());
+         cycles -= timing_iret_rm;
+         return;
+     }
+@@ -1934,6 +1939,7 @@ pmodeiret(int is32)
+     eflagmask = RF_FLAG | AC_FLAG | VID_FLAG;
+     if (CPL == 0)
+         eflagmask |= VIF_FLAG | VIP_FLAG;
++    eflagmask &= cpu_eflags_hi_mask(); /* MGA-Glide 0114: only the bits the model has */
+     if (is32) {
+         newpc     = POPL();
+         seg       = POPL();
+@@ -1953,7 +1959,7 @@ pmodeiret(int is32)
+                 ESP = oldsp;
+                 return;
+             }
+-            cpu_state.eflags = tempflags >> 16;
++            cpu_state.eflags = (tempflags >> 16) & cpu_eflags_hi_mask(); /* MGA-Glide 0114 */
+             cpu_cur_status |= CPU_STATUS_V86;
+             op_loadseg(segs[0], &cpu_state.seg_es);
+             do_seg_v86_init(&cpu_state.seg_es);
+@@ -2314,7 +2320,7 @@ taskswitch286(uint16_t seg, uint16_t *segdat, int is32)
+ 
+         cpu_state.pc     = new_pc;
+         cpu_state.flags  = new_flags;
+-        cpu_state.eflags = new_flags >> 16;
++        cpu_state.eflags = (new_flags >> 16) & cpu_eflags_hi_mask(); /* MGA-Glide 0114 */
+         cpu_386_flags_extract();
+ 
+         ldt.seg   = new_ldt;

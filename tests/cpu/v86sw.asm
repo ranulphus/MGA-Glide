@@ -96,6 +96,48 @@ rm_back:
         ret
 _pm_call endp
 
+; unsigned long __cdecl rm_iretd(unsigned long eflags): in real mode, IRETD to
+; the next instruction with EFLAGS = eflags (no IF or TF), then PUSHFD;
+; returns what PUSHFD showed. rm_popfd loads eflags with POPFD instead. Both
+; restore the caller's EFLAGS (case X).
+        public  _rm_iretd
+        public  _rm_popfd
+_rm_iretd proc near
+        push    bp
+        mov     bp, sp
+        pushfd
+        push    dword ptr [bp+4]
+        xor     eax, eax
+        mov     ax, cs
+        push    eax
+        mov     eax, offset rm_iretd_back
+        push    eax
+        iretd
+rm_iretd_back:
+        pushfd
+        pop     eax
+        popfd
+        mov     edx, eax
+        shr     edx, 16
+        pop     bp
+        ret
+_rm_iretd endp
+
+_rm_popfd proc near
+        push    bp
+        mov     bp, sp
+        pushfd
+        push    dword ptr [bp+4]
+        popfd
+        pushfd
+        pop     eax
+        popfd
+        mov     edx, eax
+        shr     edx, 16
+        pop     bp
+        ret
+_rm_popfd endp
+
 save_ss dw      0
 save_sp dw      0
 save_ds dw      0

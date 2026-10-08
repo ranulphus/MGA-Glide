@@ -25,3 +25,4 @@ local/0110-cpu-iopb-two-bytes.patch
 local/0111-unix-ignore-sigpipe.patch
 local/0112-dynarec-load-seg-limits.patch
 local/0113-cpu-fault-drops-single-step.patch
+local/0114-cpu-iretd-eflags-model-mask.patch

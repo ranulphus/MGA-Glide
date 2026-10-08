@@ -202,6 +202,24 @@ try_rd_fs:
         incl    %eax
         ret
 
+/* u32 iretd_r0(u32 eflags): IRETD at CPL 0 to the next instruction with
+   EFLAGS = eflags (no IF, TF or NT), then PUSHFD: returns the EFLAGS it
+   shows. A UD2 after it leaves the EFLAGS image of its #UD in the trap
+   frame (tf). The caller's EFLAGS are restored (case X). */
+        .globl  iretd_r0
+iretd_r0:
+        pushfl
+        pushl   8(%esp)
+        pushl   %cs
+        pushl   $1f
+        iretl
+1:      pushfl
+        movl    $2f, fixup_eip
+        ud2
+2:      popl    %eax
+        popfl
+        ret
+
 /* u32 fpu_fault(void): 1/0 with the zero-divide exception unmasked, then
    FWAIT with interrupts enabled. 0 if nothing happened at the FWAIT, else
    1 + the vector (#MF is 16; an IRQ 13 is counted by trap_c instead). */

@@ -134,7 +134,8 @@ monitor depends on.
   - FPU error reporting;
   - IOPL changes under the dynarec;
   - a load past a segment's limit, from code the dynarec has compiled (case V);
-  - single-stepping onto an instruction that faults (case W).
+  - single-stepping onto an instruction that faults (case W);
+  - EFLAGS.ID after an IRETD, on CPUs with and without CPUID (case X).
 
 It found six places where 86Box differed, and GLOS's tests found more. Local patches fix them:
 - **0106:** a VME-redirected INT pushes IF = VIF and IOPL = 3.
@@ -154,6 +155,10 @@ It found six places where 86Box differed, and GLOS's tests found more. Local pat
   An exception raised during the instruction (#UD, #DE, #BR, #NM) left the TF trap pending, and it was taken
   at the handler's first instruction once the gate had cleared TF. DR6.BS was never set for a single step
   either (DR6 read 0). V86TEST case W.
+- **0114:** IRETD loads only the EFLAGS[31:16] bits the CPU model has, as POPFD does. On the 486DX2 an IRETD
+  with ID set (into V86 mode, to ring 0 or ring 3) kept ID, and the next trap frame showed it: GLOS builds the
+  V86 FLAGS image from that frame, so lDebugX saw ID toggle and ran CPUID into #UD. An IRETD in V86 mode at
+  IOPL 3 now loads RF, AC and ID. V86TEST case X.
 
 `tests/cpu/known-86box.txt` lists any remaining deviation the check accepts.
 It is empty; the RTC firing with register C unread and PGE having no effect
