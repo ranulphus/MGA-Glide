@@ -2,9 +2,19 @@
 """Loop B push-and-run: publish a job for a bench PC and collect results.
 
 Runs on the build host itself (not in the dev container: the PCs must reach
-its HTTP and FTP ports). The PC's BENCH.BAT poller fetches
-dist/bench/<pc>/FETCH.BAT when LATEST.TXT changes, runs TEST\\RUN.BAT,
-uploads C:\\OUT to this script's FTP sink and reboots.
+its HTTP and FTP ports). Two ways to the PC:
+
+  ssh     GLOS is up on the PC (its SSH server answers at the PC's `ssh`
+          address in bench.toml): the job's files go to C:\\TEST by SFTP,
+          RUN.BAT runs as a job of GLOS's agent, the PC's COM1 lines come
+          through `glos log --follow`, C:\\OUT comes back by SFTP. The PC
+          doesn't reboot; a hung job is killed (`glos kill`).
+  poller  otherwise, as always: the PC's BENCH.BAT poller fetches
+          dist/bench/<pc>/FETCH.BAT when LATEST.TXT changes, runs
+          TEST\\RUN.BAT, uploads C:\\OUT to this script's FTP sink and reboots.
+
+--transport picks one; the default, auto, asks the PC for `glos ver` and
+falls back to the poller when nothing answers.
 
   run.py --pc bench-g200 --exe build/ow/dos/PROBE.EXE
   run.py --pc bench-g200 --exe build/ow/dos/CONFORM.EXE --ovl build/ow/GLIDE2X.OVL --args "t04"
@@ -17,9 +27,10 @@ programs back to back): each line goes into RUN.BAT in turn, every EXE
 shipped with --file gets its DOS extender, and the job passes when every
 program reports HX-DONE 0.
 
-PCs and their serial ports, capture devices and reset hooks come from
-tools/bench/bench.toml and bench.local.toml. Results: out/bench/<pc>/<job>/
-(serial.log, files/ = the PC's C:\\OUT, *.png, capture-*.png, result.json).
+PCs and their serial ports, SSH addresses, capture devices and reset hooks
+come from tools/bench/bench.toml and bench.local.toml. Results:
+out/bench/<pc>/<job>/ (serial.log, files/ = the PC's C:\\OUT, *.png,
+capture-*.png, result.json; over ssh also stdout.txt, what the job printed).
 
 Statuses: PASS FAIL CRASH HANG TIMEOUT NOT-PICKED-UP.
 """
@@ -44,6 +55,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(ROOT, "tools", "loopa"))
 import capture  # noqa: E402
 import ftpsink  # noqa: E402
+import glosssh  # noqa: E402
 import png  # noqa: E402
 import serlog  # noqa: E402
 
@@ -112,8 +124,9 @@ class Capture:
             t.join(30)
 
 
-def build_job(a, pc, cfg, job, token, jd):
-    """Write the job directory, RUN.BAT, UP.TXT; return the file names."""
+def build_job(a, pc, cfg, job, token, jd, upload=True):
+    """Write the job directory, RUN.BAT and (for the poller, which uploads by FTP) UP.TXT; return the file
+    names."""
     shutil.rmtree(jd, ignore_errors=True)
     os.makedirs(jd)
     files = []
@@ -158,6 +171,10 @@ def build_job(a, pc, cfg, job, token, jd):
         run += a.cmd
     else:
         run += ["%s %s" % (add(a.exe), a.args)]
+    if not upload:                              # (over ssh the host fetches C:\OUT itself)
+        run += ["SERSAY HX-EXIT", "SERSAY HX-JOB-END"]
+        open(os.path.join(jd, "RUN.BAT"), "wb").write(dos_lines(run))
+        return files + ["RUN.BAT"]
     run += ["SERSAY HX-EXIT",
             "COPY C:\\TEST\\UP.TXT C:\\HX\\UP.TXT > NUL",
             "FOR %%F IN (C:\\OUT\\*.*) DO ECHO put %%F>> C:\\HX\\UP.TXT",
@@ -189,6 +206,9 @@ def main():
     ap.add_argument("--idle", type=float, help="silent seconds that count as a hang (default 180; games "
                     "log nothing per frame, so for --game only --timeout applies)")
     ap.add_argument("--capwait", type=int, default=4, help="seconds the PC holds a frame on HX-CAPTURE")
+    ap.add_argument("--transport", choices=["auto", "ssh", "poller"], default="auto",
+                    help="ssh: through GLOS's agent on the PC; poller: its BENCH.BAT; auto (default): ssh if "
+                    "GLOS answers at the PC's ssh address, else the poller")
     ap.add_argument("--extender", choices=sorted(EXTENDERS),
                     help="DPMI host shipped with the job (default: CWSDPMI for DJGPP programs, else DOS/4GW)")
     a = ap.parse_args()
@@ -208,36 +228,54 @@ def main():
     pub = os.path.join(ROOT, "dist/bench", a.pc)
     out = os.path.join(ROOT, "out/bench", a.pc, job)
     os.makedirs(out, exist_ok=True)
-    names = build_job(a, pc, cfg, job, token, os.path.join(pub, "job"))
-    fetch = ["IF NOT EXIST C:\\TEST\\NUL MD C:\\TEST", "ECHO Y| DEL C:\\TEST\\*.* > NUL"]
-    # HTGET exits 20-29 on a 2xx reply. Each file gets three tries: a fetch
-    # straight after another one occasionally fails at the socket level.
-    for i, n in enumerate(names):
-        fetch += ["SET HX_TRY=",
-                  ":F%d" % i,
-                  "SET HX_TRY=%HX_TRY%x",
-                  "HTGET -o C:\\TEST\\%s %%HX_URL%%/job/%s > NUL" % (n, n),
-                  "IF ERRORLEVEL 30 GOTO R%d" % i,
-                  "IF ERRORLEVEL 20 GOTO K%d" % i,
-                  ":R%d" % i,
-                  "IF NOT \"%%HX_TRY%%\"==\"xxx\" GOTO F%d" % i,
-                  "SERSAY HX-FETCH-FAIL %s" % n,
-                  ":K%d" % i]
-    open(os.path.join(pub, "FETCH.BAT"), "wb").write(dos_lines(fetch))
+    glos = None
+    if a.transport != "poller" and pc.get("ssh"):
+        glos = glosssh.Glos(pc["ssh"], pc.get("ssh_key") or os.environ.get("GLOS_KEY", "~/GLOS/tests/keys/client"))
+        if not glos.up():
+            glos.close()
+            glos = None
+    if a.transport == "ssh" and not glos:
+        sys.exit("bench: GLOS doesn't answer at %s (bench.toml: pc.%s.ssh)" % (pc.get("ssh") or "no address", a.pc))
+    http_srv = sink = runner = None
+    if glos:
+        jd = os.path.join(pub, "job")
+        names = build_job(a, pc, cfg, job, token, jd, upload=False)
+        rc, said = glos.put([(os.path.join(jd, n), n) for n in names])
+        if rc != 0:
+            sys.exit("bench: sftp to %s failed: %s" % (pc["ssh"], said.strip()[-200:]))
+        lines = glos.follow()
+        runner = glos.start("C:\\TEST\\RUN.BAT")
+        print("bench: started %s on %s (%s) over ssh (%s)" % (job, a.pc, pc["card"], pc["ssh"]), flush=True)
+    else:
+        names = build_job(a, pc, cfg, job, token, os.path.join(pub, "job"))
+        fetch = ["IF NOT EXIST C:\\TEST\\NUL MD C:\\TEST", "ECHO Y| DEL C:\\TEST\\*.* > NUL"]
+        # HTGET exits 20-29 on a 2xx reply. Each file gets three tries: a fetch
+        # straight after another one occasionally fails at the socket level.
+        for i, n in enumerate(names):
+            fetch += ["SET HX_TRY=",
+                      ":F%d" % i,
+                      "SET HX_TRY=%HX_TRY%x",
+                      "HTGET -o C:\\TEST\\%s %%HX_URL%%/job/%s > NUL" % (n, n),
+                      "IF ERRORLEVEL 30 GOTO R%d" % i,
+                      "IF ERRORLEVEL 20 GOTO K%d" % i,
+                      ":R%d" % i,
+                      "IF NOT \"%%HX_TRY%%\"==\"xxx\" GOTO F%d" % i,
+                      "SERSAY HX-FETCH-FAIL %s" % n,
+                      ":K%d" % i]
+        open(os.path.join(pub, "FETCH.BAT"), "wb").write(dos_lines(fetch))
 
-    http_srv = ensure_http(host["http_port"], os.path.join(ROOT, "dist/bench"))
-    # PASV replies name the address the PC used; behind SLiRP that is the
-    # PC's own view of the host (pc.address), not the socket's local one.
-    sink = ftpsink.FtpSink(os.path.join(out, "files"), pc["ftp_port"], pc.get("address"),
-                           "bench", token).start()
-    lines = serlog.Lines(pc["serial"], os.path.join(ROOT, "out/bench", a.pc, "serial.log"))
+        http_srv = ensure_http(host["http_port"], os.path.join(ROOT, "dist/bench"))
+        # PASV replies name the address the PC used; behind SLiRP that is the
+        # PC's own view of the host (pc.address), not the socket's local one.
+        sink = ftpsink.FtpSink(os.path.join(out, "files"), pc["ftp_port"], pc.get("address"),
+                               "bench", token).start()
+        lines = serlog.Lines(pc["serial"], os.path.join(ROOT, "out/bench", a.pc, "serial.log"))
+        open(os.path.join(pub, "LATEST.TXT"), "w").write(job + "\n")
+        print("bench: published %s for %s (%s); waiting on %s" % (job, a.pc, pc["card"], pc["serial"]), flush=True)
     cap = Capture(pc.get("capture", ""), pc.get("capture_opts", ""), out)
-    open(os.path.join(pub, "LATEST.TXT"), "w").write(job + "\n")
-    print("bench: published %s for %s (%s); waiting on %s" % (job, a.pc, pc["card"], pc["serial"]), flush=True)
-
     log = open(os.path.join(out, "serial.log"), "w")
     t0 = time.time()
-    picked = exited = upload_end = done = None
+    picked = exited = upload_end = done = ended = None
     last, status, game_exit = t0, None, False
     while True:
         now = time.time()
@@ -269,6 +307,10 @@ def main():
                 upload_end = upload_end or now
         if upload_end or (exited and now - exited > 300):
             break
+        if runner and runner.poll() is not None:        # (the agent's job has ended: its last lines, then out)
+            ended = ended or now
+            if now - ended > 5:
+                break
         if picked is None and now - t0 > a.pickup:
             status = "NOT-PICKED-UP"
             break
@@ -285,24 +327,43 @@ def main():
             status = "PASS" if game_exit else "CRASH"
         else:
             status = {True: "PASS", False: "FAIL", None: "CRASH"}[done]
-    if status in ("HANG", "TIMEOUT") and pc.get("reset"):
+    stuck = status in ("HANG", "TIMEOUT")
+    files = os.path.join(out, "files")
+    if glos:
+        if stuck:                               # GLOS is still there beside a hung program: it kills it
+            print("bench: glos kill", flush=True)
+            glos.ssh("glos kill")
+        try:
+            said = runner.communicate(timeout=60)[0]
+            stuck = False
+        except subprocess.TimeoutExpired:       # (not even that: the PC needs its reset)
+            runner.kill()
+            said = runner.communicate()[0]
+        open(os.path.join(out, "stdout.txt"), "wb").write(said)
+        received = [] if stuck else glos.get_dir("/C/OUT", files)
+        upload_end = upload_end or (not stuck and time.time())
+        glos.close()
+    if stuck and pc.get("reset"):
         print("bench: resetting %s: %s" % (a.pc, pc["reset"]), flush=True)
         subprocess.call(pc["reset"], shell=True, cwd=ROOT)
     cap.wait()
-    sink.stop()
+    if sink:
+        sink.stop()
+        received = sink.received
     if http_srv:
         http_srv.shutdown()
-    files = os.path.join(out, "files")
+    os.makedirs(files, exist_ok=True)
     for fn in sorted(os.listdir(files)):
         if fn.upper().endswith(".PPM"):
             w, h, rgb = png.read_ppm(os.path.join(files, fn))
             png.write_png(os.path.join(out, fn[:-4].lower() + ".png"), w, h, rgb)
-    result = {"job": job, "pc": a.pc, "card": pc["card"], "status": status,
+    result = {"job": job, "pc": a.pc, "card": pc["card"], "status": status, "transport": "ssh" if glos else "poller",
               "exe": a.exe, "args": a.args, "ovl": a.ovl, "game": a.game, "cmd": a.cmd,
-              "uploaded": sink.received, "upload_complete": bool(upload_end),
+              "uploaded": received, "upload_complete": bool(upload_end),
               "elapsed_s": round(time.time() - t0, 1)}
     json.dump(result, open(os.path.join(out, "result.json"), "w"), indent=1)
-    print("bench: %s %s (%d files uploaded) -> %s" % (job, status, len(sink.received), out), flush=True)
+    print("bench: %s %s (%d files %s) -> %s" % (job, status, len(received), "fetched" if glos else "uploaded", out),
+          flush=True)
     return 0 if status == "PASS" else 1
 
 

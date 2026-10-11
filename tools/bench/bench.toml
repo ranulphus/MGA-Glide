@@ -15,6 +15,12 @@ http_port = 8000
 #   serial        host serial device on the PC's COM1 null-modem cable,
 #                 or "file:PATH" to follow a log file (the virtual PC)
 #   ftp_port      host port the PC uploads C:\OUT to after each job
+#   ssh           HOST[:PORT] of GLOS's SSH server on this PC ("" or absent:
+#                 none). When it answers, run.py drives the PC through it
+#                 and needs neither the poller nor the serial cable.
+#   ssh_key       the private key GLOS's KEYS\AUTHKEYS on that PC lists
+#                 (default: $GLOS_KEY, else ~/GLOS/tests/keys/client, the
+#                 public test key: for the virtual PCs only)
 #   capture       V4L2 device for the card's output ("" = none)
 #   capture_opts  extra ffmpeg input options for that device
 #   reset         shell command that hard-resets the PC after a hang
@@ -63,6 +69,7 @@ games = 'C:\GAMES'
 card = "g200"
 serial = "file:out/vbench/g200/serial.log"
 address = "10.0.2.2"
+ssh = "127.0.0.1:2231"
 ftp_port = 2131
 capture = ""
 capture_opts = ""
@@ -73,6 +80,7 @@ games = 'D:'
 card = "g100"
 serial = "file:out/vbench/g100/serial.log"
 address = "10.0.2.2"
+ssh = "127.0.0.1:2232"
 ftp_port = 2132
 capture = ""
 capture_opts = ""
@@ -83,6 +91,7 @@ games = 'D:'
 card = "g400"
 serial = "file:out/vbench/g400/serial.log"
 address = "10.0.2.2"
+ssh = "127.0.0.1:2233"
 ftp_port = 2133
 capture = ""
 capture_opts = ""
@@ -93,6 +102,7 @@ games = 'D:'
 card = "g450"
 serial = "file:out/vbench/g450/serial.log"
 address = "10.0.2.2"
+ssh = "127.0.0.1:2234"
 ftp_port = 2134
 capture = ""
 capture_opts = ""

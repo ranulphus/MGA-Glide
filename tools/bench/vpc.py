@@ -15,6 +15,13 @@ and reboots after every job, like the real ones.
 
 `start --game gta` also attaches that game's Loop A image (a local
 fixture) as D:, where the vbench entries in bench.toml expect the games.
+
+`start --glos DIR` makes it a bench PC with GLOS: DIR holds GLOS.EXE,
+GLOSK.BIN and keys/HOSTKEY and keys/AUTHKEYS (GLOS's `make glos-cache`
+fills ~/.cache/mga-glide/glos/bin so). GLOS starts first and owns the
+network card; run.py reaches it by ssh at 127.0.0.1 and the port bench.toml
+gives the PC (`ssh`). When GLOS can't start, or is told to leave (`glos
+exit`), the boot goes on to the packet driver and the poller: the fallback.
 `start` runs in the foreground until `stop`. It needs the host's network
 (MGA_DOCKER_NETWORK=host) so SLiRP's 10.0.2.2 reaches run.py's HTTP and
 FTP ports on the host. State: out/vbench/<card>/ (serial.log, vm/).
@@ -56,7 +63,7 @@ def state_dir(card):
     return os.path.join(ROOT, "out", "vbench", card)
 
 
-def provision(L, card, vm, tmp):
+def provision(L, card, vm, tmp, glos=None):
     """Fresh C: from the Loop A golden image, provisioned as a bench PC."""
     p = pins()
     gold = L.golden()
@@ -83,8 +90,17 @@ def provision(L, card, vm, tmp):
     d.put(os.path.join(HERE, "dos", "BENCH.BAT"), "/HX/BENCH.BAT")
     # The Loop A boot floppy's AUTOEXEC calls C:\RUN.BAT: here it is the
     # bench PC's AUTOEXEC tail (docs/bench.md, provisioning step 6).
-    run = ["SET PATH=C:\\HX;C:\\MTCP;A:\\FREEDOS\\BIN", "C:",
-           "C:\\PKTDRV\\NE2000 0x60 10 0x300 > NUL",
+    run = ["SET PATH=C:\\HX;C:\\MTCP;A:\\FREEDOS\\BIN", "C:"]
+    if glos:
+        # GLOS's agent takes the jobs over ssh. It returns only when it can't start or is
+        # told to leave; then the poller takes over below.
+        d.mkdir("/GLOS")
+        d.mkdir("/GLOS/KEYS")
+        for src, dst in (("GLOS.EXE", "GLOS.EXE"), ("GLOSK.BIN", "GLOSK.BIN"), ("keys/HOSTKEY", "KEYS/HOSTKEY"),
+                         ("keys/AUTHKEYS", "KEYS/AUTHKEYS")):
+            d.put(os.path.join(glos, src), "/GLOS/" + dst)
+        run += ["SERSAY HX-BOOT loop=B glos", "C:\\GLOS\\GLOS.EXE", "SERSAY HX-GLOS-LEFT"]
+    run += ["C:\\PKTDRV\\NE2000 0x60 10 0x300 > NUL",
            "SET MTCPCFG=C:\\MTCP\\TCP.CFG",
            "SET HX_URL=http://10.0.2.2:%s/vbench-%s" % (os.environ.get("BENCH_HTTP_PORT", "8000"), card),
            "CALL C:\\HX\\BENCH.BAT"]
@@ -106,7 +122,7 @@ def game_disk(game, vm):
     return "hdd_02_parameters = 63, 16, 406, 0, ide\nhdd_02_fn = %s\nhdd_02_ide_channel = 0:1\n" % img
 
 
-def config(L, card, vm, serial, cimg, bootimg, extra=""):
+def config(L, card, vm, serial, cimg, bootimg, extra="", ssh_port=0):
     class A:
         voodoo, voodoo_recompiler, voodoo_threads, g100_mb, sound = 0, 0, 1, 8, ""
     A.card = card
@@ -115,11 +131,13 @@ def config(L, card, vm, serial, cimg, bootimg, extra=""):
     text = text.replace("unittester_enabled = 1", "unittester_enabled = 0")
     text += ("\n[Network]\nnet_01_card = ne2k\nnet_01_net_type = slirp\n"
              "\n[NE2000 Compatible #1]\nbase = 0300\nirq = 10\n")
+    if ssh_port:                                # GLOS's SSH server, from the host's loopback
+        text += "\n[SLiRP Port Forwarding #1]\n0_protocol = tcp\n0_external = %d\n0_internal = 22\n" % ssh_port
     open(path, "w").write(text)
     return path
 
 
-def start(card, game=None):
+def start(card, game=None, glos=None):
     L = loopa()
     sd = state_dir(card)
     vm = os.path.join(sd, "vm")
@@ -132,10 +150,15 @@ def start(card, game=None):
     open(serial, "w").close()
     tmp = tempfile.mkdtemp(prefix="vpc-")
     try:
-        bootimg, cimg = provision(L, card, vm, tmp)
+        bootimg, cimg = provision(L, card, vm, tmp, glos)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    cfg = config(L, card, vm, serial, cimg, bootimg, game_disk(game, vm) if game else "")
+    ssh_port = 0
+    if glos:                                    # the port bench.toml gives this PC (ssh = "127.0.0.1:PORT")
+        import tomllib
+        pc = tomllib.load(open(os.path.join(HERE, "bench.toml"), "rb"))["pc"]["vbench-" + card]
+        ssh_port = int(pc["ssh"].rpartition(":")[2])
+    cfg = config(L, card, vm, serial, cimg, bootimg, game_disk(game, vm) if game else "", ssh_port)
     nvr = os.path.join(CACHE, "loopa", "nvr-bf6")
     if os.path.isdir(nvr):
         shutil.copytree(nvr, os.path.join(vm, "nvr"), dirs_exist_ok=True)
@@ -192,9 +215,10 @@ def main():
     ap.add_argument("action", choices=["start", "reset", "screenshot", "stop"])
     ap.add_argument("card", choices=["g100", "g200", "g400", "g450"])
     ap.add_argument("--game", help="attach this game's Loop A image as D: (bench.toml: games = 'D:')")
+    ap.add_argument("--glos", metavar="DIR", help="start GLOS (GLOS.EXE, GLOSK.BIN, keys/ in DIR) before the poller")
     a = ap.parse_args()
     if a.action == "start":
-        return start(a.card, a.game)
+        return start(a.card, a.game, a.glos)
     os.makedirs(state_dir(a.card), exist_ok=True)
     open(os.path.join(state_dir(a.card), "control"), "w").write(a.action + "\n")
     return 0

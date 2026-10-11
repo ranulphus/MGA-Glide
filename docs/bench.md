@@ -32,6 +32,29 @@ reset hook.
 
 Statuses: `PASS FAIL CRASH HANG TIMEOUT NOT-PICKED-UP`.
 
+## Through GLOS, over SSH
+
+A bench PC that runs GLOS (the graphical DOS; its agent is an SSH server in the supervisor) is driven
+through it instead, with the poller as the fallback (GLOS PRD D10, H8):
+
+- **On the PC,** AUTOEXEC starts `C:\GLOS\GLOS.EXE` before the packet driver and `BENCH.BAT`. GLOS owns the
+  network card while it runs, so the two never run together. If GLOS can't start, or is told to leave
+  (`glos exit`), the boot goes on to the poller.
+- **On the host,** the PC's entry in `bench.toml` has `ssh = "HOST[:PORT]"` (and `ssh_key`). `run.py` asks
+  there for `glos ver`; if GLOS answers, the job goes over SSH, and otherwise through the poller as
+  above. `--transport ssh` or `poller` insists on one.
+- **A job over SSH:**
+  1. the same files and `RUN.BAT`, without its FTP upload, go to `C:\TEST` by SFTP;
+  2. `RUN.BAT` runs as a job of GLOS's agent;
+  3. the PC's COM1 lines come back through `glos log --follow`, so the `HX-` protocol is unchanged and no
+     serial cable is needed;
+  4. `C:\OUT` is fetched by SFTP into `files/`; what the job printed goes to `stdout.txt`;
+  5. the PC does not reboot. On `HANG` or `TIMEOUT` the job is killed (`glos kill`), and the `reset` hook
+     runs only if even that gets no answer.
+- `result.json` says which way the job went (`"transport"`).
+- `tools/bench/glosssh.py HOST[:PORT] KEY COMMAND...` runs one command on such a PC (`glos shot > s.png`,
+  `glos stat`, a DOS command line).
+
 ## Machines
 
 `tools/bench/bench.toml` lists the PCs; machine-specific values go in
@@ -119,3 +142,17 @@ The container needs the host's network so SLiRP's `10.0.2.2` reaches
 `run.py`'s HTTP and FTP ports. The dry run covers pick-up, fetch, the
 `HX-CAPTURE` path, FTP upload, reboot, hang detection and the reset hook;
 frames from it match Loop A pixel for pixel.
+
+With GLOS: `vpc.py start g200 --glos DIR`, where DIR holds `GLOS.EXE`, `GLOSK.BIN`, `keys/HOSTKEY` and
+`keys/AUTHKEYS` (GLOS's `make glos-cache` fills `~/.cache/mga-glide/glos/bin` so, with its public test
+keys). GLOS's SSH port is forwarded to the host's loopback at the port `bench.toml` gives the PC.
+
+Dry run of the SSH transport (2026-10-11, vbench-g200, GLOS at its M5 A8):
+
+| Job | Way | Result |
+|---|---|---|
+| `--exe PROBE.EXE` | ssh (auto) | PASS, 17 s from start to result |
+| `--exe HELLO.EXE` | ssh (auto) | PASS |
+| after `glos exit`: `--exe PROBE.EXE` | poller (auto: nothing answered) | PASS; the PC rebooted into GLOS again |
+| `--cmd` lines writing a text file and a 265 KB file into `C:\OUT` | ssh | PASS, both fetched, the large one intact |
+| `--cmd "WAITSEC 600" --timeout 25` | ssh | TIMEOUT, killed by `glos kill`, no reset; the next job PASS |
