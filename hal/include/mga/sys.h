@@ -5,6 +5,8 @@
  *   djgpp.c     DJGPP + CWSDPMI (DOS-GL)
  *   host.c      Linux host: fake PCI + VRAM for unit tests and replay
  *   linux.c     Linux userspace on real hardware via sysfs (cuda6 rig)
+ *   glos.c      GLOS's kernel (built only there, with the FPU-free files:
+ *               no real-mode calls, conventional memory or hooks)
  */
 #ifndef MGA_SYS_H
 #define MGA_SYS_H
