@@ -14,6 +14,9 @@ Each check runs one short job through run.py and looks at its result:
   cpu     V86TEST on all three profiles: every case passes or is a known
           86Box deviation (tests/cpu/known-86box.txt), and CR4 has the bits
           the profile's CPU has
+  pci     the HAL's PROBE on the 486dx2 with each PCI Matrox card (local
+          patch 0116): the card found, mapped, put in a VBE mode, and the
+          engine filling
 
 Runs inside the dev container (tools/dev). Arguments pick checks; the
 default is all of them. Exit status 1 if any check fails.
@@ -138,8 +141,25 @@ def check_cpu():
     return ok
 
 
+# The chip each PCI card is, as PROBE's pci case names it.
+PCI_CHIP = {"g200pci": "MGA-G200 (PCI) id=0520", "g400pci": "MGA-G400/G450 id=0525 rev=03", "g450pci": "MGA-G450 id=0525 rev=82"}
+
+
+def check_pci():
+    ok = True
+    for c, chip in sorted(PCI_CHIP.items()):
+        st, serial = job("selftest-pci-%s" % c, "--machine", "486dx2", "--card", c, "--exe", "build/djgpp/PROBE.EXE")
+        cases = [l.split(" ", 3)[1:] for l in serial.split("\n") if l.startswith("HX-TEST ")]
+        failed = [n for n, r, *_ in cases if r != "PASS"]
+        pci = next((l for l in serial.split("\n") if l.startswith("HX-TEST pci ")), "no pci case")
+        good = st == "PASS" and chip in pci and len(cases) >= 7 and not failed
+        ok &= report("pci-%s" % c, good, "PROBE %s, %d cases%s; %s" % (st, len(cases), ", failed: " + " ".join(failed)
+                                                                      if failed else "", pci[len("HX-TEST pci "):]))
+    return ok
+
+
 CHECKS = {"486": check_486, "vbe": check_vbe, "net": check_net, "com2": check_com2, "himemx": check_himemx,
-          "cpu": check_cpu}
+          "cpu": check_cpu, "pci": check_pci}
 
 
 def main():

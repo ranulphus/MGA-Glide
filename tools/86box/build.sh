@@ -72,10 +72,10 @@ if [ "$added" = 1 ]; then
 fi
 # Genuine Matrox BIOSes for the emulated G200/G400/G450 (local patches 0004+).
 mbios=$roms/video/matrox/mgaglide
-if [ ! -s "$mbios/900-33.bin" ] || [ ! -s "$mbios/897-21.bin" ] || [ ! -s "$mbios/935-20.bin" ]; then
+if [ ! -s "$mbios/900-33.bin" ] || [ ! -s "$mbios/897-21.bin" ] || [ ! -s "$mbios/935-20.bin" ] || [ ! -s "$mbios/899-33.bin" ]; then
   mkdir -p "$mbios"
   "$root/tools/setup/fetch.sh" "$MATROX_BIOS_URL" "$MATROX_BIOS_SHA256" "$mbios/setup257.exe"
-  unzip -o -q "$mbios/setup257.exe" 900-33.bin 897-21.bin 935-20.bin -d "$mbios"
+  unzip -o -q "$mbios/setup257.exe" 900-33.bin 899-33.bin 897-21.bin 935-20.bin -d "$mbios"   # (899-33: the PCI G200's, 0116)
   rm -f "$mbios/setup257.exe"
   echo "86box: Matrox BIOSes in $mbios"
 fi

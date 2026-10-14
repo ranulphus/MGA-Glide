@@ -1,0 +1,141 @@
+MGA-Glide local patch 0116: the G200, G400 and G450 as PCI cards (GLOS D38).
+
+86Box has the Matrox G-series only as AGP cards, and the 486 profiles have no
+AGP slot, so they could have no Matrox card at all. The same devices on the
+PCI bus: mystique_init() already adds a non-AGP card as an ordinary PCI one,
+and its configuration space then has no AGP capability. The G200 reports
+0520h, the PCI G200's device ID (0521h is the AGP one), and runs Matrox's PCI
+G200 BIOS, 899-33, from the same package as the others (the AGP BIOS doesn't
+know 0520h: it reported 2 MB and no framebuffer address). The G400 and G450
+report 0525h either way, as on silicon, and keep their BIOSes. Matrox sold the
+G200 and the G450 on PCI (the bench's G450 is one); the G400 PCI is here for
+completeness.
+
+diff --git a/src/include/86box/video.h b/src/include/86box/video.h
+index 2fac136..b22820f 100644
+--- a/src/include/86box/video.h
++++ b/src/include/86box/video.h
+@@ -517,6 +517,9 @@ extern const device_t productiva_g100_device;
+ extern const device_t millennium_g200_device;
+ extern const device_t millennium_g400_device;
+ extern const device_t millennium_g450_device;
++extern const device_t millennium_g200_pci_device;      /* MGA-Glide local: PCI versions (GLOS D38) */
++extern const device_t millennium_g400_pci_device;
++extern const device_t millennium_g450_pci_device;
+ #endif /* USE_G100 */
+ 
+ /* JEGA */
+diff --git a/src/video/vid_mga.c b/src/video/vid_mga.c
+index 0a44d5d..7fef433 100644
+--- a/src/video/vid_mga.c
++++ b/src/video/vid_mga.c
+@@ -77,6 +77,9 @@ mystique_unsupported(const char *fmt, ...)
+ #define ROM_G200              "roms/video/matrox/mgaglide/900-33.bin"
+ /* MGA-Glide local: Matrox's G400 AGP BIOS 897-21, from the same package. */
+ #define ROM_G400              "roms/video/matrox/mgaglide/897-21.bin"
++/* MGA-Glide local (GLOS D38): Matrox's PCI G200 BIOS 899-33, from the same
++   package (its PCI data structure names device 0520h). */
++#define ROM_G200_PCI          "roms/video/matrox/mgaglide/899-33.bin"
+ /* MGA-Glide local: Matrox's G450 BIOS 935-20 (a 34 KB image; the flasher
+  * module appended to the file lies past the 64 KB window's image end). */
+ #define ROM_G450              "roms/video/matrox/mgaglide/935-20.bin"
+@@ -7135,7 +7138,7 @@ mystique_pci_read(UNUSED(int func), int addr, UNUSED(int len), void *priv)
+                 if (mystique->type >= MGA_G400)
+                     ret = 0x25;
+                 else if (mystique->type == MGA_G200)
+-                    ret = 0x21;
++                    ret = mystique->is_agp ? 0x21 : 0x20;  /* MGA-Glide local: 0520h is the PCI G200 */
+                 else if (mystique->type == MGA_G100)
+                     ret = 0x01;
+                 else
+@@ -7595,6 +7598,8 @@ mystique_init(const device_t *info)
+         romfn = ROM_G450;
+     else if (mystique->type == MGA_G400)
+         romfn = ROM_G400;
++    else if (mystique->type == MGA_G200 && !mystique->is_agp && rom_present(ROM_G200_PCI))
++        romfn = ROM_G200_PCI;               /* MGA-Glide local: the PCI card's own BIOS */
+     else if (mystique->type == MGA_G200 && rom_present(ROM_G200) &&
+              !(getenv("MGAGLIDE_G200_BIOS") && !strcmp(getenv("MGAGLIDE_G200_BIOS"), "g100")))
+         romfn = ROM_G200;
+@@ -7824,6 +7829,12 @@ matrox_g100_available(void)
+     return rom_present(ROM_G100);
+ }
+ 
++static int
++matrox_g200_pci_available(void)
++{
++    return rom_present(ROM_G200_PCI);
++}
++
+ static int
+ matrox_g400_available(void)
+ {
+@@ -8057,6 +8068,54 @@ const device_t millennium_g200_device = {
+     .config        = g100_config
+ };
+ 
++/* MGA-Glide local (GLOS D38): the same cards on the PCI bus, for machines
++   without an AGP slot (the 486 profiles). Matrox sold the G200 and the G450
++   as PCI cards; the G400 PCI is for completeness. The PCI configuration space
++   has no AGP capability (is_agp clear). The G200 says 0520h and has its own
++   BIOS, 899-33 (the AGP one, 900-33, doesn't know 0520h: it reports 2 MB and
++   no framebuffer address); the G400 and G450 keep theirs. */
++const device_t millennium_g200_pci_device = {
++    .name          = "Matrox Millennium G200 PCI (MGA-Glide emulation)",
++    .internal_name = "millennium_g200_pci",
++    .flags         = DEVICE_PCI,
++    .local         = MGA_G200,
++    .init          = mystique_init,
++    .close         = mystique_close,
++    .reset         = NULL,
++    .available     = matrox_g200_pci_available,
++    .speed_changed = mystique_speed_changed,
++    .force_redraw  = mystique_force_redraw,
++    .config        = g100_config
++};
++
++const device_t millennium_g400_pci_device = {
++    .name          = "Matrox Millennium G400 PCI (MGA-Glide emulation)",
++    .internal_name = "millennium_g400_pci",
++    .flags         = DEVICE_PCI,
++    .local         = MGA_G400,
++    .init          = mystique_init,
++    .close         = mystique_close,
++    .reset         = NULL,
++    .available     = matrox_g400_available,
++    .speed_changed = mystique_speed_changed,
++    .force_redraw  = mystique_force_redraw,
++    .config        = g400_config
++};
++
++const device_t millennium_g450_pci_device = {
++    .name          = "Matrox Millennium G450 PCI (MGA-Glide emulation)",
++    .internal_name = "millennium_g450_pci",
++    .flags         = DEVICE_PCI,
++    .local         = MGA_G450,
++    .init          = mystique_init,
++    .close         = mystique_close,
++    .reset         = NULL,
++    .available     = matrox_g450_available,
++    .speed_changed = mystique_speed_changed,
++    .force_redraw  = mystique_force_redraw,
++    .config        = g400_config
++};
++
+ const device_t productiva_g100_device = {
+     .name          = "Matrox Productiva G100",
+     .internal_name = "productiva_g100",
+diff --git a/src/video/vid_table.c b/src/video/vid_table.c
+index 1ab368a..ad7142c 100644
+--- a/src/video/vid_table.c
++++ b/src/video/vid_table.c
+@@ -212,6 +212,9 @@ video_cards[] = {
+     { .device = &millennium_g200_device,                        .flags = VIDEO_FLAG_TYPE_SPECIAL   },
+     { .device = &millennium_g400_device,                        .flags = VIDEO_FLAG_TYPE_SPECIAL   },
+     { .device = &millennium_g450_device,                        .flags = VIDEO_FLAG_TYPE_SPECIAL   },
++    { .device = &millennium_g200_pci_device,                    .flags = VIDEO_FLAG_TYPE_SPECIAL   },
++    { .device = &millennium_g400_pci_device,                    .flags = VIDEO_FLAG_TYPE_SPECIAL   },
++    { .device = &millennium_g450_pci_device,                    .flags = VIDEO_FLAG_TYPE_SPECIAL   },
+ #endif /*USE_G100 */
+     { .device = &s3_trio3d2x_agp_device,                        .flags = VIDEO_FLAG_TYPE_NONE      },
+     { .device = &s3_virge_gx2_agp_device,                       .flags = VIDEO_FLAG_TYPE_NONE      },

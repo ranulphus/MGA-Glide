@@ -38,16 +38,21 @@ CWSDPMI = os.path.join(DJGPP_PREFIX, "dos", "CWSDPMI.EXE")
 
 
 # Video cards the harness can fit: 86Box internal name, config section. The
-# Matrox cards are AGP in 86Box, so only the BF6 takes them; "vbe" is a
-# generic VESA 2.0 card with a linear framebuffer for the other profiles.
+# Matrox cards are AGP in 86Box, so only the BF6 takes them, except for the
+# PCI G200, G400 and G450 of local patch 0116 (GLOS D38), which any profile
+# takes; "vbe" is a generic VESA 2.0 card with a linear framebuffer.
 CARDS = {
     "g100": ("productiva_g100", "Matrox Productiva G100"),
     "g200": ("millennium_g200", "Matrox Millennium G200 (MGA-Glide emulation)"),
     "g400": ("millennium_g400", "Matrox Millennium G400 (MGA-Glide emulation)"),
     "g450": ("millennium_g450", "Matrox Millennium G450 (MGA-Glide emulation)"),
+    "g200pci": ("millennium_g200_pci", "Matrox Millennium G200 PCI (MGA-Glide emulation)"),
+    "g400pci": ("millennium_g400_pci", "Matrox Millennium G400 PCI (MGA-Glide emulation)"),
+    "g450pci": ("millennium_g450_pci", "Matrox Millennium G450 PCI (MGA-Glide emulation)"),
     "vbe": ("s3_trio64v2dx_pci", "S3 Trio64V2/DX PCI"),     # "Generic" BIOS: S3 86C775 with VBE 2.0
 }
-MATROX = ("g100", "g200", "g400", "g450")
+MATROX = ("g100", "g200", "g400", "g450")                   # (AGP)
+MATROX_PCI = ("g200pci", "g400pci", "g450pci")
 
 # Machine profiles (--machine): board, CPU, the board's own config section,
 # the default card, and the NVRAM cache (CMOS settings saved after the first
@@ -233,7 +238,8 @@ def config_text(a, serial, cimg, bootimg, extra_hdd, tail=""):
         "@VOODOO@": "1" if a.voodoo else "0",
         "@VOODOO_RECOMPILER@": str(a.voodoo_recompiler),
         "@VOODOO_THREADS@": str(a.voodoo_threads),
-        "@G100_MB@": str(4 if a.card == "vbe" else max(a.g100_mb, 16) if a.card in ("g400", "g450") else a.g100_mb),
+        "@G100_MB@": str(4 if a.card == "vbe" else max(a.g100_mb, 16) if a.card in ("g400", "g450", "g400pci", "g450pci")
+                         else a.g100_mb),
         # vpc.py passes a minimal options object: these have defaults.
         "@MEM_KB@": str(getattr(a, "mem", 64) * 1024),
         "@GFXCARD@": CARDS[a.card][0],
@@ -679,8 +685,9 @@ def main():
     ap.add_argument("--g100-mb", type=int, default=8)
     ap.add_argument("--mem", type=int, default=64, help="the PC's RAM in MB (default 64; the BF6 takes up to 768)")
     ap.add_argument("--card", choices=sorted(CARDS), default=None,
-                    help="video card: a Matrox g100/g200/g400/g450 (BF6 only; default $MGA_CARD or g100), or vbe "
-                    "(S3 Trio64V2/DX, VESA 2.0; the default on the 486 profiles)")
+                    help="video card: a Matrox g100/g200/g400/g450 (AGP: BF6 only; default $MGA_CARD or g100), "
+                    "g200pci/g400pci/g450pci (PCI, local patch 0116: any profile), or vbe (S3 Trio64V2/DX, VESA 2.0; "
+                    "the default on the 486 profiles)")
     ap.add_argument("--machine", choices=sorted(PROFILES), default="bf6",
                     help="bf6 (Pentium II 350, the default), 486dx2 (i486DX2-66, no CR4) or 486dx4 "
                     "(iDX4-100, VME/PVI), both on a Shuttle HOT-433A")
