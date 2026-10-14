@@ -52,8 +52,12 @@ void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, con
 /* setup_triangle leaves out writes of values a register already holds
  * (increments, DWGCTL, texture sizes: they keep their value across draws).
  * Code that writes those registers otherwise tells it: engine_init (reset,
- * mode set) calls setup_invalidate, the engine's fills, TLUT loads and
- * ILOADs setup_forget_dwgctl. */
+ * mode set) and engine_resync call setup_invalidate, the engine's fills,
+ * blits, TLUT loads and ILOADs setup_forget_dwgctl. Which shadows hold is
+ * setup_valid, kept in engine.c with these two, so the engine links
+ * without the set-up (GLOS's kernel, which has no FPU code). */
+extern unsigned setup_valid;
+#define SETUP_VALID_DWG 1u
 void setup_invalidate(void);
 void setup_forget_dwgctl(void);
 

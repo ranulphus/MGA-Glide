@@ -75,6 +75,15 @@ details the resolution work (`vbe_plan_mode`, `vbe_set_zoom`,
 monitor. Real cards are unaffected by the second fix; the first is the model
 of a documented register, to be confirmed on each card at the bench.
 
+Patch `0117-mga-2d-fidelity.patch` (the G-series) makes the model follow
+the specifications where the HAL's 2D primitives (GLOS M7) depend on it: a
+BITBLT reads its source at SRCORG + AR3 on the G200 and later (upstream
+ignored SRCORG), CRTCEXT0 bit 6 is display start bit 20, XCURADDH has 6
+bits on the G200 and G400, and the hardware cursor is 64 lines tall, in
+red, green and blue (upstream swapped red and blue and, in XGA mode, passed
+the colours through the palette), with the three-colour mode drawn. See
+`docs/matrox-2d.md`; TWODTEST (`make loopa-twodtest`) checks it all.
+
 Known gap: with 8 MB configured, the genuine BIOS reports **2 MB** as VBE
 `TotalMemory` (DOS-GL's PROBE: `vram=2097152`), so it presumably sizes
 memory from something the model does not provide. MGA-Glide never

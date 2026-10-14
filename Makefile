@@ -30,7 +30,7 @@ check-header:
 	  || { echo "include/glide/glide2.h is stale: run make header"; exit 1; }
 
 # ---- HAL -----------------------------------------------------------------
-HAL_COMMON := hal/src/debug/serial.c hal/src/debug/regtrace.c hal/src/pci.c hal/src/chip.c hal/src/vbe.c hal/src/fifo.c hal/src/engine.c hal/src/dac.c hal/src/texhw.c hal/src/present.c hal/src/setup/trap.c
+HAL_COMMON := hal/src/debug/serial.c hal/src/debug/regtrace.c hal/src/pci.c hal/src/chip.c hal/src/vbe.c hal/src/fifo.c hal/src/engine.c hal/src/dac.c hal/src/texhw.c hal/src/present.c hal/src/setup/trap.c hal/src/vram.c hal/src/blit.c hal/src/cursor.c
 HAL_OW     := $(HAL_COMMON) hal/port/ow_dos4g.c
 HAL_DJGPP  := $(HAL_COMMON) hal/port/djgpp.c
 HAL_HOST   := $(HAL_COMMON) hal/port/host.c
@@ -151,10 +151,12 @@ DJ_SRC_MOUSETST := tests/shim/mousetst.c
 DJ_SRC_JOYTEST := tests/shim/joytest.c
 DJ_SRC_SBBEEP := tests/shim/sbbeep.c
 DJ_SRC_FPCHECK := tests/hal/fpcheck.c
+DJ_SRC_TWODTEST := tests/hal/twodtest.c tests/hal/sw2d.c
 build/djgpp/HOOKS.EXE: tests/hal/hooks.c
 build/djgpp/SCALE.EXE: tests/hal/scale.c
 build/djgpp/HELLO.EXE: tests/shim/hello.c
 build/djgpp/PROBE.EXE: tests/hal/probe.c
+build/djgpp/TWODTEST.EXE: tests/hal/twodtest.c tests/hal/sw2d.c tests/hal/sw2d.h
 build/djgpp/STACKPG.EXE: tests/shim/stackpg.c
 build/djgpp/MOUSETST.EXE: tests/shim/mousetst.c
 build/djgpp/JOYTEST.EXE: tests/shim/joytest.c
@@ -162,7 +164,7 @@ build/djgpp/SBBEEP.EXE: tests/shim/sbbeep.c
 build/djgpp/FPCHECK.EXE: tests/hal/fpcheck.c tests/unit/fpcheck.inc hal/include/mga/fp.h hal/include/mga/setupconv.h
 dostests-djgpp: build/djgpp/HELLO.EXE build/djgpp/PROBE.EXE build/djgpp/HOOKS.EXE build/djgpp/SCALE.EXE \
                 build/djgpp/STACKPG.EXE build/djgpp/MOUSETST.EXE build/djgpp/JOYTEST.EXE build/djgpp/SBBEEP.EXE \
-                build/djgpp/FPCHECK.EXE
+                build/djgpp/FPCHECK.EXE build/djgpp/TWODTEST.EXE
 .PHONY: dostests-djgpp
 
 # The FISTP float-to-integer helpers on both DOS compilers, in 86Box
@@ -220,6 +222,11 @@ loopa-cfgcheck:
 # (tools/loopa/selftest_ext.py; CHECKS="486 vbe" runs some).
 loopa-selftest-ext: dostests build/djgpp/STACKPG.EXE build/djgpp/PROBE.EXE v86test
 	$(DEV) $(PYTHON) tools/loopa/selftest_ext.py $(CHECKS)
+
+# The HAL's 2D primitives, cursor and display start on every Matrox card
+# (tests/hal/twodtest.c, docs/matrox-2d.md; CARDS="g200 g450pci" picks some).
+loopa-twodtest: dostests build/djgpp/TWODTEST.EXE
+	$(DEV) $(PYTHON) tools/loopa/twodtest.py $(CARDS)
 
 # make loopa TEST=hello [ARGS="--frames 10"] [OVL=build/ow/GLIDE2X.OVL]
 loopa: dostests

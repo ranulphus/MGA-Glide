@@ -19,6 +19,7 @@ mga_chip mga;
 volatile uint8_t *mga_mmio, *mga_fb;
 int mga_fifo_free;                  /* stays 0: every reservation reaches the stub */
 void fifo_reserve(int n) { (void)n; }
+unsigned setup_valid;               /* (engine.c's: no shadow holds at the start) */
 
 /* Exact coverage test: centre (16x+8, 16y+8) against edge functions with
  * the top-left rule (edges are half-open towards bottom-right). */

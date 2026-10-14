@@ -35,15 +35,13 @@ enum {
 };
 #define DWG_WRITE_TIME (DWG_SOLID | DWG_ARZERO | DWG_SGNZERO | DWG_SHFTZERO)  /* act when DWGCTL is written */
 static struct {
-    unsigned valid;
     uint32_t dwgctl;
     int      zn;                       /* 2: DR2, DR3; 4: the Z32 LSB/MSB pairs (the same registers) */
     uint32_t z[4], col[6], alpha[2], fog[2], spec[6];
     uint32_t wh[2][2], tm[2][6];       /* [map] TEXWIDTH, TEXHEIGHT; TMR0-5 */
 } sh;
 
-void setup_invalidate(void) { sh.valid = 0; }
-void setup_forget_dwgctl(void) { sh.valid &= ~SH_DWG; }
+typedef char sh_dwg_is_bit_0[SH_DWG == SETUP_VALID_DWG ? 1 : -1];   /* (setup_forget_dwgctl, in engine.c) */
 
 static int same(const uint32_t *a, const uint32_t *b, int n)
 {
@@ -65,9 +63,9 @@ static void keep(uint32_t *dst, const uint32_t *src, int n)
  * maps on the G400, the one map elsewhere.) */
 static int tex_changes(unsigned bit0, unsigned bit1, const uint32_t *v0, const uint32_t *v1, const uint32_t *val, int n)
 {
-    if (!(sh.valid & bit0) || !same(v0, val, n))
+    if (!(setup_valid & bit0) || !same(v0, val, n))
         return 1;
-    return mga.has_dual_tex && (!(sh.valid & bit1) || !same(v1, val, n));
+    return mga.has_dual_tex && (!(setup_valid & bit1) || !same(v1, val, n));
 }
 
 static int64_t floordiv64(int64_t a, int64_t b)
@@ -450,7 +448,7 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
     {
         uint32_t zi[4], ci[6], ai[2], fi[2], si[6], wh[2], tm[6];
         int zn = 0, w_dwg, w_z = 0, w_c, w_a = 0, w_f = 0, w_s = 0, w_wh = 0, w_tm = 0;
-        w_dwg = !(sh.valid & SH_DWG) || sh.dwgctl != ctx->dwgctl || (ctx->dwgctl & DWG_WRITE_TIME);
+        w_dwg = !(setup_valid & SH_DWG) || sh.dwgctl != ctx->dwgctl || (ctx->dwgctl & DWG_WRITE_TIME);
         if (flags & MGA_S_Z) {
             if (flags & MGA_S_Z32) {
                 int64_t zx = z32_inc(pz.dx), zy = z32_inc(pz.dy);
@@ -464,7 +462,7 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
                 zi[1] = (uint32_t)fx(pz.dy, 32768.0);
                 zn = 2;
             }
-            w_z = !(sh.valid & SH_Z) || sh.zn != zn || !same(sh.z, zi, zn);
+            w_z = !(setup_valid & SH_Z) || sh.zn != zn || !same(sh.z, zi, zn);
         }
         if (flags & MGA_S_COLOR) {
             ci[0] = (uint32_t)fx(pr.dx, 32768.0);
@@ -475,16 +473,16 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
             ci[5] = (uint32_t)fx(pb.dy, 32768.0);
         } else
             ci[0] = ci[1] = ci[2] = ci[3] = ci[4] = ci[5] = 0;
-        w_c = !(sh.valid & SH_COL) || !same(sh.col, ci, 6);
+        w_c = !(setup_valid & SH_COL) || !same(sh.col, ci, 6);
         if (flags & MGA_S_ALPHA) {
             ai[0] = (uint32_t)fx(pa.dx, 32768.0) & 0xFFFFFF;
             ai[1] = (uint32_t)fx(pa.dy, 32768.0) & 0xFFFFFF;
-            w_a = !(sh.valid & SH_ALPHA) || !same(sh.alpha, ai, 2);
+            w_a = !(setup_valid & SH_ALPHA) || !same(sh.alpha, ai, 2);
         }
         if (flags & MGA_S_FOG) {
             fi[0] = (uint32_t)fx(pf.dx, 32768.0) & 0xFFFFFF;
             fi[1] = (uint32_t)fx(pf.dy, 32768.0) & 0xFFFFFF;
-            w_f = !(sh.valid & SH_FOG) || !same(sh.fog, fi, 2);
+            w_f = !(setup_valid & SH_FOG) || !same(sh.fog, fi, 2);
         }
         if (flags & MGA_S_SPEC) {
             si[0] = (uint32_t)fx(psr.dx, 32768.0) & 0xFFFFFF;
@@ -493,7 +491,7 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
             si[3] = (uint32_t)fx(psg.dy, 32768.0) & 0xFFFFFF;
             si[4] = (uint32_t)fx(psb.dx, 32768.0) & 0xFFFFFF;
             si[5] = (uint32_t)fx(psb.dy, 32768.0) & 0xFFFFFF;
-            w_s = !(sh.valid & SH_SPEC) || !same(sh.spec, si, 6);
+            w_s = !(setup_valid & SH_SPEC) || !same(sh.spec, si, 6);
         }
         if (flags & MGA_S_TEX) {
             int tw = ctx->tex_tw, th = ctx->tex_th;
@@ -512,7 +510,7 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
         if (w_dwg) {
             WR(MGAREG_DWGCTL, ctx->dwgctl);
             sh.dwgctl = ctx->dwgctl;
-            sh.valid |= SH_DWG;
+            setup_valid |= SH_DWG;
         }
         if (w_z) {
             if (zn == 4) {
@@ -526,7 +524,7 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
             }
             keep(sh.z, zi, zn);
             sh.zn = zn;
-            sh.valid |= SH_Z;
+            setup_valid |= SH_Z;
         }
         if (w_c) {
             WR(MGAREG_DR6, ci[0]);
@@ -536,19 +534,19 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
             WR(MGAREG_DR14, ci[4]);
             WR(MGAREG_DR15, ci[5]);
             keep(sh.col, ci, 6);
-            sh.valid |= SH_COL;
+            setup_valid |= SH_COL;
         }
         if (w_a) {
             WR(MGAREG_ALPHAXINC, ai[0]);
             WR(MGAREG_ALPHAYINC, ai[1]);
             keep(sh.alpha, ai, 2);
-            sh.valid |= SH_ALPHA;
+            setup_valid |= SH_ALPHA;
         }
         if (w_f) {
             WR(MGAREG_FOGXINC, fi[0]);
             WR(MGAREG_FOGYINC, fi[1]);
             keep(sh.fog, fi, 2);
-            sh.valid |= SH_FOG;
+            setup_valid |= SH_FOG;
         }
         if (w_s) {
             WR(MGAREG_SPECRXINC, si[0]);
@@ -558,14 +556,14 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
             WR(MGAREG_SPECBXINC, si[4]);
             WR(MGAREG_SPECBYINC, si[5]);
             keep(sh.spec, si, 6);
-            sh.valid |= SH_SPEC;
+            setup_valid |= SH_SPEC;
         }
         if (w_wh) {                     /* tmap0dis is clear here: both maps */
             WR(MGAREG_TEXWIDTH, wh[0]);
             WR(MGAREG_TEXHEIGHT, wh[1]);
             keep(sh.wh[0], wh, 2);
             keep(sh.wh[1], wh, 2);
-            sh.valid |= SH_WH0 | SH_WH1;
+            setup_valid |= SH_WH0 | SH_WH1;
         }
         if (w_tm) {
             WR(MGAREG_TMR(0), tm[0]);
@@ -576,7 +574,7 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
             WR(MGAREG_TMR(5), tm[5]);
             keep(sh.tm[0], tm, 6);
             keep(sh.tm[1], tm, 6);
-            sh.valid |= SH_TM0 | SH_TM1;
+            setup_valid |= SH_TM0 | SH_TM1;
         }
     }
 
@@ -693,13 +691,13 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
                 tm1[3] = (uint32_t)fx(pt1.dy, 1048576.0);
                 tm1[4] = (uint32_t)fx(pq1.dx, 65536.0);
                 tm1[5] = (uint32_t)fx(pq1.dy, 65536.0);
-                w_wh1 = !(sh.valid & SH_WH1) || !same(sh.wh[1], wh1, 2);
-                w_tm1 = !(sh.valid & SH_TM1) || !same(sh.tm[1], tm1, 6);
+                w_wh1 = !(setup_valid & SH_WH1) || !same(sh.wh[1], wh1, 2);
+                w_tm1 = !(setup_valid & SH_TM1) || !same(sh.tm[1], tm1, 6);
                 if (w_wh1) {            /* map 1 only */
                     WR(MGAREG_TEXWIDTH, wh1[0]);
                     WR(MGAREG_TEXHEIGHT, wh1[1]);
                     keep(sh.wh[1], wh1, 2);
-                    sh.valid |= SH_WH1;
+                    setup_valid |= SH_WH1;
                 }
                 if (w_tm1) {
                     WR(MGAREG_TMR(0), tm1[0]);
@@ -709,7 +707,7 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
                     WR(MGAREG_TMR(4), tm1[4]);
                     WR(MGAREG_TMR(5), tm1[5]);
                     keep(sh.tm[1], tm1, 6);
-                    sh.valid |= SH_TM1;
+                    setup_valid |= SH_TM1;
                 }
                 map1_sizes = 0;
             }

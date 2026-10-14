@@ -112,11 +112,15 @@ typedef struct {
     uint32_t color_off;    /* byte offset of the colour buffer in VRAM */
     uint32_t z_off;        /* byte offset of the depth buffer (0 = none) */
     int      pitch_px;     /* shared by colour and depth */
-    int      bpp;          /* 16 or 32 */
+    int      bpp;          /* 16 or 32 (8 for 2D drawing only) */
     int      zbits;        /* 16 or 32 */
 } mga_target;
 
 void     engine_init(int pitch_px, int bpp);
+/* Another program has used the engine since this copy of the HAL last did
+ * (GLOS's GPU lock changing hands): forget what is known of the registers
+ * and write the current target, clip and MACCESS again. */
+void     engine_resync(void);
 int      engine_sync(uint32_t timeout_us);     /* 0 ok, -1 timeout (engine reset) */
 int      engine_idle(void);                    /* 1 when the FIFO is empty and the engine idle (no wait) */
 void     engine_reset(void);
@@ -124,6 +128,7 @@ void     engine_set_target(const mga_target *t);
 void     engine_set_maccess_flags(uint32_t flags);     /* MACCESS_NODITHER / MACCESS_FOGEN */
 void     engine_set_clip(int x0, int y0, int x1, int y1);   /* inclusive-exclusive */
 void     engine_fill(int x, int y, int w, int h, uint32_t value);
+uint32_t engine_colour(uint32_t value);                /* a pixel value repeated to 32 bits, at the target's depth */
 void     engine_fill_depth(int x, int y, int w, int h, uint32_t zvalue);
 void     engine_tlut_load(uint32_t off, int first, int count);   /* G200+: texture LUT from VRAM (RGB565) */
 /* G200+: write a w x h rectangle at (x, y) of the surface at VRAM offset off
@@ -136,6 +141,53 @@ void     engine_tlut_load(uint32_t off, int first, int count);   /* G200+: textu
 int      engine_iload_begin(uint32_t off, int pitch_px, int bpp, int x, int y, int w, int h);
 void     engine_iload_row(const uint32_t *d);
 void     engine_iload_end(void);
+
+/* 2D drawing (engine.c, blit.c; docs/matrox-2d.md). On the target
+ * (engine_set_target: its origin 64-byte aligned, its pitch a multiple of
+ * 32 pixels, 8, 16 or 32 bits a pixel) inside the clip, queued in order
+ * with other drawing; colours are pixel values in the target's format.
+ * engine_fill fills. */
+/* A rectangle of the target copied elsewhere on it; the two may overlap. */
+void     engine_copy(int sx, int sy, int dx, int dy, int w, int h);
+/* From another surface in VRAM of the target's depth (its origin a whole
+ * pixel, any pitch) to the target. */
+void     engine_copy_from(uint32_t src_off, int src_pitch_px, int sx, int sy, int dx, int dy, int w, int h);
+/* Colour expansion of one-bit pixels: a set bit draws fg, a clear one bg,
+ * or leaves the pixel as it was. From the CPU: rows stride bytes apart,
+ * the leftmost pixel in bit 7 of a row's first byte (as GLOS's glyphs and
+ * Windows' monochrome bitmaps are). */
+#define MGA_MONO_TRANSPARENT 1u              /* clear bits leave the pixel as it was */
+void     engine_mono(int x, int y, int w, int h, const uint8_t *bits, int stride, uint32_t fg, uint32_t bg,
+                     unsigned flags);
+/* From VRAM: engine_mono_store writes such rows at off (the engine must not
+ * be using those bytes; the G100 keeps them in its own bit order), and
+ * engine_mono_vram expands them. A G100's rows had best not cross a 2 MB
+ * boundary. */
+void     engine_mono_store(uint32_t off, const uint8_t *bits, int stride, int w, int h);
+void     engine_mono_vram(uint32_t off, int stride, int x, int y, int w, int h, uint32_t fg, uint32_t bg,
+                          unsigned flags);
+/* Pixels from the CPU in the target's format to (x, y) of the target,
+ * clipped: returns the dwords of each row (padded to a dword; 0 when it
+ * can't), then exactly h calls of engine_iload_row, then engine_iload_end. */
+int      engine_image_begin(int x, int y, int w, int h);
+
+/* cursor.c: the hardware cursor (64 x 64, of the chip's own DAC) and the
+ * display start through the CRTC. The image: rows of 8 bytes, the leftmost
+ * pixel in bit 7, an AND mask and an XOR mask as DOS and Windows have them
+ * (AND 0: colour 0 for XOR 0, colour 1 for XOR 1; AND 1: the screen, or the
+ * screen inverted for XOR 1), written to VRAM at off, a multiple of 1 KB in
+ * the first 16 MB (8 MB on a G100): 0, or -1. Colours are 0xRRGGBB.
+ * cursor_move takes the image's top left corner (as far as 63 pixels off
+ * the top or the left), and waits for the vertical retrace to end. */
+#define MGA_CURSOR_BYTES 1024u
+int      cursor_load(uint32_t off, const uint8_t and_mask[512], const uint8_t xor_mask[512]);
+void     cursor_colours(uint32_t c0, uint32_t c1);
+void     cursor_show(int on);
+void     cursor_move(int x, int y);
+/* The first byte shown (a multiple of 8, below 16 MB), from the next line
+ * on: call in the vertical blank (engine_vsync_wait) to change it between
+ * frames. 0, or -1. */
+int      crtc_set_start(uint32_t byte_off);
 int      engine_vsync_wait(uint32_t timeout_us);
 int      engine_in_vblank(void);
 uint32_t engine_vcount(void);
@@ -169,6 +221,27 @@ void     engine_present(const mga_surface *src, const mga_surface *dst, int dx, 
 
 /* dac.c */
 void dac_set_ramp(const uint8_t ramp[256]);
+
+/* vram.c: the card's memory shared out among owners (any non-zero tag the
+ * caller chooses): blocks in address order covering [base, end), each free
+ * or one owner's, neighbouring free blocks merged. Functions returning int
+ * give 0, or -1 (no room, the table full, a bad argument). */
+#define MGA_VRAM_BLOCKS 256
+#define MGA_VRAM_TOP    1u           /* vram_alloc: as high as it fits, not as low */
+typedef struct { uint32_t off, size, owner; } mga_vram_block;
+typedef struct {
+    uint32_t base, end;
+    int n;
+    mga_vram_block b[MGA_VRAM_BLOCKS];
+} mga_vram;
+void     vram_init(mga_vram *v, uint32_t base, uint32_t end);
+int      vram_alloc(mga_vram *v, uint32_t bytes, uint32_t align, unsigned flags, uint32_t owner, uint32_t *off);
+int      vram_reserve(mga_vram *v, uint32_t off, uint32_t bytes, uint32_t owner);   /* a given place */
+int      vram_free(mga_vram *v, uint32_t off);                 /* a block, by where it starts */
+void     vram_free_owner(mga_vram *v, uint32_t owner);         /* all of an owner's */
+uint32_t vram_size_of(const mga_vram *v, uint32_t off);        /* an owned block's size, 0 if none starts there */
+uint32_t vram_free_bytes(const mga_vram *v, uint32_t *largest);
+uint32_t vram_owned_bytes(const mga_vram *v, uint32_t owner);
 
 /* fifo.c: the single choke point for register writes (PRD §10). */
 void fifo_reserve(int n);

@@ -123,11 +123,24 @@
 #define MGAREG_CRTCEXT_INDEX 0x1FDE
 #define MGAREG_CRTCEXT_DATA 0x1FDF
 /* RAMDAC. */
-#define MGAREG_PALWTADD     0x3C00
+#define MGAREG_PALWTADD     0x3C00      /* also the index of the indirect registers (X_DATAREG) */
 #define MGAREG_PALDATA      0x3C01
 #define MGAREG_PIXRDMSK     0x3C02
 #define MGAREG_PALRDADD     0x3C03
 #define MGAREG_X_DATAREG    0x3C0A
+#define MGAREG_CURPOSXL     0x3C0C      /* XL, XH, YL, YH: the cursor's bottom right corner + 1 */
+/* Indirect DAC registers. */
+#define XREG_XCURADDL       0x04        /* the cursor image's address, bits 17:10 */
+#define XREG_XCURADDH       0x05        /* bits 22:18 (G100), 23:18 (G200, G400) */
+#define XREG_XCURCTRL       0x06
+#define XCURCTRL_OFF        0x00
+#define XCURCTRL_XGA        0x02        /* planes 1, 0: 00 colour 0, 01 colour 1, 10 transparent, 11 inverted */
+#define XREG_XCURCOL0R      0x08        /* G, B follow; colour 1 at 0Ch, colour 2 at 10h */
+#define XREG_XCURCOL1R      0x0C
+/* CRTC: the display start. */
+#define CRTC_STARTADD_HI    0x0C        /* startadd<15:8> */
+#define CRTC_STARTADD_LO    0x0D        /* startadd<7:0> */
+#define CRTCEXT0            0x00        /* <3:0> startadd<19:16>, <6> startadd<20>; <5:4>, <7> kept */
 
 /* ---- DWGCTL ----------------------------------------------------------- */
 #define DWG_OPCOD_LINE_OPEN     0x0
@@ -136,7 +149,7 @@
 #define DWG_OPCOD_BITBLT        0x8
 #define DWG_OPCOD_ILOAD         0x9
 #define DWG_OPCOD_IDUMP         0xA
-#define DWG_OPCOD_FBITBLT       0xC
+#define DWG_OPCOD_FBITBLT       0xC     /* the Millennium's: Reserved on the G100, G200 and G400 */
 #define DWG_ATYPE_RPL           (0u << 4)
 #define DWG_ATYPE_RSTR          (1u << 4)
 #define DWG_ATYPE_ZI            (3u << 4)
@@ -159,6 +172,7 @@
 #define DWG_TRANS(x)            ((uint32_t)(x) << 20)
 #define DWG_BLTMOD_BMONOLEF     (0x0u << 25)
 #define DWG_BLTMOD_BFCOL        (0x2u << 25)
+#define DWG_BLTMOD_BMONOWF      (0x4u << 25)    /* one-bit source, the first pixel in bit 7 of each byte */
 #define DWG_BLTMOD_BU32RGB      (0x7u << 25)
 #define DWG_PATTERN             (1u << 29)
 #define DWG_TRANSC              (1u << 30)

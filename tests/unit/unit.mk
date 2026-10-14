@@ -15,6 +15,7 @@ UNIT_test_edges := $(UNIT_test_setupgold)
 # Also built 32-bit with x87 maths (HOST_CFLAGS32), the arithmetic the DOS
 # builds use: needs gcc-multilib (the dev container: tools/dev make tests-host).
 UNIT_test_fp :=
+UNIT_test_vram := hal/src/vram.c
 UNIT32_TESTS := test_trap test_setupgold test_fp test_edges
 
 tests-host: $(UNIT_TESTS:%=build/host/tests/%) $(UNIT32_TESTS:%=build/host32/tests/%) build/ow/GLIDE2X.OVL

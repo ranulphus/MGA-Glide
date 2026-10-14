@@ -69,8 +69,9 @@ static int mode_info(uint16_t mode, mga_vbe_mode *m)
     m->green_size = b[0x21]; m->green_pos = b[0x22];
     m->blue_size = b[0x23]; m->blue_pos = b[0x24];
     m->lfb_phys = (uint32_t)b[0x28] | ((uint32_t)b[0x29] << 8) | ((uint32_t)b[0x2A] << 16) | ((uint32_t)b[0x2B] << 24);
-    /* Usable: supported, graphics, linear framebuffer, direct colour. */
-    if ((b[0] & 0x91) != 0x91 || b[0x1B] != 6)
+    /* Usable: supported, graphics, linear framebuffer, direct colour (or
+     * packed pixels at 8 bits: 2D drawing only, never planned). */
+    if ((b[0] & 0x91) != 0x91 || !(b[0x1B] == 6 || (b[0x1B] == 4 && m->bpp == 8)))
         return 1;
     return 0;
 }
@@ -265,7 +266,7 @@ typedef struct { mga_vbe_mode list[64]; int n; } list_ctx;
 static void list_cb(const mga_vbe_mode *m, void *ctx)
 {
     list_ctx *l = (list_ctx *)ctx;
-    if (l->n < 64 && (!mga.fb_phys || m->lfb_phys == mga.fb_phys))
+    if (l->n < 64 && m->bpp > 8 && (!mga.fb_phys || m->lfb_phys == mga.fb_phys))
         l->list[l->n++] = *m;
 }
 

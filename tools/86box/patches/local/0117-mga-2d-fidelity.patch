@@ -1,0 +1,226 @@
+MGA-Glide local patch 0117: what the G-series' 2D engine, cursor and CRTC do
+that 86Box's model did not, found writing the HAL's 2D primitives for GLOS M7
+(MGA-Glide docs/matrox-2d.md, which cites the specifications):
+
+- A BITBLT on the G200 and later reads its source at SRCORG + AR3 (SRCORG in
+  bytes, 32-byte units on the G200 and 64 on the G400; AR3 in pixels, or bits
+  for one-bit sources). The model read at AR3 alone. X.org's EXA driver
+  depends on SRCORG, and the HAL uses it to keep AR0 within the 18 bits the
+  G200 specification gives it.
+- CRTCEXT0 bit 6 is bit 20 of the display start on the G100, G200 and G400
+  (starts past 8 MB).
+- XCURADDH has 6 bits on the G200 and G400 (a cursor image anywhere in the
+  first 16 MB); the model kept the G100's 5.
+- The cursor colours (XCURCOLn: R, G, B) were drawn with red and blue
+  swapped, and in XGA mode through the palette (other colours at 16 bits a
+  pixel); the three-colour mode (XCURCTRL 01) drew nothing; and the cursor
+  was 32 lines tall, the SVGA core's default, not 64.
+
+diff --git a/src/video/vid_mga.c b/src/video/vid_mga.c
+index 7fef433..a72f016 100644
+--- a/src/video/vid_mga.c
++++ b/src/video/vid_mga.c
+@@ -260,6 +260,10 @@ mystique_unsupported(const char *fmt, ...)
+ #define REG_STATUS_VSYNCSTS           (1 << 3)
+ 
+ #define CRTCX_R0_STARTADD_MASK        (0xf << 0)
++/* MGA-Glide local patch 0117: CRTCEXT0 bit 6 is startadd bit 20 on the G100,
++ * G200 and G400 (their specifications' CRTCEXT0): starts past 8 MB. */
++#define CRTCX_R0_STARTADD(m)          ((((m)->crtcext_regs[0] & CRTCX_R0_STARTADD_MASK) << 16) | \
++                                       (((m)->type >= MGA_G100) ? (((m)->crtcext_regs[0] & 0x40) << 14) : 0))
+ #define CRTCX_R0_OFFSET_MASK          (3 << 4)
+ 
+ #define CRTCX_R1_HTOTAL8              (1 << 0)
+@@ -830,7 +834,7 @@ mystique_out(uint16_t addr, uint8_t val, void *priv)
+                 if ((svga->crtcreg & 0x3f) < 0xE || (svga->crtcreg & 0x3f) > 0x10) {
+                     if (((svga->crtcreg & 0x3f) == 0xc) || ((svga->crtcreg & 0x3f) == 0xd)) {
+                         svga->fullchange = 3;
+-                        svga->memaddr_latch      = (((mystique->crtcext_regs[0] & CRTCX_R0_STARTADD_MASK) << 16) |
++                        svga->memaddr_latch      = (CRTCX_R0_STARTADD(mystique) |
+                                                      (svga->crtc[0xc] << 8) | svga->crtc[0xd]) + ((svga->crtc[8] & 0x60) >> 5);
+                     } else {
+                         svga->fullchange = changeframecount;
+@@ -863,7 +867,7 @@ mystique_out(uint16_t addr, uint8_t val, void *priv)
+                 if (!(mystique->type >= MGA_2164W))
+                     svga->rowoffset <<= 1;
+ 
+-                svga->memaddr_latch      = (((mystique->crtcext_regs[0] & CRTCX_R0_STARTADD_MASK) << 16) |
++                svga->memaddr_latch      = (CRTCX_R0_STARTADD(mystique) |
+                                              (svga->crtc[0xc] << 8) | svga->crtc[0xd]) + ((svga->crtc[8] & 0x60) >> 5);
+                 if ((mystique->pci_regs[0x41] & (OPTION_INTERLEAVE >> 8)) || mystique->type >= MGA_G400) {
+                     svga->rowoffset <<= 1;
+@@ -994,7 +998,7 @@ mystique_vblank_start(svga_t *svga)
+     mystique_t *mystique = (mystique_t *) svga->priv;
+ 
+     if (mystique->crtcext_regs[3] & CRTCX_R3_MGAMODE) {
+-        svga->memaddr_latch      = ((mystique->crtcext_regs[0] & CRTCX_R0_STARTADD_MASK) << 16) | (svga->crtc[0xc] << 8) | svga->crtc[0xd];
++        svga->memaddr_latch      = CRTCX_R0_STARTADD(mystique) | (svga->crtc[0xc] << 8) | svga->crtc[0xd];
+         if ((mystique->pci_regs[0x41] & (OPTION_INTERLEAVE >> 8)) || mystique->type >= MGA_G400)
+             svga->memaddr_latch <<= 1;
+     }
+@@ -1146,7 +1150,7 @@ mystique_recalctimings(svga_t *svga)
+             svga->lut_map = !!(mystique->xmiscctrl & XMISCCTRL_RAMCS);
+ 
+         if (mystique->type >= MGA_1064SG)
+-            svga->memaddr_latch = ((mystique->crtcext_regs[0] & CRTCX_R0_STARTADD_MASK) << 16) | (svga->crtc[0xc] << 8) | svga->crtc[0xd];
++            svga->memaddr_latch = CRTCX_R0_STARTADD(mystique) | (svga->crtc[0xc] << 8) | svga->crtc[0xd];
+ 
+         /* G400 and later: the offset always counts 128-bit units and the
+          * start address 64-bit units (G400 spec 4.6.5), as the interleaved
+@@ -1572,11 +1576,12 @@ mystique_write_xreg(mystique_t *mystique, int reg, uint8_t val)
+ 
+     switch (reg) {
+         case XREG_XCURADDL:
+-            mystique->cursor.addr = (mystique->cursor.addr & 0x1f00) | val;
++            mystique->cursor.addr = (mystique->cursor.addr & 0x3f00) | val;
+             svga->hwcursor.addr   = mystique->cursor.addr << 10;
+             break;
+         case XREG_XCURADDH:
+-            mystique->cursor.addr = (mystique->cursor.addr & 0x00ff) | ((val & 0x1f) << 8);
++            /* MGA-Glide local patch 0117: curadrh is 6 bits on the G200 and G400 (16 MB). */
++            mystique->cursor.addr = (mystique->cursor.addr & 0x00ff) | ((val & ((mystique->type >= MGA_G200) ? 0x3f : 0x1f)) << 8);
+             svga->hwcursor.addr   = mystique->cursor.addr << 10;
+             break;
+ 
+@@ -6395,6 +6400,12 @@ blit_bitblt(mystique_t *mystique)
+ {
+     svga_t   *svga = &mystique->svga;
+     uint32_t  src_addr;
++    /* MGA-Glide local patch 0117: on the G200 and later a BITBLT reads its
++     * source at SRCORG + AR3: SRCORG in bytes (32-byte units on the G200,
++     * 64 on the G400), AR3 in pixels, or in bits for one-bit sources. X.org's
++     * EXA driver depends on it. The G100 has no SRCORG. */
++    const uint32_t srcorg = (mystique->type >= MGA_G200) ?
++                            (mystique->dwgreg.srcorg & ((mystique->type >= MGA_G400) ? ~63u : ~7u)) : 0;
+     int       y;
+     int       x_dir     = mystique->dwgreg.sgn.scanleft ? -1 : 1;
+     int16_t   x_start   = mystique->dwgreg.sgn.scanleft ? mystique->dwgreg.fxright : mystique->dwgreg.fxleft;
+@@ -6426,8 +6437,8 @@ blit_bitblt(mystique_t *mystique)
+ 
+                         while (1) {
+                             if (x >= mystique->dwgreg.cxleft && x <= mystique->dwgreg.cxright && mystique->dwgreg.ydst_lin >= mystique->dwgreg.ytop && mystique->dwgreg.ydst_lin <= mystique->dwgreg.ybot) {
+-                                uint32_t byte_addr  = (src_addr >> 3) & mystique->vram_mask;
+-                                int      bit_offset = ((mystique->dwgreg.dwgctrl_running & DWGCTRL_BLTMOD_MASK) == DWGCTRL_BLTMOD_BMONOWF) ? (7 - (src_addr & 7)) : (src_addr & 7);
++                                uint32_t byte_addr  = ((src_addr + srcorg * 8) >> 3) & mystique->vram_mask;
++                                int      bit_offset = ((mystique->dwgreg.dwgctrl_running & DWGCTRL_BLTMOD_MASK) == DWGCTRL_BLTMOD_BMONOWF) ? (7 - ((src_addr + srcorg * 8) & 7)) : ((src_addr + srcorg * 8) & 7);
+                                 uint32_t old_dst;
+ 
+                                 switch (mystique->maccess_running & MACCESS_PWIDTH_MASK) {
+@@ -6516,7 +6527,7 @@ blit_bitblt(mystique_t *mystique)
+                 y = mystique->dwgreg.ydst;
+ 
+                 while (mystique->dwgreg.length) {
+-                    uint16_t src = ((uint16_t *) svga->vram)[src_addr & mystique->vram_mask_w];
++                    uint16_t src = ((uint16_t *) svga->vram)[(src_addr + (srcorg >> 1)) & mystique->vram_mask_w];
+ 
+                     mystique->lut[y & 0xff].r = (src >> 11) << 3;
+                     mystique->lut[y & 0xff].g = ((src >> 5) & 0x3f) << 2;
+@@ -6626,8 +6637,8 @@ blit_bitblt(mystique_t *mystique)
+                         int16_t              x     = x_start;
+ 
+                         while (1) {
+-                            uint32_t byte_addr  = (src_addr >> 3) & mystique->vram_mask;
+-                            int      bit_offset = ((mystique->dwgreg.dwgctrl_running & DWGCTRL_BLTMOD_MASK) == DWGCTRL_BLTMOD_BMONOWF) ? (7 - (src_addr & 7)) : (src_addr & 7);
++                            uint32_t byte_addr  = ((src_addr + srcorg * 8) >> 3) & mystique->vram_mask;
++                            int      bit_offset = ((mystique->dwgreg.dwgctrl_running & DWGCTRL_BLTMOD_MASK) == DWGCTRL_BLTMOD_BMONOWF) ? (7 - ((src_addr + srcorg * 8) & 7)) : ((src_addr + srcorg * 8) & 7);
+ 
+                             if (x >= mystique->dwgreg.cxleft && x <= mystique->dwgreg.cxright && mystique->dwgreg.ydst_lin >= mystique->dwgreg.ytop && mystique->dwgreg.ydst_lin <= mystique->dwgreg.ybot && ((svga->vram[byte_addr] & (1 << bit_offset)) || !(mystique->dwgreg.dwgctrl_running & DWGCTRL_TRANSC)) && trans[x & 3]) {
+                                 uint32_t src = (svga->vram[byte_addr] & (1 << bit_offset)) ? mystique->dwgreg.fcol : mystique->dwgreg.bcol;
+@@ -6719,7 +6730,7 @@ blit_bitblt(mystique_t *mystique)
+ 
+                                 switch (mystique->maccess_running & MACCESS_PWIDTH_MASK) {
+                                     case MACCESS_PWIDTH_8:
+-                                        src = svga->vram[src_addr & mystique->vram_mask];
++                                        src = svga->vram[(src_addr + srcorg) & mystique->vram_mask];
+                                         dst = svga->vram[(mystique->dwgreg.ydst_lin + x) & mystique->vram_mask];
+                                         if (!((!(mystique->dwgreg.dwgctrl_running & DWGCTRL_TRANSC) || (src & bltcmsk) != bltckey)))
+                                             break;
+@@ -6731,7 +6742,7 @@ blit_bitblt(mystique_t *mystique)
+                                         break;
+ 
+                                     case MACCESS_PWIDTH_16:
+-                                        src = ((uint16_t *) svga->vram)[src_addr & mystique->vram_mask_w];
++                                        src = ((uint16_t *) svga->vram)[(src_addr + (srcorg >> 1)) & mystique->vram_mask_w];
+                                         dst = ((uint16_t *) svga->vram)[(mystique->dwgreg.ydst_lin + x) & mystique->vram_mask_w];
+                                         if (!((!(mystique->dwgreg.dwgctrl_running & DWGCTRL_TRANSC) || (src & bltcmsk) != bltckey)))
+                                             break;
+@@ -6743,7 +6754,7 @@ blit_bitblt(mystique_t *mystique)
+                                         break;
+ 
+                                     case MACCESS_PWIDTH_24:
+-                                        src     = *(uint32_t *) &svga->vram[(src_addr * 3) & mystique->vram_mask];
++                                        src     = *(uint32_t *) &svga->vram[(src_addr * 3 + srcorg) & mystique->vram_mask];
+                                         old_dst = *(uint32_t *) &svga->vram[((mystique->dwgreg.ydst_lin + x) * 3) & mystique->vram_mask];
+                                         if (!((!(mystique->dwgreg.dwgctrl_running & DWGCTRL_TRANSC) || (src & bltcmsk) != bltckey)))
+                                             break;
+@@ -6755,7 +6766,7 @@ blit_bitblt(mystique_t *mystique)
+                                         break;
+ 
+                                     case MACCESS_PWIDTH_32:
+-                                        src = ((uint32_t *) svga->vram)[src_addr & mystique->vram_mask_l];
++                                        src = ((uint32_t *) svga->vram)[(src_addr + (srcorg >> 2)) & mystique->vram_mask_l];
+                                         dst = ((uint32_t *) svga->vram)[(mystique->dwgreg.ydst_lin + x) & mystique->vram_mask_l];
+                                         if (!((!(mystique->dwgreg.dwgctrl_running & DWGCTRL_TRANSC) || (src & bltcmsk) != bltckey)))
+                                             break;
+@@ -7050,6 +7061,17 @@ mystique_start_blit(mystique_t *mystique)
+     mystique->blitter_time += end_time - start_time;
+ }
+ 
++/* MGA-Glide local patch 0117: XCURCOLn holds R, G, B at indices n, n+1,
++ * n+2, kept in bytes 0-2 of cursor.col[]; the screen's pixels are 0xRRGGBB.
++ * The colours are 24-bit values of their own (the specifications' XCURCOL),
++ * shown as they are in every mode: the XGA mode passed them through the
++ * palette, which at 16 bits a pixel turned them into other colours. */
++static uint32_t
++mystique_cursor_rgb(uint32_t c)
++{
++    return ((c & 0xff) << 16) | (c & 0xff00) | ((c >> 16) & 0xff);
++}
++
+ static void
+ mystique_hwcursor_draw(svga_t *svga, int displine)
+ {
+@@ -7064,10 +7086,23 @@ mystique_hwcursor_draw(svga_t *svga, int displine)
+     dat[1] = *(uint64_t *) (&svga->vram[svga->hwcursor_latch.addr + 8]);
+     svga->hwcursor_latch.addr += 16;
+     switch (mystique->xcurctrl & XCURCTRL_CURMODE_MASK) {
++        case XCURCTRL_CURMODE_3COL: /* MGA-Glide local patch 0117: 00 transparent, 01-11 colours 0-2 */
++            for (uint8_t x = 0; x < 64; x++) {
++                int idx = (int) (((dat[1] >> 62) & 2) | ((dat[0] >> 63) & 1));
++
++                if (idx)
++                    svga->monitor->target_buffer->line[displine][(offset + svga->x_add) & 2047] = mystique_cursor_rgb(mystique->cursor.col[idx - 1]);
++
++                offset++;
++                dat[0] <<= 1;
++                dat[1] <<= 1;
++            }
++            break;
++
+         case XCURCTRL_CURMODE_XGA:
+             for (uint8_t x = 0; x < 64; x++) {
+                 if (!(dat[1] & (1ULL << 63)))
+-                    svga->monitor->target_buffer->line[displine][(offset + svga->x_add) & 2047] = (dat[0] & (1ULL << 63)) ? svga_lookup_lut_ram(svga, mystique->cursor.col[1]) : svga_lookup_lut_ram(svga, mystique->cursor.col[0]);
++                    svga->monitor->target_buffer->line[displine][(offset + svga->x_add) & 2047] = (dat[0] & (1ULL << 63)) ? mystique_cursor_rgb(mystique->cursor.col[1]) : mystique_cursor_rgb(mystique->cursor.col[0]);
+                 else if (dat[0] & (1ULL << 63))
+                     svga->monitor->target_buffer->line[displine][(offset + svga->x_add) & 2047] ^= 0xffffff;
+ 
+@@ -7080,7 +7115,7 @@ mystique_hwcursor_draw(svga_t *svga, int displine)
+         case XCURCTRL_CURMODE_XWIN:
+             for (uint8_t x = 0; x < 64; x++) {
+                 if ((dat[1] & (1ULL << 63)))
+-                    svga->monitor->target_buffer->line[displine][(offset + svga->x_add) & 2047] = (dat[0] & (1ULL << 63)) ? (mystique->cursor.col[1]) : (mystique->cursor.col[0]);
++                    svga->monitor->target_buffer->line[displine][(offset + svga->x_add) & 2047] = (dat[0] & (1ULL << 63)) ? mystique_cursor_rgb(mystique->cursor.col[1]) : mystique_cursor_rgb(mystique->cursor.col[0]);
+ 
+                 offset++;
+                 dat[0] <<= 1;
+@@ -7681,6 +7716,9 @@ mystique_init(const device_t *info)
+                   NULL);
+         mystique->svga.clock_gen = mystique;
+         mystique->svga.getclock  = mystique_getclock;
++        /* MGA-Glide local patch 0117: the integrated DAC's cursor is 64 x 64
++         * (the specifications' XCURCTRL); the SVGA core's default is 32. */
++        mystique->svga.hwcursor.cur_xsize = mystique->svga.hwcursor.cur_ysize = 64;
+         if (mystique->type >= MGA_G100)
+             mystique->svga.decode_mask = (mystique->type >= MGA_G400) ? 0x1ffffff : 0xffffff;
+     }

@@ -23,16 +23,16 @@ for f in $(git ls-files hal); do copy "$f"; done
 # Host reference rasteriser and the setup unit test.
 for f in tests/unit/unit.c tests/unit/unit.h tests/unit/refrast.c tests/unit/refrast.h tests/unit/test_trap.c \
          tests/unit/test_setupgold.c tests/unit/data/setupgold-host64.txt tests/unit/data/setupgold-host32.txt \
-         tests/unit/test_fp.c tests/unit/fpcheck.inc tests/hal/fpcheck.c tests/unit/test_edges.c; do copy "$f"; done
+         tests/unit/test_fp.c tests/unit/fpcheck.inc tests/hal/fpcheck.c tests/unit/test_edges.c tests/unit/test_vram.c; do copy "$f"; done
 # Smoke and bring-up programs, the guest shim and DOS helpers.
-for f in tests/hal/smoke.c tests/hal/probe.c tests/hal/romdump.c tests/shim/hx.c tests/shim/hx.h tests/shim/hello.c tests/shim/stackpg.c tests/shim/mousetst.c tests/shim/joytest.c tests/shim/sbbeep.c $(git ls-files tools/dos); do copy "$f"; done
+for f in tests/hal/smoke.c tests/hal/probe.c tests/hal/romdump.c tests/hal/twodtest.c tests/hal/sw2d.c tests/hal/sw2d.h tests/shim/hx.c tests/shim/hx.h tests/shim/hello.c tests/shim/stackpg.c tests/shim/mousetst.c tests/shim/joytest.c tests/shim/sbbeep.c $(git ls-files tools/dos); do copy "$f"; done
 # Loop C rig (Linux port is part of hal/).
 for f in tests/rig/mgarig.c tests/rig/edgecal.h tests/rig/edgecmp.c $(git ls-files tools/rig); do copy "$f"; done
 # Loop A harness, 86Box build and patches, setup scripts, dev container.
 for f in $(git ls-files tools/loopa tools/86box tools/setup tools/docker tools/bench) tools/perf/profsum.py tools/dev tools/imgcmp.py \
          tools/games/mkimage.sh; do copy "$f"; done      # mkimage.sh: run.py --game builds D: with it
 # Documents that describe the shared parts.
-for f in docs/loops.md docs/emulated-g200.md docs/emulated-g400.md docs/reference-gaps.md docs/bench.md docs/loop-c-results.md LICENSE; do copy "$f"; done
+for f in docs/loops.md docs/emulated-g200.md docs/emulated-g400.md docs/matrox-2d.md docs/reference-gaps.md docs/bench.md docs/loop-c-results.md LICENSE; do copy "$f"; done
 
 version=$(git describe --always --dirty 2>/dev/null || echo unknown)
 echo "$version" > "$dest/VERSION"
@@ -45,7 +45,7 @@ WATCOM ?= $(HOME)/.local/opt/watcom-20260901
 export WATCOM DJGPP_PREFIX DJGPP_URL DJGPP_SHA256 CWSDPMI_URL CWSDPMI_SHA256 OW_URL OW_SHA256
 Q ?= @
 
-HAL_COMMON := hal/src/debug/serial.c hal/src/debug/regtrace.c hal/src/pci.c hal/src/chip.c hal/src/vbe.c hal/src/fifo.c hal/src/engine.c hal/src/dac.c hal/src/texhw.c hal/src/present.c hal/src/setup/trap.c
+HAL_COMMON := hal/src/debug/serial.c hal/src/debug/regtrace.c hal/src/pci.c hal/src/chip.c hal/src/vbe.c hal/src/fifo.c hal/src/engine.c hal/src/dac.c hal/src/texhw.c hal/src/present.c hal/src/setup/trap.c hal/src/vram.c hal/src/blit.c hal/src/cursor.c
 
 DJENV := env LD_LIBRARY_PATH=$(DJGPP_PREFIX)/hostlib
 DJCC := $(DJENV) $(DJGPP_PREFIX)/bin/i586-pc-msdosdjgpp-gcc
@@ -76,6 +76,9 @@ build/djgpp/HELLO.EXE: tests/shim/hello.c tests/shim/hx.c build/djgpp/libmgahal.
 	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^
 build/djgpp/PROBE.EXE: tests/hal/probe.c tests/shim/hx.c build/djgpp/libmgahal.a
 	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^
+# The 2D primitives, cursor and display start (docs/matrox-2d.md; tools/loopa/twodtest.py).
+build/djgpp/TWODTEST.EXE: tests/hal/twodtest.c tests/hal/sw2d.c tests/shim/hx.c build/djgpp/libmgahal.a
+	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^
 # The emulator's DPMI stack check (docs/loops.md): must PASS in Loop A.
 build/djgpp/STACKPG.EXE: tests/shim/stackpg.c tests/shim/hx.c build/djgpp/libmgahal.a
 	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^
@@ -91,7 +94,7 @@ build/djgpp/SBBEEP.EXE: tests/shim/sbbeep.c tests/shim/hx.c build/djgpp/libmgaha
 build/djgpp/FPCHECK.EXE: tests/hal/fpcheck.c tests/shim/hx.c build/djgpp/libmgahal.a
 	$(Q)$(DJCC) $(DJ_CFLAGS) -Itests/shim -DHX_BUILD_ID='"mgahal"' -o $@ $^ -lm
 dostests-djgpp: build/djgpp/HELLO.EXE build/djgpp/PROBE.EXE build/djgpp/STACKPG.EXE build/djgpp/MOUSETST.EXE \
-                build/djgpp/JOYTEST.EXE build/djgpp/SBBEEP.EXE build/djgpp/FPCHECK.EXE
+                build/djgpp/JOYTEST.EXE build/djgpp/SBBEEP.EXE build/djgpp/FPCHECK.EXE build/djgpp/TWODTEST.EXE
 
 build/host/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -133,11 +136,16 @@ build/host/test_fp: tests/unit/test_fp.c tests/unit/unit.c tests/unit/fpcheck.in
 build/host32/test_fp: tests/unit/test_fp.c tests/unit/unit.c tests/unit/fpcheck.inc
 	@mkdir -p $(dir $@)
 	$(Q)$(CC) $(HOST_CFLAGS) -m32 -mfpmath=387 -o $@ tests/unit/test_fp.c tests/unit/unit.c -lm
-tests-host: build/host/test_trap build/host/test_setupgold build/host/test_fp build/host/test_edges
+# The VRAM allocator (hal/src/vram.c).
+build/host/test_vram: tests/unit/test_vram.c tests/unit/unit.c hal/src/vram.c
+	@mkdir -p $(dir $@)
+	$(Q)$(CC) $(HOST_CFLAGS) -o $@ $^
+tests-host: build/host/test_trap build/host/test_setupgold build/host/test_fp build/host/test_edges build/host/test_vram
 	build/host/test_trap
 	build/host/test_setupgold
 	build/host/test_fp
 	build/host/test_edges
+	build/host/test_vram
 tests-host32: build/host32/test_trap build/host32/test_setupgold build/host32/test_fp build/host32/test_edges
 	build/host32/test_trap
 	build/host32/test_setupgold
@@ -184,9 +192,9 @@ MGA-Glide (Open Watcom, DOS/4GW) and DOS-GL (DJGPP):
 
 | Path | Contents |
 |---|---|
-| \`hal/\` | PCI, capabilities, VBE, FIFO pacing, engine, DAC, trapezoid setup; ports for DOS/4GW, DJGPP and the host |
+| \`hal/\` | PCI, capabilities, VBE, FIFO pacing, engine, 2D drawing, cursor and display start, VRAM allocator, DAC, trapezoid setup; ports for DOS/4GW, DJGPP and the host |
 | \`tests/unit/\` | host reference rasteriser, the setup test and the setup goldens (register state at every draw) |
-| \`tests/hal/\` | \`smoke.c\` (any toolchain), \`probe.c\`, \`romdump.c\` |
+| \`tests/hal/\` | \`smoke.c\` (any toolchain), \`probe.c\`, \`romdump.c\`, \`twodtest.c\` (TWODTEST, with its software model \`sw2d.c\`) |
 | \`tools/loopa/\`, \`tools/86box/\` | Loop A harness and the pinned 86Box with the local patches (never upstreamed): emulated G200, G400 and G450 on Matrox's own BIOSes; \`tools/games/mkimage.sh\` builds the game disk for \`run.py --game\` (the caller supplies the games list with \`--games-file\`) |
 | \`tools/bench/\` | Loop B: bench job runner, upload sink, capture helper, the 86Box virtual bench PC |
 | \`tests/rig/\`, \`tools/rig/\` | Loop C rig for a Matrox card under Linux (\`hal/port/linux.c\`) |

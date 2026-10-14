@@ -11,7 +11,9 @@
  * change that drops writes of values already in place, or regroups FIFO
  * reservations, keeps the hashes, while any change to a value reaching a
  * draw does not. tests/unit/data/setupgold-<abi>.txt holds the hashes made
- * before the triangle-path performance work (2026-10-01).
+ * before the triangle-path performance work (2026-10-01), changed once on
+ * purpose since: ILOADs with atype RSTR, as the specifications fix it on
+ * the G200 and G400 (2026-10-14, docs/matrox-2d.md).
  *
  * It also checks FIFO pacing (PRD R3) on every path: each register write
  * must have a slot reserved by fifo_reserve beforehand (or follow a sync,
