@@ -29,3 +29,4 @@ local/0114-cpu-iretd-eflags-model-mask.patch
 local/0115-cpu-debug-registers.patch
 local/0116-mga-pci-variants.patch
 local/0117-mga-2d-fidelity.patch
+local/0118-piix4-rtc-alias-index.patch

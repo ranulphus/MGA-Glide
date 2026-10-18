@@ -115,6 +115,7 @@ picks some) checks them:
 | `himemx` | XMS 3.0 with DOS high, then HELLO and STACKPG |
 | `cpu` | V86TEST on all three profiles |
 | `pci` | The HAL's PROBE on the 486dx2 with each PCI Matrox card |
+| `rtc` | RTCSET on the BF6 and the 486dx2: a change of century through INT 1Ah 05h leaves RTC registers A and B as they were and the year as set |
 
 **V86TEST** (`tests/cpu/`) is a CPU self-test for the paths a virtual-8086
 monitor depends on.
@@ -174,6 +175,13 @@ It found six places where 86Box differed, and GLOS's tests found more. Local pat
   Matrox's PCI BIOS, 899-33 from the same package as 900-33 (the AGP BIOS on a PCI G200 found 2 MB and no
   linear framebuffer); the G400 and G450 keep their BIOSes and device ID 0525h. Whether a real PCI G450's
   BIOS differs is a bench question (the user's G450 is a PCI board).
+- **0118:** on the PIIX4, ports 74h-77h share 70h-73h's RTC index registers, as aliases do on Intel's south
+  bridges (74h reads back the index 70h set). 86Box gave each pair its own index. Found by GLOS's M10 (setting
+  the clock): the BF6's Award BIOS traps port 71h into SMM (PIIX4 device trap 12) and its handler works through
+  74h/75h. After a change of century, the BIOS's own INT 1Ah 05h and DOS's DATE included, the handler moved
+  only the alias's index, to the century register 32h, and from then on every read of port 71h returned the
+  century. Registers A and B read 20h; reads of register C returned the century too, so the periodic
+  interrupt's flag never cleared and a 1024 Hz RTC tick stopped. Selftest `rtc` covers it.
 
 `tests/cpu/known-86box.txt` lists any remaining deviation the check accepts.
 It is empty; the RTC firing with register C unread and PGE having no effect

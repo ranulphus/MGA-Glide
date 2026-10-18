@@ -17,6 +17,9 @@ Each check runs one short job through run.py and looks at its result:
   pci     the HAL's PROBE on the 486dx2 with each PCI Matrox card (local
           patch 0116): the card found, mapped, put in a VBE mode, and the
           engine filling
+  rtc     RTCSET on bf6 and the 486dx2: a change of the RTC's century
+          through the BIOS leaves registers A and B as they were and the
+          year as set (the bf6's BIOS traps port 71h; local patch 0118)
 
 Runs inside the dev container (tools/dev). Arguments pick checks; the
 default is all of them. Exit status 1 if any check fails.
@@ -158,8 +161,23 @@ def check_pci():
     return ok
 
 
+def check_rtc():
+    ok = True
+    for m in ("bf6", "486dx2"):
+        st, serial = job("selftest-rtc-%s" % m, "--machine", m, "--file", "build/ow/dos/RTCSET.COM=/HX/RTCSET.COM",
+                         "--cmd", "SERSAY HX-START rtc", "--cmd", "RTCSET", "--cmd", "SERSAY HX-DONE 0")
+        got = dict((l.split()[1], dict(f.split("=") for f in l.split()[2:]))
+                   for l in serial.split("\n") if l.startswith("HX-RTC "))
+        b, a = got.get("before", {}), got.get("after", {})
+        good = st == "PASS" and b and a and a["a"] == b["a"] and a["b"] == b["b"] and a["year"] == a["set"]
+        ok &= report("rtc-%s" % m, good, "%s: A %s->%s, B %s->%s, year %s->%s (set %s), century %s->%s" % (
+            st, b.get("a"), a.get("a"), b.get("b"), a.get("b"), b.get("year"), a.get("year"), a.get("set"),
+            b.get("cent"), a.get("cent")))
+    return ok
+
+
 CHECKS = {"486": check_486, "vbe": check_vbe, "net": check_net, "com2": check_com2, "himemx": check_himemx,
-          "cpu": check_cpu, "pci": check_pci}
+          "cpu": check_cpu, "pci": check_pci, "rtc": check_rtc}
 
 
 def main():

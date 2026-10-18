@@ -1,0 +1,42 @@
+--- a/src/nvr_at.c
++++ b/src/nvr_at.c
+@@ -671,13 +671,29 @@
+     }
+ }
+ 
++/* The index register an I/O port uses. Chipsets with several address pairs
++   have one index per pair, except the PIIX4: it decodes 74h-77h as aliases of
++   70h-73h, so 74h and 70h share the lower bank's index and 76h and 72h the
++   upper's (and 74h reads back what 70h set). SMM handlers depend on it: the
++   Award BIOS of the Abit BF6 traps port 71h and, in its handler, reads the
++   index at 74h and accesses the RTC through 74h/75h; with a separate index
++   there, its emulated reads of 71h all returned register 32h (the century)
++   once a change of year had moved that index. */
++static uint8_t
++nvr_addr_id(const local_t *local, uint16_t addr)
++{
++    if (local->flags & FLAG_PIIX4)
++        return (addr & 0x02) >> 1;
++    return (addr & 0x0e) >> 1;
++}
++
+ /* Write to one of the NVR registers. */
+ static void
+ nvr_write(uint16_t addr, uint8_t val, void *priv)
+ {
+     nvr_t   *nvr     = (nvr_t *) priv;
+     local_t *local   = (local_t *) nvr->data;
+-    uint8_t  addr_id = (addr & 0x0e) >> 1;
++    uint8_t  addr_id = nvr_addr_id(local, addr);
+ 
+     cycles -= ISA_CYCLES(8);
+ 
+@@ -727,7 +743,7 @@
+     nvr_t         *nvr   = (nvr_t *) priv;
+     const local_t *local = (local_t *) nvr->data;
+     uint8_t        ret = 0xff;
+-    uint8_t        addr_id = (addr & 0x0e) >> 1;
++    uint8_t        addr_id = nvr_addr_id(local, addr);
+     uint16_t       i;
+     uint16_t       checksum = 0x0000;
+ 
