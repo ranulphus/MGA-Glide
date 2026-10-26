@@ -1,0 +1,13 @@
+--- a/src/video/vid_mga.c
++++ b/src/video/vid_mga.c
+@@ -1797,6 +1797,10 @@
+                 ret = fifocount;
+                 break;
+             case REG_FIFOSTATUS + 1:
++                /* MGA-Glide local patch: bempty (bit 9) and bfull (bit 8)
++                 * only; the rest read 0 (a G400 at rest reads 0x210, a
++                 * G200eR2 0x240), not the 0xff the read starts from. */
++                ret = 0;
+                 if (FIFO_EMPTY)
+                     ret |= 2;
+                 else if (FIFO_ENTRIES >= MGA_BUS_FIFO(mystique))

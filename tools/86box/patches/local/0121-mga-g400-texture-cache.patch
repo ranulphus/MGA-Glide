@@ -1,0 +1,136 @@
+--- a/src/video/vid_mga.c
++++ b/src/video/vid_mga.c
+@@ -84,6 +84,13 @@
+  * module appended to the file lies past the 64 KB window's image end). */
+ #define ROM_G450              "roms/video/matrox/mgaglide/935-20.bin"
+ 
++/* MGA-Glide local patch: the G400's texture cache, as a model: lines of
++ * texture memory, direct-mapped. Its size and shape are guesses; what the
++ * silicon showed (bench-g400, 2026-10-26, DOS-GL's G4EXP E6) is that it
++ * keeps texels across writes to texture memory, by the engine or the CPU,
++ * and that rewriting the texture registers empties it. */
++#define MGA_TCACHE_LINES 16
++#define MGA_TCACHE_LINE  32
+ #define MGA_BUS_FIFO(m) ((m)->type <= MGA_1064SG ? 32 : (m)->type >= MGA_G400 ? 16 : 64)
+ 
+ #define FIFO_SIZE        65536
+@@ -622,6 +629,10 @@
+     uint32_t tdualstage[2];
+     int      map1_tc2, map1_tw, map1_th;
+ 
++    /* MGA-Glide local patch: the G400's texture cache (see tcache_line). */
++    uint32_t tcache_tag[MGA_TCACHE_LINES];
++    uint8_t  tcache_data[MGA_TCACHE_LINES][MGA_TCACHE_LINE];
++
+     struct {
+         uint8_t r, g, b;
+     } lut[256];
+@@ -2940,6 +2951,8 @@
+  * "is effective on the next access" (G400 specification p.3-216), so the
+  * write that sets it still reaches both maps. A register written through
+  * its start alias (+0x100) starts the draw only after the routing. */
++static inline void tcache_flush(mystique_t *mystique);
++
+ static uint32_t *
+ g400_map_reg(mystique_t *mystique, uint32_t reg, int map)
+ {
+@@ -2983,6 +2996,8 @@
+         mystique->dwgreg.ta_key  = (mystique->dwgreg.texctl & TEXCTL_TAKEY) ? 1 : 0;
+         mystique->dwgreg.ta_mask = (mystique->dwgreg.texctl & TEXCTL_TAMASK) ? 1 : 0;
+     }
++    if (reg == REG_TEXORG || (reg >= REG_TEXORG1 && reg <= REG_TEXORG4))
++        tcache_flush(mystique);         /* (re-emitting the texture state empties the cache) */
+     if (bytes == 4 || (a & 3) == 3) {
+         const int bit = bytes == 4 ? (int) (val >> 31) : (int) ((val >> 7) & 1);
+         if (reg == REG_TEXCTL2)
+@@ -5573,12 +5588,37 @@
+     mystique->blitter_complete_refcount++;
+ }
+ 
++/* The bytes of texture memory at addr (already masked) as the G400's
++ * texture cache holds them: a missing line is filled from VRAM, and a line
++ * stays until another maps to its slot or TEXORG is written. Other chips
++ * read VRAM directly. */
++static inline const uint8_t *
++tcache_at(mystique_t *mystique, uint32_t addr)
++{
++    uint32_t line;
++    int      i;
++    if (mystique->type < MGA_G400)
++        return &mystique->svga.vram[addr];
++    line = addr & ~(uint32_t) (MGA_TCACHE_LINE - 1);
++    i    = (int) (line / MGA_TCACHE_LINE) & (MGA_TCACHE_LINES - 1);
++    if (mystique->tcache_tag[i] != line) {
++        memcpy(mystique->tcache_data[i], &mystique->svga.vram[line], MGA_TCACHE_LINE);
++        mystique->tcache_tag[i] = line;
++    }
++    return &mystique->tcache_data[i][addr - line];
++}
++
++static inline void
++tcache_flush(mystique_t *mystique)
++{
++    memset(mystique->tcache_tag, 0xff, sizeof mystique->tcache_tag);
++}
++
+ static uint16_t texture_texel_fetch(mystique_t *mystique, int *tex_r, int *tex_g, int *tex_b, int *tex_a, int *atransp, int s, int t, int tex_pitch)
+ {
+     const unsigned int w_mask    = (mystique->dwgreg.texwidth & TEXWIDTH_TWMASK_MASK) >> TEXWIDTH_TWMASK_SHIFT;
+     const unsigned int h_mask    = (mystique->dwgreg.texheight & TEXHEIGHT_THMASK_MASK) >> TEXHEIGHT_THMASK_SHIFT;
+     const unsigned int palsel    = mystique->dwgreg.texctl & TEXCTL_PALSEL_MASK;
+-    svga_t*            svga      = &mystique->svga;
+     uint16_t           src       = 0x0;
+ 
+     int atransp_dummy = 0;
+@@ -5604,7 +5644,7 @@
+ 
+     switch (mystique->dwgreg.texctl & TEXCTL_TEXFORMAT_MASK) {
+         case TEXCTL_TEXFORMAT_TW4:
+-            src = svga->vram[(mystique->dwgreg.texorg + (((t * tex_pitch) + s) >> 1)) & mystique->vram_mask];
++            src = *tcache_at(mystique, (mystique->dwgreg.texorg + (((t * tex_pitch) + s) >> 1)) & mystique->vram_mask);
+             if (s & 1)
+                 src >>= 4;
+             else
+@@ -5615,14 +5655,14 @@
+             *atransp = 0;
+             break;
+         case TEXCTL_TEXFORMAT_TW8:
+-            src      = svga->vram[(mystique->dwgreg.texorg + (t * tex_pitch) + s) & mystique->vram_mask];
++            src      = *tcache_at(mystique, (mystique->dwgreg.texorg + (t * tex_pitch) + s) & mystique->vram_mask);
+             *tex_r   = mystique->lut[src].r;
+             *tex_g   = mystique->lut[src].g;
+             *tex_b   = mystique->lut[src].b;
+             *atransp = 0;
+             break;
+         case TEXCTL_TEXFORMAT_TW15:
+-            src    = *(uint16_t*)((&svga->vram[(mystique->dwgreg.texorg + ((t * tex_pitch) + s) * 2) & mystique->vram_mask]));
++            src    = *(const uint16_t*)tcache_at(mystique, (mystique->dwgreg.texorg + ((t * tex_pitch) + s) * 2) & mystique->vram_mask);
+             *tex_r = ((src >> 10) & 0x1f) << 3;
+             *tex_g = ((src >> 5) & 0x1f) << 3;
+             *tex_b = (src & 0x1f) << 3;
+@@ -5633,7 +5673,7 @@
+                 *atransp = 0;
+             break;
+         case TEXCTL_TEXFORMAT_TW12:
+-            src    = *(uint16_t*)((&svga->vram[(mystique->dwgreg.texorg + ((t * tex_pitch) + s) * 2) & mystique->vram_mask]));
++            src    = *(const uint16_t*)tcache_at(mystique, (mystique->dwgreg.texorg + ((t * tex_pitch) + s) * 2) & mystique->vram_mask);
+             /* MGA-Glide local patch: 4-bit fields expand by replication. */
+             *tex_r = ((src >> 8) & 0xf) * 17;
+             *tex_g = ((src >> 4) & 0xf) * 17;
+@@ -5648,7 +5688,7 @@
+             }
+             break;
+         case TEXCTL_TEXFORMAT_TW16:
+-            src      = *(uint16_t*)((&svga->vram[(mystique->dwgreg.texorg + ((t * tex_pitch) + s) * 2) & mystique->vram_mask]));
++            src      = *(const uint16_t*)tcache_at(mystique, (mystique->dwgreg.texorg + ((t * tex_pitch) + s) * 2) & mystique->vram_mask);
+             *tex_r   = (src >> 11) << 3;
+             *tex_g   = ((src >> 5) & 0x3f) << 2;
+             *tex_b   = (src & 0x1f) << 3;
+@@ -7626,6 +7666,7 @@
+ 
+     mystique->type   = info->local;
+     mystique->is_agp = !!(info->flags & DEVICE_AGP);
++    tcache_flush(mystique);
+ 
+     /* MGA-Glide local: Matrox's G400 BIOS (897-21) computes its pixel-PLL
+      * tables for a 14.31818 MHz reference (640x480: M=1, N=27, P=7 gives

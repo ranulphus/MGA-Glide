@@ -1,0 +1,22 @@
+--- a/src/video/vid_mga.c
++++ b/src/video/vid_mga.c
+@@ -5743,6 +5743,19 @@
+         persp_correct(mystique, &s, &t, &q, &s_frac, &t_frac);
+     }
+ 
++    /* MGA-Glide local patch: the G400 and G450 filter bilinearly around
++     * texel centres, texel i at full weight at i + 1/2 (bench-g400,
++     * 2026-10-26: DOS-GL's frames match Mesa's only so); the G200 model
++     * filters from texel corners, and the runtimes shift its coordinates
++     * by half a texel. Point sampling is the same on both. */
++    if (mystique->type >= MGA_G400 && (mystique->dwgreg.texfilter & 3) != 0 && (mystique->dwgreg.texfilter & 3) != 3) {
++        const double sc = s + s_frac - 0.5, tc = t + t_frac - 0.5;
++        s      = (int) floor(sc);
++        t      = (int) floor(tc);
++        s_frac = sc - s;
++        t_frac = tc - t;
++    }
++
+     {
+         /* MGA-Glide local patch (WP-1b): wrap or clamp the sample texel,
+          * then filter over a true 2x2 footprint whose neighbours wrap or

@@ -31,3 +31,6 @@ local/0115-cpu-debug-registers.patch
 local/0116-mga-pci-variants.patch
 local/0117-mga-2d-fidelity.patch
 local/0118-piix4-rtc-alias-index.patch
+local/0119-mga-fifostatus-status-byte.patch
+local/0120-mga-g400-texel-centres.patch
+local/0121-mga-g400-texture-cache.patch

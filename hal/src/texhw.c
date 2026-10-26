@@ -87,7 +87,7 @@ static void adjust(mga_svtx *a, mga_svtx *b, mga_svtx *c, const mga_texstate *t,
     for (axis = 0; axis < 2; axis++) {
         int wrap = axis ? !t->clamp_v : !t->clamp_u;
         double shift = 0, half = 0;
-        if (t->bilinear) {
+        if (t->bilinear && !mga.texel_centre) {   /* GL's texel centres on a chip that filters from corners */
             half = 0.5 / (double)(1 << (axis ? t->h_log2 : t->w_log2));
             shift -= half;
         }
