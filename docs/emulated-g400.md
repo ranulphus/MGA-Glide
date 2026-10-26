@@ -68,6 +68,7 @@ through `tools/bench/run.py`, next to the same PROBE under `--card g400`:
 | VBE | 2.0, modes up to 800x600, 16 MB | 3.0 (897-21), modes up to 1280x1024, 32 MB | another BIOS; the HAL uses neither difference |
 | 640x480 pixel PLL | M=06 N=33 P=1F: 27 MHz x 52 / 7 / 8 = 25.07 MHz | M=01 N=1B P=17 (14.318 MHz) | **this card's reference is 27 MHz,** as the specification says. 897-21 is another BIOS: its tables only fit 14.318 MHz |
 | DAC, CRTC after the mode set | as 86Box | | identical lines |
+| 16-bit palette lookup | each component's own value (red and blue entries 0-31, green 0-63), the BIOS's layout | patch 0003 indexed by the top bits | **0003 was wrong:** DOS-GL's and Glide's ramps, written for it, came out at an eighth of the brightness on this card. 0003 is dropped and `dac_set_ramp` writes the BIOS's layout |
 | Engine | sync, fill and depth fill pass | the same | |
 
 DOS-GL's conformance suite passes 23 of 27 here, against 27 of 27 in 86Box. The four differences are the texture

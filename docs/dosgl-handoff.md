@@ -37,8 +37,12 @@ are marked **pending**.
   (collisions). 86Box's MGA left TW15 texel alpha unset and shifted TW12
   fields (fixed locally: patch 0005). See `docs/reference-gaps.md`.
 - **16-bit display goes through the palette.** The DAC indexes the palette
-  with each component in the top bits (local patch 0003 makes 86Box do the
-  same), so load a ramp at mode set even without gamma.
+  with each component's own value: red and blue 0-31, green 0-63 in 16-bit
+  modes. That is the layout the BIOS loads, and how a real G400 reads it
+  (bench-g400, 2026-10-26). `dac_set_ramp` writes that layout for the
+  current depth. Local patch 0003 had made 86Box index by the top bits
+  instead; on silicon, ramps in that layout drew every frame at an eighth of
+  its brightness. It was dropped.
 
 ## Pending (needs the bench or cuda6)
 

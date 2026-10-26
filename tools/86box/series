@@ -2,7 +2,8 @@
 # BOX86_COMMIT by tools/86box/build.sh.
 local/0001-mga-unsupported-state-warns.patch
 local/0002-mga-bilinear-fixes.patch
-local/0003-mga-16bpp-palette-index.patch
+# (0003, a 16-bit palette indexed by each component's top bits, was wrong: a G400 indexes it with the
+#  component's own value, as upstream does and the BIOS loads it; bench-g400, 2026-10-26)
 local/0004-mga-g200.patch
 local/0005-mga-texel-alpha.patch
 local/0006-mga-measured-texturing.patch
