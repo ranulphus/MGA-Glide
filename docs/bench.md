@@ -67,7 +67,7 @@ reset command, and the directory its games are installed in.
 |---|---|---|---|
 | bench-g100 | Productiva G100 | /dev/ttyS0 | milestone S |
 | bench-g200 | G200 | /dev/ttyUSB0 | M5 |
-| bench-g400 | G400 AGP 16 MB | /dev/ttyUSB1 | |
+| bench-g400 | G400 AGP 16 MB | /dev/ttyUSB1 | IBM PC 300PL (6862-270): Pentium II 448 MB, 440BX, onboard PRO/100 (IRQ 11, shared with USB). Windows 98 SE and Ubuntu 16.04 (`ssh ibm300pl`); GLOS from the DOS menu's GLOS item in agent mode (`ssh bench-g400`; `sudo glos-boot` from Ubuntu boots it once). Set up 2026-10-26; no serial cable yet |
 | bench-g450 | G450 PCI 32 MB | /dev/ttyUSB2 | M6; DVI output for the capture device |
 | vbench-g200, vbench-g100 | 86Box | `file:out/vbench/<card>/serial.log` | the dry run below |
 

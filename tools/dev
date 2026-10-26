@@ -27,5 +27,6 @@ exec docker run --rm "${tty[@]}" --init \
   -u "$(id -u):$(id -g)" -e HOME="$HOME" -e MGA_CACHE="$cache" "${envs[@]}" \
   -v "$repo:$repo" -v "$opt:$opt" -v "$cache:$cache" "${extra[@]}" \
   ${MGA_GAMES_DIR:+-v "$MGA_GAMES_DIR:$MGA_GAMES_DIR:ro"} \
+  ${MGA_EXTRA_DIR:+-v "$MGA_EXTRA_DIR:$MGA_EXTRA_DIR"} \
   ${MGA_DOCKER_NETWORK:+--network "$MGA_DOCKER_NETWORK"} \
   -w "$PWD" "$img" "$@"
