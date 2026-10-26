@@ -92,3 +92,29 @@ for DOS-GL's conformance tests and the rigperf scenes (frames byte-identical
 before and after); item 3 cannot be seen on that chip (its FIFOSTATUS does
 not count queued writes); for item 5 a FIFOSTATUS read costs 2.06 us there
 and a register write 212 ns.
+
+bench-g400 (a G400 with a Pentium II at 398 MHz, under GLOS, 2026-10-26):
+
+- **Item 1** holds: DOS-GL's conformance suite passes except where the chip's texture cache and texel centres
+  differ (`docs/g400-dual-texture.md` §7). The windowed and full-screen frames are identical (GLOS's bench glwin).
+- **Item 3:** none of the jobs overran the FIFO. Every DOSBench test ran its frames, Glide and OpenGL alike.
+- **Item 4:** FPCHECK passes.
+- **Item 5:** DOS-GL's PROF build (DOSBench G1ARNA, G3SPAC and M2BUNY, `DGL_STATS=2`) gives the library about
+  9,000 cycles per drawn triangle without waits.
+
+  | Stage | G1ARNA | G3SPAC | M2BUNY |
+  |---|---|---|---|
+  | xform | 1,892 | 1,734 | 3,050 |
+  | proj | 910 | 773 | 1,337 |
+  | clip | 531 | 567 | 698 |
+  | setup | 1,166 | 1,167 | 511 |
+  | splane | 765 | 782 | 437 |
+  | sinc | 1,813 | 1,787 | 1,062 |
+  | strap | 1,487 | 2,376 | 1,676 |
+  | FIFO waits | 621 | 679 | 288 |
+  | writes / FIFOSTATUS reads per triangle | 26.9 / 3.9 | 36.1 / 4.2 | 25.0 / 1.6 |
+
+  The bus and the card are not the limit: FIFO waits are 3-6% of the time. The CPU's arithmetic is, about 3,300
+  cycles for transform, projection and clipping and 5,200 for the setup stages. DOSBench's scenes run at 6-11 fps
+  under OpenGL and 3-5 fps under Glide (DOSBench `results/bench-g400.jsonl`). The engine's own setup (WARP) and the
+  vertex path are where the time would come back.
