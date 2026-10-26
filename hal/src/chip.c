@@ -28,7 +28,10 @@ void mga_chip_caps(mga_chip *c)
         c->ar_bits = 22;
         c->has_dwgsync = 1; c->has_dstorg = 1;
         c->has_texctl2 = 1; c->has_alpha_blend = 1; c->has_alpha_test = 1;
-        c->has_tlut = 1; c->has_specular = 1; c->has_decalblend = 1;
+        /* No TLUT: the G200's load (BITBLT RSTR) and TW8 draw black on a
+         * G400 (bench-g400, G4EXP E5 under DGL_TLUT=1); paletted textures
+         * are expanded, as the specification advises for 8-bit textures. */
+        c->has_specular = 1; c->has_decalblend = 1;
         c->g400_clip_quirk = 1;
         c->has_dual_tex = 1;
         c->texel_centre = 1;
