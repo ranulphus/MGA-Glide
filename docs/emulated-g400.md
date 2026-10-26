@@ -53,10 +53,29 @@ expected VRAM size, working engine and depth fills, and the same DAC and
 CRTC state as the G200 after setting 640x480x16. Conformance is 26/26 on
 both cards, and the GTA and Screamer Rally trace replays pass on both.
 
+## A real G400 (bench-g400, 2026-10-26)
+
+The card is an AGP G400 16 MB in an IBM PC 300PL (440BX). PROBE (main ec03889) ran under GLOS on MS-DOS 7.1
+through `tools/bench/run.py`, next to the same PROBE under `--card g400`:
+
+| | Silicon | 86Box | |
+|---|---|---|---|
+| Identity | `0525` revision 05, subsystem `0338102B` | revision 03, subsystem 0 | model: report revision 05? (the BIOS's fixes key on revision 2 only) |
+| OPTION | `50040120` | `50040120` | same |
+| OPTION2, OPTION3 | `01003000`, `0190A419` (G4EXP E7) | 0, 0 | not modelled |
+| STATUS at rest | `80020024` | `00020000` | the G200eR2 reads `80020024` too |
+| FIFOSTATUS at rest | `00000210`: 16 free, bempty | `0000FF10` | **the model is wrong:** the upper byte should be `02` (bempty only), not `FF` |
+| VBE | 2.0, modes up to 800x600, 16 MB | 3.0 (897-21), modes up to 1280x1024, 32 MB | another BIOS; the HAL uses neither difference |
+| 640x480 pixel PLL | M=06 N=33 P=1F: 27 MHz x 52 / 7 / 8 = 25.07 MHz | M=01 N=1B P=17 (14.318 MHz) | **this card's reference is 27 MHz,** as the specification says. 897-21 is another BIOS: its tables only fit 14.318 MHz |
+| DAC, CRTC after the mode set | as 86Box | | identical lines |
+| Engine | sync, fill and depth fill pass | the same | |
+
+DOS-GL's conformance suite passes 23 of 27 here, against 27 of 27 in 86Box. The four differences are the texture
+cache and texel-centre filtering (`docs/g400-dual-texture.md` §7, answers 7 and 8). They are modelling work for
+patch 0009, as is a texture cache, which 86Box has none of. FPCHECK passes on the Pentium II (72003 cases).
+
 ## Still unchecked
 
-Everything specific to the physical cards (Loop B): the OPTION values the
-BIOSes leave (`50040120` on the G400, `40091120` on the G450 in 86Box),
-the pixel-PLL reference and formula above, the real G450's clip quirk (`g400_clip_quirk` in the HAL
-caps is not yet used), and the G450 PCI card's PLX bridge (the HAL now
-scans every PCI bus, so a card behind a bridge is found).
+- On a real G450: the OPTION values, the pixel PLL, the clip quirk (`g400_clip_quirk` in the HAL caps is not yet
+  used), and the PCI card's PLX bridge (the HAL now scans every PCI bus, so a card behind a bridge is found).
+- The G400's 22-bit AR fields (`mgarig edgecal` runs on Linux only; a DOS build would cover the bench).

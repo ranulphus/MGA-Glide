@@ -268,3 +268,32 @@ These come from the tables in M:mga_texstate.c#L270-525, with the hex worked out
 4. Combiner rounding: the order of modbright, add2x and addbias; how "saturate, rup" is applied; the SUB operand order is inferred.
 5. The TLUT entry format (RGB565?), how palette alpha works, and whether atype matters during tlutload.
 6. Whether stage-1 inputs honour the diffuse/specular restriction in hardware or just produce garbage.
+
+### Answers from one G400 (2026-10-26)
+
+The card: bench-g400, an AGP G400 16 MB, revision 05. The evidence is DOS-GL's G4EXP and conformance suite on it
+(DOS-GL `docs/silicon-experiments.md`, "Results").
+
+1. **Bit 15:** the colours stay the same in every E1, E2, E4 and E5 picture. Only E6's stale texels change shape,
+   so the bit touches texture-cache fills. Leaving it off is safe.
+2. **Map 1:** answered. The write that sets map1 is broadcast, and the bit takes effect on the next write.
+   E1a-c pass under D, C and T, so `trap.c`'s order is right.
+3. **Lighting module:** with TDUALSTAGE 0, TEXCTL.tmodulate modulates colour and alpha on revision 05 (E2 D),
+   and the combiner words do the same (E2 C). Both paths work, and the legacy one stays the default.
+4. Combiner rounding: no direct measurement yet. Conformance t21 (texture environments) passes. t25
+   (ARB_texture_env_combine, its frames held to tolerance 36 for 86Box's truncating multiplies) passes with
+   worst fraction 0 once the texel-centre fix below is in, so the silicon's rounding stays within that.
+5. **TLUT:** the G200's BITBLT RSTR load and TW8 give black on the G400 (E5 L), so the G400 expands paletted
+   textures. The entry format stays unmeasured on the G400, and the G200 hasn't been tested.
+6. Not tested.
+
+Two answers nobody had asked about:
+
+7. **The texture cache survives writes to texture memory,** from the engine (ILOAD) and from the CPU alike. Texels
+   sampled before the write come back afterwards. Rewriting the texture registers clears the cache, even with
+   TEXORG's value unchanged (E6 and the DGL_TEXFLUSH runs). Runtimes must re-emit the texture state after writing
+   into a texture in place. 86Box has no cache, so it can't show this.
+8. **Bilinear filtering samples at texel centres.** The chip itself puts texel i's full weight at u = i + 0.5.
+   86Box filters from texel corners, and the HAL's `adjust()` shifts coordinates by half a texel to match GL. On
+   this G400 that shift puts every filtered texture half a texel off Mesa (conformance t07, t20, t25). Without
+   it, the frames match Mesa. The G200 is unmeasured.
