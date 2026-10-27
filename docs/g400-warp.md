@@ -40,16 +40,43 @@ From the G400 specification, chapter 3 and 4.1.9, and Linux's mga DRM driver (MI
 A WARP that is not running doesn't take vertices: the bus FIFO fills and the next write stalls the PCI bus, which
 hangs the PC. `WARPTRI` checks wbusy after starting and waits for FIFO room with a time limit.
 
-## By bus-master DMA
+## The DMA command stream
 
-`warp.c` uses DMA by default (`warp_use_dma`). The vertices go into one of two 16 KB buffers in conventional memory
-(`sys_dos_alloc`; the physical address is the segment times 16 under DOS and GLOS), and a full buffer, or any
-register write (`mga_dma_flush`, from `fifo_reserve`, `engine_sync` and `engine_idle`), sends it:
-- PCI COMMAND's bus-master bit is set once.
-- PRIMADDRESS = the buffer's address | 3 (vertex write), then PRIMEND = its end, which starts the channel and clears
-  STATUS.endprdmasts (bit 17).
-- The next kick, and every flush, first waits for endprdmasts, with a time limit; on a timeout the WARP is
-  suspended (WIADDRNB2, bypassing the FIFO) and the engine reset.
+`warp.c` uses bus-master DMA by default (`warp_use_dma`), as Linux's mga DRM does.
+
+- **The list.** A primary display list in general-purpose mode carries the register writes a list can reach: 1C00h-1DFFh
+  and 2C00h-2DFFh, which covers drawing, texture and WARP. Each packet is a header of four register indexes (the
+  register's offset from 1C00h or 2C00h over 4, the second range with bit 7) followed by the four values, padded
+  with DMAPAD.
+- **The vertices.** They go beside the list. Each run of them is handed to the secondary channel in vertex mode by a
+  packet `DMAPAD, DMAPAD, SECADDRESS = start | 3, SECEND = end`, where the run ends: at the next register write or
+  at a kick.
+- **Routing.** While the stream is open (`mga_cmd_open`), `MGA_WR32` queues those writes (`mga_cmd_route`). Any other
+  write first sends the list and waits until it has been fetched, then goes direct: OPMODE, the microcode memories,
+  RST, ILOAD data through the DMA window, the CRTC. `MGA_WR32_DIRECT` always writes at once (the kick registers, the
+  failure path). FIFO pacing is off while the list holds anything.
+- **Memory.** There are two batches in conventional memory (`sys_dos_alloc`; the physical address is the segment
+  times 16 under DOS and GLOS), each 8 KB of list and 24 KB of vertices. A kick writes PRIMADDRESS = the list's
+  address (general purpose) and PRIMEND = its end, which starts the channel and clears STATUS.endprdmasts (bit 17).
+- **Waiting.** The CPU fills one batch while the chip fetches the other, and waits only for that fetch, with a time
+  limit. `engine_sync` and `engine_idle` send the list first.
+- **Failure.** On a timeout the stream is closed, the WARP suspended (WIADDRNB2, bypassing the FIFO) and the engine
+  reset. `warp_abort` does the same without waiting, for fault handlers.
+- **Mixed setup.** A WARP triangle marks the CPU setup's shadow registers stale (`setup_stale`). When the CPU setup
+  writes TEXWIDTH and TEXHEIGHT its own way (`setup_wrote_texsize`), the WARP's are written again before its next
+  vertices. `setup_dwgctl` writes DWGCTL under the setup's shadow for WARP draws.
+- **Waits are timed, not counted.** In 86Box the CPU can read STATUS far faster than the engine works through a heavy
+  batch; a limit of 2 million reads (about a second on the bench) failed there once.
+
+On bench-g400 the stream cut DOSBench's DMA transfers from 257,655 to 80,121 for 20 million triangles, and its
+OpenGL score from 1,176 to 1,446.
+
+## Glide (W5)
+
+MGA-Glide sets a triangle up through the WARP (`src/glide/draw.c`, `warp_tri`) when it is drawn as one band:
+untextured, or textured with one level for all its rows. Bands of rows, a fog fit per band and two maps stay on the
+CPU, as do lines and points. `warp=0` (MGAGLIDE) keeps everything on the CPU, with the Voodoo's exact edge rule; the
+WARP's edges differ slightly, which conformance t04 sees (its `warp` block masks edges on the G400 family).
 
 ## On silicon (bench-g400, `WARPTRI`, 2026-10-26 and 27)
 
