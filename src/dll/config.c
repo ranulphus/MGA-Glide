@@ -47,6 +47,9 @@ static void set_opt(const char *key, const char *val)
     else if (!strcmp(key, "zoom")) mg_config.zoom = to_int(val);
     else if (!strcmp(key, "warp")) mg_config.warp = to_int(val);
     else if (!strcmp(key, "agp")) mg_config.agp = to_int(val);
+    else if (!strcmp(key, "dma_ring")) mg_config.dma_ring_kb = to_int(val);
+    else if (!strcmp(key, "dma_list")) mg_config.dma_list_div = to_int(val);
+    else if (!strcmp(key, "dma_kick")) mg_config.dma_kick_kb = to_int(val);
     else if (!strcmp(key, "res")) {
         const char *xp = val;
         mg_config.res_w = to_int(val);
@@ -105,6 +108,8 @@ void mg_config_load(void)
     mg_config.scale = 1;
     mg_config.warp = 1;
     mg_config.agp = 1;
+    mg_config.dma_ring_kb = 128;        /* (Glide writes many registers a triangle: half of it list) */
+    mg_config.dma_list_div = 2;
     strcpy(mg_config.trace_path, "MGTRACE.BIN");
     strcpy(mg_config.retail_path, "GLIDE2X.3DF");
     mg_config.trace_to = 0x7FFFFFFF;

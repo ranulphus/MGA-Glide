@@ -33,6 +33,9 @@ typedef struct {
     int  zoom;                 /* 1: half-size modes by the chip's line and pixel doubling */
     int  warp;                 /* 1 (default): the G400 family's WARP sets triangles up (docs/g400-warp.md); 0 the CPU */
     int  agp;                  /* 1 (default): under GLOS, write-combining DMA rings fetched by AGP cycles; 0 PCI */
+    int  dma_ring_kb;          /* with warp: the DMA rings' size in KB at most (128; 0: the HAL's, 256) */
+    int  dma_list_div;         /* with warp: the list's share of the rings, 1/N (2; 0: the HAL's, 8) */
+    int  dma_kick_kb;          /* with warp: KB of vertices between kicks (0: the HAL's, 6) */
 } mg_config_t;
 
 extern mg_config_t mg_config;

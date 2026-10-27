@@ -368,10 +368,12 @@ void sys_unhook_exit(void)
  * is then GLOS's DPMI client). */
 static struct { uint32_t off; uint16_t sel; } glos_entry;
 static int glos_found;                  /* 1 GLOS, -1 none */
-int glos_far(void *entry, uint32_t fn, uint32_t b, uint32_t c, uint32_t d);
+int sys_cache_wc_err;
+int glos_far(void *entry, uint32_t fn, uint32_t b, uint32_t c, uint32_t d);    /* 0, or GLOS's error code */
 #pragma aux glos_far = \
     "call fword ptr [esi]" \
-    "sbb eax, eax" \
+    "sbb edx, edx" \
+    "and eax, edx" \
     parm [esi] [eax] [ebx] [ecx] [edx] value [eax] modify [ebx ecx edx esi edi];
 
 int sys_cache_wc(uint32_t lin, uint32_t bytes)
@@ -392,7 +394,10 @@ int sys_cache_wc(uint32_t lin, uint32_t bytes)
             glos_found = 1;
         }
     }
-    if (glos_found < 0)
+    if (glos_found < 0) {
+        sys_cache_wc_err = -1;
         return -1;
-    return glos_far(&glos_entry, 33, lin, bytes, 1) ? -1 : 0;     /* GLOS_FN_CACHE, GLOS_CACHE_WC */
+    }
+    sys_cache_wc_err = glos_far(&glos_entry, 33, lin, bytes, 1);   /* GLOS_FN_CACHE, GLOS_CACHE_WC */
+    return sys_cache_wc_err ? -1 : 0;
 }

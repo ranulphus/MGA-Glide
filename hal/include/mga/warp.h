@@ -79,10 +79,12 @@ extern int warp_use_dma;
 extern int warp_use_agp;
 extern uint32_t warp_ring_bytes;        /* the rings' size at most (256 KB) */
 extern uint32_t warp_kick_bytes;        /* vertex bytes between kicks (6 KB) */
+extern int warp_list_div;               /* the list's share of the rings' block: 1/warp_list_div (8) */
 /* What dma_setup got: 0 no rings, 1 cached (PCI), 2 write-combining (PCI),
  * 3 write-combining by AGP; and their size. */
 extern int warp_ring_mode;
 extern uint32_t warp_ring_kb;
+extern int warp_wc_status;              /* write-combining rings: 0 not asked, 1 given, -1 no DOS memory, -2 refused */
 /* DMAPAD writes just before the start (Linux's mga DRM writes three: "Padding
  * required due to hardware bug"). */
 extern int warp_start_pads;

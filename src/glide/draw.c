@@ -138,6 +138,12 @@ static void warp_prepare(void)
     if (warp_ok < 0) {
         warp_ok = mg_config.warp && warp_available();
         warp_use_agp = mg_config.agp;
+        if (mg_config.dma_ring_kb >= 32)
+            warp_ring_bytes = (uint32_t)mg_config.dma_ring_kb << 10;
+        if (mg_config.dma_list_div >= 2)
+            warp_list_div = mg_config.dma_list_div;
+        if (mg_config.dma_kick_kb >= 1)
+            warp_kick_bytes = (uint32_t)mg_config.dma_kick_kb << 10;
     }
     if (warp_ok && warp_select(WARP_S | WARP_A | WARP_F) != 0) {
         warp_ok = 0;

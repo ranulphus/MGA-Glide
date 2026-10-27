@@ -338,9 +338,16 @@ GR_ENTRY(void, grSstWinClose, (void))
     mg.open = 0;
     sys_unhook_faults();
     sys_unhook_exit();
-    mg_line("MGL-WINCLOSE frames=%u engine_resets=%u timeouts=%u warp_tris=%lu warp_failures=%lu kicks=%lu", mg.frame,
-            engine_resets, engine_timeouts, (unsigned long)warp_tris, (unsigned long)warp_failures,
-            (unsigned long)warp_dma_kicks);
+    mg_line("MGL-WINCLOSE frames=%u engine_resets=%u timeouts=%u warp_tris=%lu warp_failures=%lu kicks=%lu ring=%d/%luK "
+            "wc=%d/%d fence_stuck=%lu", mg.frame, engine_resets, engine_timeouts, (unsigned long)warp_tris,
+            (unsigned long)warp_failures, (unsigned long)warp_dma_kicks, warp_ring_mode, (unsigned long)warp_ring_kb,
+            warp_wc_status, sys_cache_wc_err, (unsigned long)engine_fence_stuck);
+    if (engine_timeouts)
+        mg_line("MGL-TIMEOUT status=%08lx fifo=%08lx dwgsync=%08lx tag=%08lx primaddress=%08lx primend=%08lx "
+                "warp0=%08lx warp1=%08lx", (unsigned long)engine_timeout_diag[0], (unsigned long)engine_timeout_diag[1],
+                (unsigned long)engine_timeout_diag[2], (unsigned long)engine_timeout_diag[3],
+                (unsigned long)engine_timeout_diag[4], (unsigned long)engine_timeout_diag[5],
+                (unsigned long)engine_timeout_diag[6], (unsigned long)engine_timeout_diag[7]);
 }
 
 GR_ENTRY(FxU32, grSstScreenWidth, (void)) { return (FxU32)(mg.open ? mg.width : 640); }

@@ -112,6 +112,8 @@ void engine_init(int pitch_px, int bpp)
  * once the drawing engine has finished the primitives sent before it. */
 static uint32_t fence_tag;
 static int fence_out;
+uint32_t engine_timeout_diag[8];        /* the first timeout: STATUS, FIFOSTATUS, DWGSYNC, the tag awaited,
+                                           PRIMADDRESS, PRIMEND, WIADDRNB, WIADDRNB1 */
 
 /* The tags DWGSYNC is given, the fence's and the WARP's DMA kicks' (warp.c)
  * alike: one sequence, so a later tag passes an earlier one. */
@@ -135,9 +137,40 @@ static void warp_fence(void)
     fence_out = 1;
 }
 
+/* On bench-g400 a DWGSYNC write after WARP vertices is now and then never
+ * taken: it keeps the tag before for good, with the bus FIFO empty, the
+ * drawing engine idle and the DMA ended (docs/g400-warp.md). A fence still
+ * not taken once all of that has held for FENCE_GRACE_US is let go
+ * (engine_fence_stuck counts them) rather than timing out into a reset. */
+#define FENCE_GRACE_US 20000u
+#define FENCE_GRACE_POLLS 4096u         /* (and as many looks: some ports' clocks tick every 55 ms) */
+uint32_t engine_fence_stuck;
+static uint32_t stuck_since, stuck_polls;
+static int stuck_timing;
+
 static int fence_passed(void)
 {
-    return !fence_out || (int32_t)(MGA_RD32(MGAREG_DWGSYNC) - fence_tag) >= 0;
+    uint32_t st;
+    if (!fence_out || (int32_t)(MGA_RD32(MGAREG_DWGSYNC) - fence_tag) >= 0) {
+        stuck_timing = 0;
+        return 1;
+    }
+    st = MGA_RD32(MGAREG_STATUS);
+    if (!(MGA_RD32(MGAREG_FIFOSTATUS) & (1u << 9)) || (st & STATUS_DWGENGSTS) || !(st & (1u << 17))) {
+        stuck_timing = 0;               /* (something is still going on) */
+        return 0;
+    }
+    if (!stuck_timing) {
+        stuck_timing = 1;
+        stuck_since = sys_time_us();
+        stuck_polls = 0;
+        return 0;
+    }
+    if (++stuck_polls < FENCE_GRACE_POLLS || (uint32_t)(sys_time_us() - stuck_since) < FENCE_GRACE_US)
+        return 0;
+    stuck_timing = 0;
+    engine_fence_stuck++;
+    return 1;
 }
 
 int engine_sync(uint32_t timeout_us)
@@ -154,6 +187,16 @@ int engine_sync(uint32_t timeout_us)
     while (!(MGA_RD32(MGAREG_FIFOSTATUS) & (1u << 9)) || (MGA_RD32(MGAREG_STATUS) & STATUS_DWGENGSTS) ||
            !fence_passed()) {
         if ((++polls & 1023) == 0 && (uint32_t)(sys_time_us() - start) > timeout_us) {
+            if (!engine_timeouts) {     /* the first one's state, for the log */
+                engine_timeout_diag[0] = MGA_RD32(MGAREG_STATUS);
+                engine_timeout_diag[1] = MGA_RD32(MGAREG_FIFOSTATUS);
+                engine_timeout_diag[2] = MGA_RD32(MGAREG_DWGSYNC);
+                engine_timeout_diag[3] = fence_out ? fence_tag : 0;
+                engine_timeout_diag[4] = MGA_RD32(MGAREG_PRIMADDRESS);
+                engine_timeout_diag[5] = MGA_RD32(MGAREG_PRIMEND);
+                engine_timeout_diag[6] = MGA_RD32(MGAREG_WIADDRNB);
+                engine_timeout_diag[7] = MGA_RD32(MGAREG_WIADDRNB1);
+            }
             engine_timeouts++;
             engine_reset();
             return -1;
@@ -211,6 +254,7 @@ void engine_reset(void)
     MGA_WR32(MGAREG_RST, 0);
     fifo_reset();
     fence_out = 0;                      /* (nothing drawn is waited for any more) */
+    stuck_timing = 0;
     mga_warp_pending = 0;
     if (mga_reset_hook)
         mga_reset_hook();

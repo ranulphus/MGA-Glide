@@ -57,16 +57,19 @@ hangs the PC. `WARPTRI` checks wbusy after starting and waits for FIFO room with
   failure path). FIFO pacing is off while the list holds anything.
 - **Memory.** The list and the vertices are two rings in one block of conventional memory (`sys_dos_alloc`; the
   physical address is the segment times 16 under DOS and GLOS): 256 KB when DOS has it, halved down to 32 KB until it
-  does, an eighth of it for the list.
+  does, an eighth of it for the list (`warp_ring_bytes`, `warp_list_div`). Glide asks for 128 KB, half of it list,
+  as it writes many registers a triangle (its `dma_ring` and `dma_list` options).
 - **Kicks.** A kick hands the chip what is new by writing PRIMEND further on; the specification allows that while the
   channel is still fetching, provided the last packet before each end is DMAPADs (G400 specification 4-16), which it
   is. PRIMADDRESS is written only with the chip idle: at the first kick, and after a wait for everything. A kick
-  comes every 6 KB of vertices, and before a wait.
-- **Waiting.** Each kick ends with a DWGSYNC write of a tag of its own (one sequence with `engine_sync`'s fence, so a
-  later tag passes an earlier one). Once DWGSYNC reads a kick's tag the chip has fetched its vertices, and their room
-  is free again. The CPU waits only when a ring is full, with a time limit. The list starts again from its beginning
-  only when the chip has fetched all of it; `engine_sync` and `engine_idle` send everything and wait for it, which
-  also starts both rings again. A soft reset (`engine_reset`) closes the stream (`mga_reset_hook`).
+  comes every 6 KB of vertices (`warp_kick_bytes`), and before a wait.
+- **Waiting.** As Linux's DRM ages its buffers, a kick's vertices are free once PRIMADDRESS is past the kick's end in
+  the list (the primary channel goes on only when a run's secondary transfer is done), and every kick's once the
+  channels have ended there (STATUS.endprdmasts with PRIMADDRESS at PRIMEND; endprdmasts alone can still read set
+  just after a kick that moved PRIMEND on). The CPU reads them only when a ring is full, and waits with a time limit.
+  The list starts again from its beginning only when the chip has fetched all of it; `engine_sync` and `engine_idle`
+  send everything and wait for it, which also starts both rings again. A soft reset (`engine_reset`) closes the
+  stream (`mga_reset_hook`).
 - **Failure.** On a timeout the stream is closed, the WARP suspended (WIADDRNB2, bypassing the FIFO) and the engine
   reset. `warp_abort` does the same without waiting, for fault handlers.
 - **Mixed setup.** A WARP triangle marks the CPU setup's shadow registers stale (`setup_stale`). When the CPU setup
@@ -86,6 +89,15 @@ STATUS can read idle while the WARPs still have triangles to set up: on bench-g4
 idle 12.6 us after its kick. While WARP triangles are pending (`mga_warp_pending`), `engine_sync` and `engine_idle`
 write a tag to DWGSYNC, which takes it only once the drawing engine has finished what was sent before it, and wait
 for that too.
+
+On bench-g400 such a DWGSYNC write is now and then never taken: DWGSYNC keeps the tag before for good, with
+everything fetched (PRIMADDRESS at PRIMEND), the bus FIFO empty, the drawing engine idle and both WARPs at their
+idle address (20h). Written after every kick (an earlier version of the rings used them to free room), it happened
+about once in 3,000 kicks, each an `engine_sync` timeout and a reset: 13 in 617 frames of Glide, one in DOS-GL's
+four scenes, which cost Space 4 fps. The kicks don't write DWGSYNC now, and a fence still not taken when everything
+else has been idle for 20 ms and 4,096 looks is let go (`engine_fence_stuck`) rather than timing out into a reset.
+The DRM writes DWGSYNC only around clears and swaps, never between vertex buffers. `engine_timeout_diag` keeps the
+first timeout's registers (Glide's MGL-TIMEOUT line).
 
 GLOS's own HAL takes the engine back from a windowed program without that fence, and the program's last WARP
 triangles were then set up onto GLOS's target (DOS-GL's t27 in a window copied an empty frame). DOS-GL therefore
@@ -122,6 +134,8 @@ So the rings must be write-combining, which takes ring 0 (the MTRRs). Under GLOS
 - A locked instruction drains the CPU's write-combining buffers before each kick. The list's packet headers are
   written once, whole (a read of write-combining memory is uncached).
 - `warp_use_agp` (DOS-GL: `DGL_AGP=0`; Glide: `agp=0`) keeps the plain rings.
+- Glide games under DOS/4GW don't get them yet: DOS/4GW answers DPMI 0A00h itself, so the OVL never finds GLOS's
+  entry (`warp_wc_status` -2, `sys_cache_wc_err` -1). Glide is limited by the CPU, not the bus.
 
 On bench-g400 under GLOS, DOS-GL's scenes (frames per second):
 

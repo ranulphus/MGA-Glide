@@ -202,6 +202,8 @@ int      engine_in_vblank(void);
 uint32_t engine_vcount(void);
 extern const mga_target *engine_target;
 extern uint32_t engine_resets, engine_timeouts;
+extern uint32_t engine_timeout_diag[8];  /* the first engine_sync timeout's registers (engine.c) */
+extern uint32_t engine_fence_stuck;      /* WARP fences DWGSYNC never took, let go (engine.c) */
 /* The engine state the HAL owns (target, clip, MACCESS flags), saved and
  * restored around work that borrows the engine, such as engine_present. */
 typedef struct { mga_target t; int clip[4]; uint32_t maccess_flags; } mga_engine_state;

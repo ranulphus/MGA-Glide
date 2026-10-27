@@ -21,8 +21,10 @@ uint32_t warp_tris, warp_failures, warp_dma_kicks;
 int warp_use_dma = 1;
 uint32_t warp_ring_bytes = 262144;     /* the rings' size at most: halved until DOS has it */
 uint32_t warp_kick_bytes = 6144;       /* vertex bytes between kicks */
+int warp_list_div = 8;                 /* the list's share of the block: 1/warp_list_div */
 int warp_use_agp = 1;
 int warp_ring_mode;                 /* 0 none, 1 cached rings (PCI), 2 write-combining (PCI), 3 write-combining by AGP */
+int warp_wc_status;                 /* write-combining rings: 0 not asked, 1 given, -1 no DOS memory for them, -2 refused */
 uint32_t warp_ring_kb;
 int warp_start_pads = 3;
 int warp_reset_before_load = 1;
@@ -42,10 +44,9 @@ uint32_t warp_diag[5];
  * physical address is the linear one (under DOS and GLOS alike). A kick
  * hands the chip what is new by moving PRIMEND on, which the specification
  * allows while the chip is still fetching (4-16: the last packet before an
- * end is DMAPADs). Each kick ends with a DWGSYNC write of a tag of its own:
- * once DWGSYNC reads that tag (or a later one) the chip has fetched the
- * kick's vertices, and their room is free. The CPU waits only when a ring
- * is full. PRIMADDRESS is written only with the chip idle, so the list
+ * end is DMAPADs). Once PRIMADDRESS is past a kick's end the chip has
+ * fetched its vertices, and their room is free (reap). The CPU waits only
+ * when a ring is full. PRIMADDRESS is written only with the chip idle, so the list
  * starts again from its beginning only when all of it has been fetched. */
 #define RING_LEAST 32768u
 #define KICKS 64                    /* kicks not yet known fetched, at most (a power of two) */
@@ -66,7 +67,7 @@ static uint32_t vsince;             /* vertex bytes since the last kick */
 static uint32_t vrun = NO_RUN;      /* the open vertex run's first byte */
 static uint32_t lhdr, lhval;        /* the open packet's header dword, and its value so far */
 static int lslots;                  /* registers in the open packet (0: none open) */
-static struct { uint32_t tag, vend; } kq[KICKS];
+static struct { uint32_t lend, vend; } kq[KICKS];   /* a kick's ends: list dwords, vertex bytes */
 static unsigned kq_head, kq_tail;   /* kicks not yet known fetched */
 static void ring_idle(void);
 static int ring_wc;                     /* the rings are write-combining (GLOS) */
@@ -204,21 +205,36 @@ static void ring_idle(void)
     rewound = 1;
 }
 
-/* Kicks the chip has fetched, by the tag DWGSYNC reads: their room free. */
+/* Kicks the chip has fetched: their room free. As Linux's DRM ages its
+ * buffers, a kick is fetched once PRIMADDRESS is past its end (the primary
+ * channel goes on only when a run's secondary transfer is done), and all of
+ * them once the channels have ended there. Not DWGSYNC tags: on bench-g400 a
+ * DWGSYNC write among the vertex runs was now and then never taken (it read
+ * the tag before forever, with everything fetched and the engine idle), and
+ * engine_sync timed out. */
 static void reap(void)
 {
-    uint32_t t;
+    uint32_t pa;
     if (kq_head == kq_tail)
         return;
-    t = MGA_RD32(MGAREG_DWGSYNC);
-    while (kq_head != kq_tail && (int32_t)(t - kq[kq_head & (KICKS - 1)].tag) >= 0) {
+    pa = (MGA_RD32(MGAREG_PRIMADDRESS) & ~3u) - lphys;
+    if (pa & 3u || pa / 4u > lcap)
+        return;                         /* (not within the list: nothing known) */
+    pa /= 4u;
+    if (pa == lkick && (MGA_RD32(MGAREG_STATUS) & (1u << 17)))
+        pa = lkick + 1u;                /* (ended: everything kicked fetched) */
+    while (kq_head != kq_tail && pa > kq[kq_head & (KICKS - 1)].lend) {
         vhead = kq[kq_head & (KICKS - 1)].vend;
         kq_head++;
     }
 }
 
-/* Wait until the chip has fetched everything kicked (STATUS.endprdmasts:
- * the primary and secondary channels both done). */
+/* Wait until the chip has fetched everything kicked: STATUS.endprdmasts
+ * (the primary and secondary channels both done) with PRIMADDRESS at the
+ * end last handed over. endprdmasts alone can still read set just after a
+ * kick that moved PRIMEND on from where the channel had stopped; trusting it
+ * started the rings again under a fetch in progress, and on bench-g400
+ * Glide's engine then hung (12 engine_sync timeouts in 617 frames). */
 static int dma_wait(void)
 {
     uint32_t polls = 0, start;
@@ -228,7 +244,8 @@ static int dma_wait(void)
     o = PROF_SWITCH(PROF_FIFO);         /* (a wait for the chip, as fifo_reserve's) */
     start = sys_time_us();
     for (;;) {
-        if (MGA_RD32(MGAREG_STATUS) & (1u << 17)) {
+        if ((MGA_RD32(MGAREG_STATUS) & (1u << 17)) &&
+            (MGA_RD32(MGAREG_PRIMADDRESS) & ~3u) == lphys + lkick * 4u) {
             done = 1;
             break;
         }
@@ -285,15 +302,11 @@ static void close_run(void)
 /* What is new in the list handed to the chip: PRIMEND moved on. */
 static void dma_kick(void)
 {
-    uint32_t tag;
     int i;
     close_run();
     list_pad();
     if (lused == lkick)
         return;
-    tag = mga_dwgsync_next();
-    list_put(DMAREG(MGAREG_DWGSYNC), tag);
-    list_pad();
     for (i = 0; i < 4; i++)
         list_put(DMAREG(MGAREG_DMAPAD), 0);    /* (the last packet before an end: 4-16) */
     while (kq_tail - kq_head >= KICKS) {
@@ -303,7 +316,7 @@ static void dma_kick(void)
             return;
         }
     }
-    kq[kq_tail & (KICKS - 1)].tag = tag;
+    kq[kq_tail & (KICKS - 1)].lend = lused;
     kq[kq_tail & (KICKS - 1)].vend = vused;
     kq_tail++;
     if (warp_pre_kick)
@@ -496,7 +509,7 @@ static void rings_at(void *p, uint32_t phys, uint32_t bytes)
 {
     lring = (uint32_t *)p;
     lphys = phys;
-    lcap = bytes / 8u / 4u;             /* an eighth for the list */
+    lcap = bytes / (uint32_t)(warp_list_div >= 2 ? warp_list_div : 2) / 4u;   /* the list's share */
     vring = lring + lcap;
     vphys = lphys + lcap * 4u;
     vcap = bytes - lcap * 4u;
@@ -512,9 +525,13 @@ static void dma_setup(void)
         return;
     /* Write-combining rings: whole 64 KB units, so a block 64 KB larger
        than the rings to align them in. */
-    if (warp_use_agp && (p = sys_dos_alloc(warp_ring_bytes + 0x10000u - 16u, &seg)) != NULL) {
+    if (warp_use_agp && (p = sys_dos_alloc(warp_ring_bytes + 0x10000u - 16u, &seg)) == NULL)
+        warp_wc_status = -1;
+    if (p) {
         uint32_t lin = (uint32_t)seg << 4, al = (lin + 0xFFFFu) & ~0xFFFFu;
+        warp_wc_status = -2;
         if (sys_cache_wc(al, warp_ring_bytes) == 0) {
+            warp_wc_status = 1;
             rings_at((char *)p + (al - lin), al, warp_ring_bytes);
             ring_wc = 1;
             if (agp_enable() == 0)

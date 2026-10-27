@@ -198,6 +198,7 @@ void sys_unhook_exit(void)
 void sys_terminate(int code) { exit(code); }
 
 /* GLOS_FN_CACHE (sys.h): through the entry DPMI 0A00h "GLOS" gives. */
+int sys_cache_wc_err;
 int sys_cache_wc(uint32_t lin, uint32_t bytes)
 {
     static struct { unsigned long off; unsigned short sel; } __attribute__((packed)) entry;
@@ -213,11 +214,14 @@ int sys_cache_wc(uint32_t lin, uint32_t bytes)
             found = 1;
         }
     }
-    if (found < 0)
+    if (found < 0) {
+        sys_cache_wc_err = -1;
         return -1;
+    }
     __asm__ __volatile__("lcall *%[e]\n\tsetc %[f]"
                          : "+a"(a), "+b"(b), "+c"(c), "+d"(d), [f] "=m"(failed)
                          : [e] "m"(entry)
                          : "esi", "edi", "cc", "memory");
+    sys_cache_wc_err = failed ? (int)a : 0;
     return failed ? -1 : 0;
 }
