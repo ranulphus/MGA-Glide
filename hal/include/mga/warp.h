@@ -1,6 +1,7 @@
 /* warp.h - the G400's WARP setup engine (docs/g400-warp.md): triangles set
- * up by the chip from floating-point vertices, driven by PIO (the pipe in
- * the WARPs' instruction memories, vertices through the DMA window). */
+ * up by the chip from floating-point vertices (the pipe in the WARPs'
+ * instruction memories; vertices by bus-master DMA, or through the DMA
+ * window by the CPU). */
 #ifndef MGA_WARP_H
 #define MGA_WARP_H
 #include "mga/types.h"
@@ -36,9 +37,10 @@ void warp_tex_sizes(uint32_t w0, uint32_t h0, uint32_t w1, uint32_t h1);
  * scales the TMRs it writes by them) and the pipe's WR registers. Map 1 is
  * written through TEXCTL2.map1; texctl2 is TEXCTL2's value without it. */
 void warp_tex(int map, int log2w, int log2h, uint32_t texctl2);
-/* n vertices, three a triangle, through the DMA window in vertex mode.
- * 0, or -1 when the FIFO stopped draining (the rest is not sent; the WARP
- * is suspended and the engine reset). */
+/* n vertices, three a triangle: into the DMA buffer (sent when it fills or
+ * before the next register write), or through the DMA window in vertex
+ * mode. 0, or -1 when the chip stopped taking them (the rest is not sent;
+ * the WARP is suspended and the engine reset). */
 int  warp_vertices(const mga_wvtx *v, int n);
 /* The DMA window back in general-purpose mode, the WARP suspended (before
  * the engine is used without it, or by another program). */

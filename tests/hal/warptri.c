@@ -1,5 +1,5 @@
-/* warptri.c - WARPTRI: the G400's WARP setup engine driven by PIO through
- * the HAL's warp.c, with no bus mastering (speed plan W0; docs/g400-warp.md).
+/* warptri.c - WARPTRI: the G400's WARP setup engine through the HAL's
+ * warp.c (speed plan W0; docs/g400-warp.md).
  *
  *   WARPTRI [pipe=N] [n=COUNT] [pio]
  *

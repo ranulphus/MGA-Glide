@@ -40,16 +40,41 @@ From the G400 specification, chapter 3 and 4.1.9, and Linux's mga DRM driver (MI
 A WARP that is not running doesn't take vertices: the bus FIFO fills and the next write stalls the PCI bus, which
 hangs the PC. `WARPTRI` checks wbusy after starting and waits for FIFO room with a time limit.
 
-## On silicon (bench-g400, `WARPTRI`, 2026-10-26)
+## By bus-master DMA
+
+`warp.c` uses DMA by default (`warp_use_dma`). The vertices go into one of two 16 KB buffers in conventional memory
+(`sys_dos_alloc`; the physical address is the segment times 16 under DOS and GLOS), and a full buffer, or any
+register write (`mga_dma_flush`, from `fifo_reserve`, `engine_sync` and `engine_idle`), sends it:
+- PCI COMMAND's bus-master bit is set once.
+- PRIMADDRESS = the buffer's address | 3 (vertex write), then PRIMEND = its end, which starts the channel and clears
+  STATUS.endprdmasts (bit 17).
+- The next kick, and every flush, first waits for endprdmasts, with a time limit; on a timeout the WARP is
+  suspended (WIADDRNB2, bypassing the FIFO) and the engine reset.
+
+## On silicon (bench-g400, `WARPTRI`, 2026-10-26 and 27)
 
 - **Microcode:** WARP0's instruction memory reads back exactly.
 - **Gouraud:** a triangle through the TGZ pipe matches the HAL's CPU setup but for 60 of 20,045 pixels, all on
-  edges, with no colour differences beyond 24.
-- **Cost:** 4,000 small Gouraud triangles take 1,323 cycles each through the WARP (24 uncached dword writes) and
-  3,471 through the CPU setup. That includes the wait for the engine; the Pentium II runs at 400 MHz.
+  edges, with no colour differences.
+- **Two triangles in a row** (the G400's two WARPs take alternate triangles): both drawn, 4,800 pixels each.
+- **Depth:** two triangles crossing in depth (ZI, less-than, z from 0 to 1) match the CPU setup but for 101 of
+  34,281 pixels on edges and 20 colour differences, along the crossing line.
+- **The two vertex paths** draw the same frame (CRC d820ec36): through the DMA window by the CPU, and by bus-master
+  DMA (the primary channel in vertex mode, two 16 KB buffers in conventional memory, under GLOS).
+- **Cost:** 4,000 small Gouraud triangles, timed with the wait for the engine (the Pentium II runs at 400 MHz):
+
+  | Path                           | Cycles a triangle |
+  |--------------------------------|------------------:|
+  | CPU setup (`setup_triangle`)   | 3,434-3,475       |
+  | WARP, vertices by the CPU      | 1,736             |
+  | WARP, vertices by DMA          | 776               |
+
+  The first WARP run (2026-10-26) took 1,323 by the CPU, writing the window directly; the HAL's `warp.c` adds a
+  bounded FIFO wait for each vertex.
+- **The hang (2026-10-26)** came from vertices sent to a WARP whose start had read no busy bits. `warp_select` now
+  checks wbusy after the start and gives up with the WARP suspended; the FIFO waits are bounded. Neither guard has
+  fired since.
 - **Open:**
-  - depth with z from 0 to 1, and two triangles in a row (the run that would answer both hung the PC; a WARP
-    start then read no busy bits);
   - textures, culling (WFLAG), fog, specular, alpha;
   - the T2 pipes.
 
@@ -57,7 +82,7 @@ hangs the PC. `WARPTRI` checks wbusy after starting and waits for FIFO room with
 
 The model recognises the pipe by its microcode's length and CRC-32, then sets the triangle up with the HAL's own
 setup, copied into the patch as `src/video/mgahal/`. That is what the silicon's triangles matched.
-- **Vertices:** they come through the DMA window in vertex mode. Secondary DMA in vertex mode is still to do (W1).
+- **Vertices:** they come through the DMA window, the primary channel or the secondary channel, in vertex mode.
 - **Exec aliases:** 86Box took writes at 1DC0h-1DFFh as the start-the-engine alias of 1CC0h-1CFFh; on the G400
   they are the WARP's registers, and the patch excludes them.
 - **Culling:** not modelled yet.
