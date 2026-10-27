@@ -182,6 +182,17 @@ It found six places where 86Box differed, and GLOS's tests found more. Local pat
   only the alias's index, to the century register 32h, and from then on every read of port 71h returned the
   century. Registers A and B read 20h; reads of register C returned the century too, so the periodic
   interrupt's flag never cleared and a 1024 Hz RTC tick stopped. Selftest `rtc` covers it.
+- **0119:** FIFOSTATUS's second byte holds bempty and bfull only. A real G400 reads 0210h at rest (a G200eR2
+  0240h); the register read starts from FFh, so the model gave FF10h. Found on bench-g400's PROBE.
+- **0120:** the G400 and G450 filter bilinearly around texel centres, as a real G400 does (bench-g400: DOS-GL's
+  t07, t20 and t25 matched Mesa only so). The HAL's `mga.texel_centre` drops its half-texel shift for them; the
+  G200 model still filters from corners.
+- **0121:** the G400's texture cache: texels survive writes to texture memory (by the engine or the CPU) until
+  TEXORG is written, as on a real G400 (DOS-GL's G4EXP E6 and t18). It holds 32 KB, more than the silicon's, so
+  that a missing flush always shows.
+- **0003 dropped:** it indexed the 16-bit DAC palette by each component's top bits. A real G400 indexes it by the
+  component's own value, the layout its BIOS loads, so the runtimes' ramps, written for 0003, put every frame on
+  the card's monitor at an eighth of its brightness. `dac_set_ramp` now writes the BIOS's layout.
 
 `tests/cpu/known-86box.txt` lists any remaining deviation the check accepts.
 It is empty; the RTC firing with register C unread and PGE having no effect
