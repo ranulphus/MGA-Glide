@@ -17,6 +17,7 @@ static uint32_t cur_maccess;
 static int cur_ydstorg_px;
 static int clip_x0, clip_y0, clip_x1 = 0x7FFF, clip_y1 = 0x7FFF;
 int mga_dma_pending;                    /* vertices buffered or in flight by DMA (warp.c; hal.h) */
+int mga_warp_pending;                   /* WARP triangles since the engine was last idle (hal.h) */
 void (*mga_dma_flush)(void);            /* sends and waits for them: register writes come after */
 uint32_t mga_opmode = MGA_OPMODE_UNKNOWN;   /* what OPMODE holds (ILOAD here, vertices in warp.c) */
 static int pitch_reg = -1;         /* the value in PITCH: targets may differ in pitch */
@@ -27,6 +28,19 @@ static void emit_clip(void)
     int x0 = clip_x0, y0 = clip_y0, x1 = clip_x1, y1 = clip_y1;
     if (x1 <= x0 || y1 <= y0) {
         x0 = 0; x1 = 0; y0 = 1; y1 = 0;      /* empty: nothing passes */
+    }
+    if (mga_warp_pending) {
+        /* A new clip would reach triangles the WARPs are still setting up
+         * (on a real G400 they were cut by the next clip): first two
+         * zero-length draws, as Linux's mga DRM puts before every clip on
+         * a G400 (mga_emit_clip_rect). */
+        const uint32_t dwg = DWG_OPCOD_TRAP | DWG_ATYPE_I | DWG_ZMODE_NOZCMP | DWG_SHFTZERO | DWG_BOP_COPY;
+        fifo_reserve(4);
+        MGA_WR32(MGAREG_DWGCTL, dwg);
+        MGA_WR32(MGAREG_LEN + MGAREG_EXEC, 0x80000000u);
+        MGA_WR32(MGAREG_DWGCTL, dwg);
+        MGA_WR32(MGAREG_LEN + MGAREG_EXEC, 0x80000000u);
+        setup_forget_dwgctl();
     }
     fifo_reserve(3);
     MGA_WR32(MGAREG_CXBNDRY, ((uint32_t)(x1 - 1) << 16) | (uint32_t)x0);
@@ -108,6 +122,7 @@ int engine_sync(uint32_t timeout_us)
      * index register is the documented way). */
     MGA_WR8(MGAREG_CRTC_INDEX, 0);
     fifo_reset();
+    mga_warp_pending = 0;
     return 0;
 }
 

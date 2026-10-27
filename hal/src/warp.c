@@ -340,6 +340,7 @@ int warp_vertices(const mga_wvtx *v, int n)
         mga_dma_pending = 1;            /* register writes wait for these */
         mga_fifo_free = 0;
         warp_tris += (uint32_t)(n / 3);
+        mga_warp_pending = 1;
         return 0;
     }
     dma_mode(1);
@@ -366,5 +367,6 @@ int warp_vertices(const mga_wvtx *v, int n)
         }
     }
     warp_tris += (uint32_t)(n / 3);
+    mga_warp_pending = 1;
     return 0;
 }

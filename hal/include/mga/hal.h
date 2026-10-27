@@ -266,6 +266,10 @@ extern int mga_fifo_free;
  * fifo_reserve. */
 extern int mga_dma_pending;
 extern void (*mga_dma_flush)(void);
+/* WARP triangles sent since the engine was last idle (warp.c sets it,
+ * engine_sync clears it). On a G400 the clip registers do not wait for
+ * them: emit_clip puts the DRM's barrier in front of a new clip. */
+extern int mga_warp_pending;
 MGA_INLINE void fifo_need(int n)
 {
     if (mga_fifo_free >= n)
