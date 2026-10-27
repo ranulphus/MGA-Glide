@@ -17,8 +17,8 @@ refers to a chapter 6 its public edition does not have.
 
 From the G400 specification, chapter 3 and 4.1.9, and Linux's mga DRM driver (MIT) for the values:
 
-1. **Load the pipe.** Write WIADDR2 to suspend and WMISC = 0, so microcode caching is off and the WARPs run from
-   their own 2 KB instruction memories. Then write WIMEMADDR = 0 and the pipe through WIMEMDATA (WARP0) and
+1. **Load the pipe.** Write WIADDR2 to suspend, then take a soft reset (RST; see "The third load" below). Write
+   WMISC = 0, so microcode caching is off and the WARPs run from their own 2 KB instruction memories. Then write WIMEMADDR = 0 and the pipe through WIMEMDATA (WARP0) and
    WIMEMDATA1 (WARP1), two dwords a 64-bit word, low dword first.
    - WARP0's words read back at 2000h/2004h.
    - WARP1's read through WIMEMADDR1; WIMEMDATA1 reads 0.
@@ -72,8 +72,22 @@ register write (`mga_dma_flush`, from `fifo_reserve`, `engine_sync` and `engine_
   The first WARP run (2026-10-26) took 1,323 by the CPU, writing the window directly; the HAL's `warp.c` adds a
   bounded FIFO wait for each vertex.
 - **The hang (2026-10-26)** came from vertices sent to a WARP whose start had read no busy bits. `warp_select` now
-  checks wbusy after the start and gives up with the WARP suspended; the FIFO waits are bounded. Neither guard has
-  fired since.
+  checks wbusy after the start and gives up with the WARP suspended; the FIFO waits are bounded.
+- **The third load (2026-10-27).** After a soft reset (RST), the instruction memories can be loaded and the WARPs
+  started twice. After the third load, the start reads no busy bits (STATUS 00020000, WIADDRNB and WIADDRNB1 both 0),
+  and so does every later one until the next soft reset.
+  - **Scope:** it happens at every pipe, with or without the DRM's three DMAPAD writes before the start, by DMA and
+    by PIO, and whether the loads come in one program or in programs run one after another.
+  - **Not affected:** restarting without a load (the same pipe) always works.
+  - **Fix:** `warp_select` takes a soft reset before each load (`engine_reset`; `engine_resets` moves, so callers
+    write their drawing state again).
+  - **Evidence:** WARPTRI `starts=30 reload` (pipes 0 and 7 alternately) then started 30 of 30 by DMA and 20 of 20
+    by PIO, and every start drew its triangle. Without the reset, every third start failed (`noreset`).
+  - **Why it matters:** the two pipes DOS-GL uses (TGZSAF and T2GZSAF, 1,000 and 1,256 bytes) don't fit in the 2 KB
+    instruction memories together, so switching between one and two textures is always a load.
+  - **The DRM** never meets this: it runs the pipes from memory with microcode caching (WMISC.wucodecache = 1).
+- **STATUS<22:20>** (warpbfpath, wfipath, wfopath) point at WARP1 after an odd number of triangles, and keep that
+  across suspend and start.
 - **Open:**
   - textures, culling (WFLAG), fog, specular, alpha;
   - the T2 pipes.
@@ -85,6 +99,8 @@ setup, copied into the patch as `src/video/mgahal/`. That is what the silicon's 
 - **Vertices:** they come through the DMA window, the primary channel or the secondary channel, in vertex mode.
 - **Exec aliases:** 86Box took writes at 1DC0h-1DFFh as the start-the-engine alias of 1CC0h-1CFFh; on the G400
   they are the WARP's registers, and the patch excludes them.
+- **The third load:** modelled. A start after three loads since a soft reset leaves the WARPs dead (no busy bits,
+  no vertices taken), and the log says so. The soft reset stops the WARPs.
 - **Culling:** not modelled yet.
 
 `WARPTRI` in Loop A on the G400 passes: Gouraud and depth identical to the CPU setup, and two triangles in one batch

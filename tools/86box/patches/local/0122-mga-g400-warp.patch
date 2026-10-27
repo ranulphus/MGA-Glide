@@ -1839,7 +1839,7 @@
  #define MGA_BUS_FIFO(m) ((m)->type <= MGA_1064SG ? 32 : (m)->type >= MGA_G400 ? 16 : 64)
  
  #define FIFO_SIZE        65536
-@@ -636,6 +643,18 @@
+@@ -636,6 +643,19 @@
      uint32_t tcache_tag[MGA_TCACHE_LINES];
      uint8_t  tcache_data[MGA_TCACHE_LINES][MGA_TCACHE_LINE];
  
@@ -1851,6 +1851,7 @@
 +        int      imem_addr, imem_half;
 +        uint32_t wmisc, wvrtxsz, wacceptseq, wflag, wflag1, wgetmsb, wr[64];
 +        int      running, pipe;
++        int      loads;         /* loads of the instruction memories since a soft reset */
 +        uint32_t v[3][64];
 +        int      vdw, vn;
 +    } warp;
@@ -1858,7 +1859,7 @@
      struct {
          uint8_t r, g, b;
      } lut[256];
-@@ -798,6 +817,7 @@
+@@ -798,6 +818,7 @@
  static uint8_t  mystique_iload_read_b(uint32_t addr, void *priv);
  static uint32_t mystique_iload_read_l(uint32_t addr, void *priv);
  static void     mystique_iload_write_b(uint32_t addr, uint8_t val, void *priv);
@@ -1866,7 +1867,7 @@
  static void     mystique_iload_write_l(uint32_t addr, uint32_t val, void *priv);
  
  static uint32_t blit_idump_read(mystique_t *mystique);
-@@ -1841,6 +1861,8 @@
+@@ -1841,6 +1862,8 @@
                  break;
              case REG_STATUS + 2:
                  ret = (mystique->status >> 16) & 0xff;
@@ -1875,7 +1876,7 @@
                  if (mystique->busy || ((mystique->blitter_submit_refcount + mystique->blitter_submit_dma_refcount) != mystique->blitter_complete_refcount) || !FIFO_EMPTY
                  || mystique->dma.state != MGA_DMA_STATE_IDLE || mystique->softrap_pending || mystique->endprdmasts_pending)
                      ret |= (STATUS_DWGENGSTS >> 16);
-@@ -2007,7 +2029,7 @@
+@@ -2007,7 +2030,7 @@
      mystique_t *mystique   = (mystique_t *) priv;
      int         start_blit = 0;
  
@@ -1884,7 +1885,7 @@
          addr &= ~0x100;
          start_blit = 1;
      }
-@@ -2336,6 +2358,7 @@
+@@ -2336,6 +2359,7 @@
          case REG_OPMODE:
              mystique->dwgreg.dmamod   = (val >> 2) & 3;
              mystique->dma.iload_state = 0;
@@ -1892,7 +1893,7 @@
              break;
  
          default:
-@@ -2391,7 +2414,7 @@
+@@ -2391,7 +2415,7 @@
          return;
      }
      if ((addr & 0x3e00) == 0x1c00 || (addr & 0x3e00) == 0x2c00) {
@@ -1901,7 +1902,19 @@
              mystique->blitter_submit_refcount++;
          mystique_queue(mystique, addr & 0x3fff, val, FIFO_WRITE_CTRL_BYTE);
          return;
-@@ -2582,10 +2605,22 @@
+@@ -2476,6 +2500,11 @@
+         case REG_RST + 2:
+         case REG_RST + 3:
+             wait_fifo_idle(mystique);
++            if ((addr & 0x3fff) == REG_RST && (val & 1)) {
++                mystique->warp.running = 0;     /* MGA-Glide local patch: the soft reset stops the WARPs */
++                mystique->warp.loads   = 0;
++                mystique->warp.vdw = mystique->warp.vn = 0;
++            }
+             mystique->busy                        = 0;
+             mystique->blitter_submit_refcount     = 0;
+             mystique->blitter_submit_dma_refcount = 0;
+@@ -2582,10 +2611,22 @@
  static uint32_t
  mystique_ctrl_read_l(uint32_t addr, void *priv)
  {
@@ -1925,7 +1938,7 @@
  
      ret = mystique_ctrl_read_b(addr, priv);
      ret |= mystique_ctrl_read_b(addr + 1, priv) << 8;
-@@ -2601,7 +2636,7 @@
+@@ -2601,7 +2642,7 @@
      mystique_t *mystique   = (mystique_t *) priv;
      int         start_blit = 0;
  
@@ -1934,7 +1947,7 @@
          addr &= ~0x100;
          start_blit = 1;
      }
-@@ -2935,7 +2970,34 @@
+@@ -2935,7 +2976,34 @@
              mystique->tdualstage[((addr & 0x3ffc) - REG_TDUALSTAGE0) >> 2] = val;
              break;
  
@@ -1969,7 +1982,7 @@
              mystique_accel_ctrl_write_b_raw(addr, val & 0xff, priv);
              mystique_accel_ctrl_write_b_raw(addr + 1, (val >> 8) & 0xff, priv);
              mystique_accel_ctrl_write_b_raw(addr + 2, (val >> 16) & 0xff, priv);
-@@ -2981,7 +3043,7 @@
+@@ -2981,7 +3049,7 @@
  static void
  g400_texreg_write(mystique_t *mystique, uint32_t addr, uint32_t val, int bytes, void *priv)
  {
@@ -1978,7 +1991,7 @@
      const uint32_t a    = exec ? (addr & ~0x100) : addr;
      const uint32_t reg  = a & 0x3ffc;
      const uint32_t mask = bytes == 4 ? 0xffffffffu : (0xffu << (8 * (a & 3)));
-@@ -3017,7 +3079,7 @@
+@@ -3017,7 +3085,7 @@
  static int
  g400_routes(mystique_t *mystique, uint32_t addr)
  {
@@ -1987,7 +2000,7 @@
      return mystique->type >= MGA_G400 && g400_map_reg(mystique, a & 0x3ffc, 0) != NULL;
  }
  
-@@ -3043,19 +3105,132 @@
+@@ -3043,19 +3111,145 @@
          mystique_accel_ctrl_write_l_raw(addr, val, priv);
  }
  
@@ -2015,6 +2028,17 @@
 +            if (!(mystique->warp.wmisc & 1)) {
 +                const int off = (int) (a & 0x7ff);
 +                mystique->warp.pipe = mgawarp_pipe_of(mystique->warp.imem[0] + off, 2048 - off);
++                if (mystique->warp.loads >= 3) {
++                    /* A real G400's WARPs do not start after the third load
++                     * of their instruction memories since a soft reset: no
++                     * busy bits, and vertices are not taken (MGA-Glide's
++                     * WARPTRI starts=N reload, 2026-10-27). */
++                    pclog("MGA-Glide: WARP started after %d microcode loads without a soft reset: dead, as on a G400\n",
++                          mystique->warp.loads);
++                    mystique->warp.pipe = -1;
++                    mystique->warp.running = 0;
++                    return;
++                }
 +            } else {
 +                for (i = 0; i < 2048; i++)
 +                    code[i] = mem_readb_phys(a + (uint32_t) i);
@@ -2072,6 +2096,8 @@
 +{
 +    if ((a >= 0x2000 && a < 0x2080) || (a >= 0x2100 && a < 0x2180)) {     /* WIMEMDATA, WIMEMDATA1 */
 +        const int k = mystique->warp.imem_addr & 0xff;
++        if (a < 0x2100 && k == 0 && !mystique->warp.imem_half)
++            mystique->warp.loads++;     /* (WARP0's first word: a load) */
 +        memcpy(&mystique->warp.imem[a >= 0x2100][k * 8 + mystique->warp.imem_half * 4], &val, 4);
 +        if (mystique->warp.imem_half)
 +            mystique->warp.imem_addr = (k + 1) & 0xff;
@@ -2121,7 +2147,7 @@
              mystique->blitter_submit_refcount++;
          mystique_queue(mystique, addr & 0x3fff, val, FIFO_WRITE_CTRL_LONG);
          return;
-@@ -3109,7 +3284,7 @@
+@@ -3109,7 +3303,7 @@
              else
                  reg_addr += 0x1c00;
  
@@ -2130,7 +2156,7 @@
                  mystique->blitter_submit_refcount++;
  
              mystique_queue(mystique, reg_addr, val, FIFO_WRITE_CTRL_LONG);
-@@ -3182,7 +3357,7 @@
+@@ -3182,7 +3376,7 @@
                  else
                      reg_addr += 0x1c00;
  
@@ -2139,7 +2165,7 @@
                      mystique->blitter_submit_dma_refcount++;
                  mystique_accel_ctrl_write_l(reg_addr, val, mystique);
  
-@@ -3196,6 +3371,11 @@
+@@ -3196,6 +3390,11 @@
                  blit_iload_write(mystique, val, 32);
              break;
  
@@ -2151,7 +2177,7 @@
          default:
  #if 0
              pclog("ILOAD write DMAMOD %i\n", mystique->dwgreg.dmamod); */
-@@ -3365,7 +3545,7 @@
+@@ -3365,7 +3564,7 @@
                              else
                                  reg_addr += 0x1c00;
  
@@ -2160,7 +2186,7 @@
                                  mystique->blitter_submit_dma_refcount++;
  
                              //pclog("DMA value: 0x%08X to reg 0x%04X\n", val, reg_addr);
-@@ -3392,6 +3572,26 @@
+@@ -3392,6 +3591,26 @@
                          }
                          break;
  
@@ -2187,7 +2213,7 @@
                      default:
                          fatal("MGA_DMA_STATE_PRI: mode %i\n", mystique->dma.primaddress & DMA_MODE_MASK);
                  }
-@@ -3444,7 +3644,7 @@
+@@ -3444,7 +3663,7 @@
                          else
                              reg_addr += 0x1c00;
  
@@ -2196,7 +2222,7 @@
                              mystique->blitter_submit_dma_refcount++;
  
                          mystique_accel_ctrl_write_l(reg_addr, val, mystique);
-@@ -3504,6 +3704,29 @@
+@@ -3504,6 +3723,29 @@
                              }
                          }
                          break;
