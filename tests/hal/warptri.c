@@ -175,7 +175,7 @@ int main(int argc, char **argv)
     static const vtx z1[3] = { { 30, 260, 1000, 255, 255, 0 }, { 280, 270, 60000, 255, 255, 0 }, { 150, 460, 30000, 255, 255, 0 } };
     static const vtx z2[3] = { { 40, 450, 60000, 0, 255, 255 }, { 290, 300, 1000, 0, 255, 255 }, { 200, 470, 30000, 0, 255, 255 } };
     int pipe = 0, count = 4000, i, ok, pitch, cover, colour, drawn, starts = 0, reload = 0, keep = 0, dmabw = 0;
-    int agpinfo = 0, agp_rate = 0, agp_draw = 0;
+    int agpinfo = 0, agp_rate = 0, agp_draw = 0, agp_noflush = 0;
     mga_vbe_mode mode;
     mga_target tg;
     uint64_t t0, t1;
@@ -195,6 +195,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "agpinfo")) agpinfo = 1;
         else if (!strncmp(argv[i], "agp=", 4)) agp_rate = atoi(argv[i] + 4);
         else if (!strcmp(argv[i], "agpdraw")) agp_draw = 1;     /* with agp=N: the drawing tests, not dmabw */
+        else if (!strcmp(argv[i], "noflush")) agp_noflush = 1;  /* EXPERIMENT: does the bridge snoop AGP reads? */
     }
     hx_init(1, argv, "warptri");
     ok = mga_find(&mga) == 0 && mga_map(&mga) == 0;
@@ -261,7 +262,7 @@ int main(int argc, char **argv)
                (unsigned long)mga_pci_read32(mga.bus, mga.dev, mga.fn, 0xF8));
         agp_hcap = hcap;
         warp_agp_xfer = 1;
-        warp_pre_kick = flush_caches;           /* (the CPU's writes out of its caches before each fetch) */
+        warp_pre_kick = agp_noflush ? NULL : flush_caches;   /* (the CPU's writes out of its caches before each fetch) */
         dmabw = !agp_draw;
     }
     if (dmabw) {
