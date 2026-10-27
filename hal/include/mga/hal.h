@@ -125,6 +125,9 @@ void     engine_init(int pitch_px, int bpp);
 void     engine_resync(void);
 int      engine_sync(uint32_t timeout_us);     /* 0 ok, -1 timeout (engine reset) */
 int      engine_idle(void);                    /* 1 when the FIFO is empty and the engine idle (no wait) */
+/* A soft reset of the drawing engine (and the WARPs): every drawing
+ * register goes back to its reset value. The HAL writes back what it owns
+ * (the target, the clip and the MACCESS flags); callers write the rest. */
 void     engine_reset(void);
 /* What OPMODE holds, for the modules that write it (engine.c's ILOAD,
  * warp.c's vertices); MGA_OPMODE_UNKNOWN after a reset or a change of hands. */

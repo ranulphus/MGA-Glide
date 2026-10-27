@@ -140,12 +140,16 @@ void engine_resync(void)
 
 void engine_reset(void)
 {
+    mga_engine_state s;
     engine_resets++;
+    engine_save(&s);
     MGA_WR32(MGAREG_RST, 1);
     sys_delay_us(20);
     MGA_WR32(MGAREG_RST, 0);
     fifo_reset();
     engine_init(cur.pitch_px ? cur.pitch_px : 1024, cur.bpp ? cur.bpp : 16);
+    if (s.t.pitch_px && s.t.bpp)
+        engine_restore(&s);             /* (engine_init leaves the target at offset 0) */
 }
 
 static void write_origin(uint32_t color_off, int bpp, uint32_t z_off, int zbits)

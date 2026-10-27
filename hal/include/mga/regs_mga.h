@@ -189,7 +189,8 @@
 #define MGAREG_WIADDR2      0x1DD8      /* G400: both WARPs */
 #define MGAREG_WFLAG1       0x1DE0      /* G400: WARP1's flags */
 #define MGAREG_WIADDRNB2    0x1E00      /* WIADDR2 bypassing the FIFO */
-#define MGAREG_WIADDRNB     0x1E60
+#define MGAREG_WIADDRNB1    0x1E04      /* WARP1's instruction address (read only) */
+#define MGAREG_WIADDRNB     0x1E60      /* WARP0's instruction address (read back) */
 #define MGAREG_WIMEMADDR    0x1E68      /* instruction memory word (0-255) for WIMEMDATA */
 #define MGAREG_WCODEADDR    0x1E6C
 #define MGAREG_WMISC        0x1E70

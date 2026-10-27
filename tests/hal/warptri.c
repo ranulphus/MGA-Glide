@@ -1,10 +1,17 @@
 /* warptri.c - WARPTRI: the G400's WARP setup engine through the HAL's
  * warp.c (speed plan W0; docs/g400-warp.md).
  *
- *   WARPTRI [pipe=N] [n=COUNT] [pio]
+ *   WARPTRI [pipe=N] [n=COUNT] [pio] [pads=K] [keep]
+ *   WARPTRI starts=N [reload] [pads=K] [keep] [pio]
  *
  * The vertices go by bus-master DMA (warp.c's default) or, with pio,
- * through the DMA window by the CPU.
+ * through the DMA window by the CPU. pads sets warp_start_pads; keep leaves
+ * the engine as it is at exit (as DOS-GL does: the WARP suspended), where
+ * WARPTRI otherwise resets it.
+ *
+ * starts=N instead starts the WARP N times, a small triangle and a stop
+ * each time, and logs each start (warp_diag); reload alternates pipes 0 and
+ * 7, so every start loads the microcode again.
  *
  * a) the pipe (default 0, TGZ) loaded and started (warp_select), and WARP0's
  *    instruction memory read back against the microcode;
@@ -150,7 +157,7 @@ int main(int argc, char **argv)
     static const vtx g[3] = { { 40, 30, 0, 255, 0, 0 }, { 290, 60, 0, 0, 255, 0 }, { 120, 200, 0, 0, 0, 255 } };
     static const vtx z1[3] = { { 30, 260, 1000, 255, 255, 0 }, { 280, 270, 60000, 255, 255, 0 }, { 150, 460, 30000, 255, 255, 0 } };
     static const vtx z2[3] = { { 40, 450, 60000, 0, 255, 255 }, { 290, 300, 1000, 0, 255, 255 }, { 200, 470, 30000, 0, 255, 255 } };
-    int pipe = 0, count = 4000, i, ok, pitch, cover, colour, drawn;
+    int pipe = 0, count = 4000, i, ok, pitch, cover, colour, drawn, starts = 0, reload = 0, keep = 0;
     mga_vbe_mode mode;
     mga_target tg;
     uint64_t t0, t1;
@@ -161,6 +168,11 @@ int main(int argc, char **argv)
         if (!strncmp(argv[i], "pipe=", 5)) pipe = atoi(argv[i] + 5);
         else if (!strncmp(argv[i], "n=", 2)) count = atoi(argv[i] + 2);
         else if (!strcmp(argv[i], "pio")) warp_use_dma = 0;
+        else if (!strncmp(argv[i], "pads=", 5)) warp_start_pads = atoi(argv[i] + 5);
+        else if (!strncmp(argv[i], "starts=", 7)) starts = atoi(argv[i] + 7);
+        else if (!strcmp(argv[i], "reload")) reload = 1;
+        else if (!strcmp(argv[i], "keep")) keep = 1;
+        else if (!strcmp(argv[i], "noreset")) warp_reset_before_load = 0;
     }
     hx_init(1, argv, "warptri");
     ok = mga_find(&mga) == 0 && mga_map(&mga) == 0;
@@ -183,6 +195,39 @@ int main(int argc, char **argv)
     opmode_saved = MGA_RD32(MGAREG_OPMODE);
     hx_log("HX-STAT warptri pipe=%d status=%08lx opmode=%08lx", pipe, (unsigned long)MGA_RD32(MGAREG_STATUS),
            (unsigned long)opmode_saved);
+
+    if (starts > 0) {
+        static const vtx s1[3] = { { 20, 20, 0, 255, 255, 255 }, { 60, 22, 0, 255, 255, 255 }, { 30, 50, 0, 255, 255, 255 } };
+        int k, x, y, fails = 0, vfails = 0, blank = 0;
+        for (k = 0; k < starts; k++) {
+            int p = reload ? ((k & 1) ? 7 : 0) : pipe, r, n = 0;
+            engine_fill(0, 0, 80, 60, 0);
+            engine_sync(200000);
+            r = warp_select(p);
+            if (!r) {
+                aborted = 0;
+                context(dw_i);
+                warp_tri(s1);
+                vfails += aborted;
+                warp_stop();
+                engine_sync(200000);
+                for (y = 0; y < 60; y++)
+                    for (x = 0; x < 80; x++)
+                        n += px(x, y) != 0;
+                blank += n < 100;
+            } else
+                fails++;
+            hx_log("HX-STAT warptri start %d pipe=%d %s px=%d entry=%08lx before=%08lx after=%08lx ia0=%08lx ia1=%08lx",
+                   k, p, r ? "FAILED" : "ok", n, (unsigned long)warp_diag[0], (unsigned long)warp_diag[1],
+                   (unsigned long)warp_diag[2], (unsigned long)warp_diag[3], (unsigned long)warp_diag[4]);
+        }
+        hx_test("starts", fails == 0 && vfails == 0 && blank == 0,
+                "%d of %d starts failed, %d vertex sends, %d drew nothing (pads %d, %s, %s, %s)", fails, starts, vfails,
+                blank, warp_start_pads, reload ? "reloading" : "one pipe", warp_use_dma ? "dma" : "pio",
+                warp_reset_before_load ? "reset before loads" : "no reset");
+        aborted = 1;
+        goto out;
+    }
 
     /* a) the pipe */
     ok = warp_select(pipe) == 0;
@@ -285,7 +330,8 @@ int main(int argc, char **argv)
 out:
     warp_stop();
     MGA_WR32(MGAREG_OPMODE, opmode_saved);
-    engine_reset();                             /* the next program finds the engine and the WARPs reset */
+    if (!keep)
+        engine_reset();                         /* the next program finds the engine and the WARPs reset */
     hx_log("HX-STAT warptri warp tris=%lu failures=%lu dma_kicks=%lu engine resets=%lu timeouts=%lu",
            (unsigned long)warp_tris, (unsigned long)warp_failures, (unsigned long)warp_dma_kicks,
            (unsigned long)engine_resets, (unsigned long)engine_timeouts);

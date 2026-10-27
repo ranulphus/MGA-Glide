@@ -16,6 +16,9 @@
 
 uint32_t warp_tris, warp_failures, warp_dma_kicks;
 int warp_use_dma = 1;
+int warp_start_pads = 3;
+int warp_reset_before_load = 1;
+uint32_t warp_diag[5];
 
 /* Bus-master DMA (the primary channel in vertex mode: PRIMADDRESS's low
  * bits select it; G400 specification 4.1.9): two buffers in conventional
@@ -205,10 +208,19 @@ int warp_select(int pipe)
     sel_pipe = pipe;
     if (running && pipe == cur_pipe)
         return 0;
+    warp_diag[0] = MGA_RD32(MGAREG_STATUS);
     dma_mode(0);
     suspend();
     engine_sync(200000);
     if (pipe != cur_pipe) {
+        /* On a real G400 the third load of the instruction memories after a
+         * soft reset leaves the WARPs dead (the start reads no busy bits), at
+         * every pipe: so a soft reset before each load (docs/g400-warp.md).
+         * It clears the drawing registers: callers see engine_resets move. */
+        if (warp_reset_before_load) {
+            engine_reset();
+            dma_mode(0);
+        }
         MGA_WR32(MGAREG_WMISC, 0);                  /* no microcode caching: the instruction memories */
         words = (len + 7) / 8;
         MGA_WR32(MGAREG_WIMEMADDR, 0);
@@ -236,12 +248,21 @@ int warp_select(int pipe)
     MGA_WR32(MGAREG_WR(49), 0);
     MGA_WR32(MGAREG_WR(57), 0);
     MGA_WR32(MGAREG_WR(53), 0);
-    fifo_reserve(2);
+    fifo_reserve(1);
     MGA_WR32(MGAREG_WR(61), 0);
+    for (i = 0; i < warp_start_pads; i++) {
+        fifo_reserve(1);
+        MGA_WR32(MGAREG_DMAPAD, 0xFFFFFFFFu);
+    }
+    warp_diag[1] = MGA_RD32(MGAREG_STATUS);
+    fifo_reserve(1);
     MGA_WR32(MGAREG_WIADDR2, 0 | WMODE_START);
     engine_sync(200000);
     for (spin = 0; spin < 200000L && !((st = MGA_RD32(MGAREG_STATUS)) & (STATUS_WBUSY | STATUS_WBUSY1)); spin++)
         ;
+    warp_diag[2] = st;
+    warp_diag[3] = MGA_RD32(MGAREG_WIADDRNB);
+    warp_diag[4] = MGA_RD32(MGAREG_WIADDRNB1);
     if (!(st & (STATUS_WBUSY | STATUS_WBUSY1))) {
         fail();
         return -1;

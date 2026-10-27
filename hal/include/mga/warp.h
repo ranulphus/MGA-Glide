@@ -52,5 +52,14 @@ extern uint32_t warp_tris, warp_failures, warp_dma_kicks;
  * the port can provide it (primary DMA in vertex mode); 0: through the DMA
  * window by the CPU. Read at the first warp_select. */
 extern int warp_use_dma;
+/* DMAPAD writes just before the start (Linux's mga DRM writes three: "Padding
+ * required due to hardware bug"). */
+extern int warp_start_pads;
+/* 1 (the default): a soft reset (engine_reset) before each load of the
+ * instruction memories; 0 only for experiments. */
+extern int warp_reset_before_load;
+/* The last start: STATUS at warp_select, before the start and after it,
+ * then WARP0's and WARP1's instruction addresses (WIADDRNB, WIADDRNB1). */
+extern uint32_t warp_diag[5];
 
 #endif
