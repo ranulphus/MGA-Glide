@@ -70,6 +70,9 @@ through `tools/bench/run.py`, next to the same PROBE under `--card g400`:
 | DAC, CRTC after the mode set | as 86Box | | identical lines |
 | 16-bit palette lookup | each component's own value (red and blue entries 0-31, green 0-63), the BIOS's layout | patch 0003 indexed by the top bits | **0003 was wrong:** DOS-GL's and Glide's ramps, written for it, came out at an eighth of the brightness on this card. 0003 is dropped and `dac_set_ramp` writes the BIOS's layout |
 | Engine | sync, fill and depth fill pass | the same | |
+| TEXWIDTH/TEXHEIGHT `rfw` | used: `8 - log2(size)` gives the right texels with the setup's prescaled s and q; the specification's `8 - log2 - k` displaced prescaled triangles in perspective (DOS-GL E9, 2026-10-27) | ignored | the HAL now writes `8 - log2(size)`; 86Box can't show a wrong `rfw` |
+| Clip after WARP triangles | a new CXBNDRY/YTOP/YBOT reaches triangles the WARPs are still setting up (the second of a pair was cut) | in order | the HAL puts the DRM's barrier (two zero-length draws) first; see `docs/g400-warp.md` |
+| WARP microcode loads | the third load since a soft reset leaves the WARPs dead | modelled by 0122 | the HAL resets before each load |
 
 DOS-GL's conformance suite passes 23 of 27 here, against 27 of 27 in 86Box. The four differences are the texture
 cache and texel-centre filtering (`docs/g400-dual-texture.md` §7, answers 7 and 8). They are modelling work for

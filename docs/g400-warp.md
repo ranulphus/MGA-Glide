@@ -86,6 +86,13 @@ register write (`mga_dma_flush`, from `fifo_reserve`, `engine_sync` and `engine_
   - **Why it matters:** the two pipes DOS-GL uses (TGZSAF and T2GZSAF, 1,000 and 1,256 bytes) don't fit in the 2 KB
     instruction memories together, so switching between one and two textures is always a load.
   - **The DRM** never meets this: it runs the pipes from memory with microcode caching (WMISC.wucodecache = 1).
+- **The clip (2026-10-27).** When DOS-GL's E9 changed the scissor between quads, the second triangle of each quad
+  (the second WARP's) was cut by the next clip: host writes to CXBNDRY, YTOP and YBOT don't wait for the
+  triangles the WARPs are still setting up. Linux's mga DRM writes DWGCTL and LEN|EXEC = 80000000h (a
+  zero-length draw) twice before every clip on a G400 (`mga_emit_clip_rect`). The HAL's `emit_clip` does the same
+  while WARP triangles are pending (`mga_warp_pending`, set by `warp_vertices`, cleared by `engine_sync`). Every
+  flat case then matches 86Box; texture, blend and depth registers needed no barrier (the Arena's batches drew
+  right without one).
 - **STATUS<22:20>** (warpbfpath, wfipath, wfopath) point at WARP1 after an odd number of triangles, and keep that
   across suspend and start.
 - **Open:**
