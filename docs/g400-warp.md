@@ -148,11 +148,14 @@ and then sends a triangle the WARP sets up whole at one level for the cost of it
 - **The map coordinates** are scaled and moved by whole periods as `draw_band` does, then converted by `wvtx_uv`
   (which `warp_tri` uses too) and written with the cached part straight into the DMA stream.
 
-Bands of levels or of fog, subdivided combines, specular, keyed textures, the hardware mip window and chips without
-the WARP go the general way, as does a triangle whose bands would take different levels (`MGL-STAT fastbands=`). The
-frames are the same with and without it (`fast=0`): GTA, Screamer Rally and DOSBench's Glide scenes in 86Box. On
-bench-g400 (DOSBench Glide, fps, general path / fast path): Arena 5.6 / 8.9, Race 11.4 / 15.7, Space 7.4 / 12.2,
-City 6.4 / 8.4.
+- **Bands of levels:** a triangle whose bands take different levels is drawn as `draw_band` draws it, the whole
+  triangle at each run of one level under the clip narrowed to its rows (`MGL-STAT fastbands=`). The bias and scale
+  terms of the level (`lod_offset`) are worked out once a generation.
+
+Bands of fog fits, subdivided combines, specular, keyed textures, the hardware mip window and chips without the WARP
+go the general way. The frames are the same with and without it (`fast=0`): GTA, Screamer Rally and DOSBench's Glide
+scenes in 86Box. On bench-g400 (DOSBench Glide, fps, general path / fast path): Arena 5.6 / 9.2, Race 11.4 / 19.6,
+Space 7.4 / 12.9, City 6.4 / 9.6.
 
 Watcom does 64-bit arithmetic by calls: the W code for table fog (`mg_wcode_from_oow`), the level's
 `log2x2_floor` and the cull's area work in 32 bits where the values allow, with the same results (checked against the

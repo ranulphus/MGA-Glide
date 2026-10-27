@@ -74,7 +74,7 @@ the display mode and how the picture is shown (`display=`, `fit=`).
 | Option | Effect |
 |---|---|
 | `log` | Log level 0 (errors) to 4 (trace); lines go to COM1 |
-| `stats=N` | `MGL-STAT` line every N frames (`fast`, `fastbands`: triangles by the fast path, and those it left to the general path for their bands of levels; `vfallback`, `splits`: totals of Voodoo edges too flat for the chip's AR fields, drawn with the centre rule, and of triangles over 8191 pixels, drawn as four; `docs/loop-c-results.md`); with the profiling runtime (`make runtime-prof`, `build/ow-prof/GLIDE2X.OVL`) also `MGL-PROF`, the cycles of each stage (`docs/setup-perf.md`) |
+| `stats=N` | `MGL-STAT` line every N frames (`fast`, `fastbands`: triangles by the fast path, and of them those drawn in bands of levels; `vfallback`, `splits`: totals of Voodoo edges too flat for the chip's AR fields, drawn with the centre rule, and of triangles over 8191 pixels, drawn as four; `docs/loop-c-results.md`); with the profiling runtime (`make runtime-prof`, `build/ow-prof/GLIDE2X.OVL`) also `MGL-PROF`, the cycles of each stage (`docs/setup-perf.md`) |
 | `census=1` | Log each distinct draw state once (`MGL-CENSUS`) |
 | `exit_after=N` | End the run after N frames (the harness uses it) |
 | `snap=a,b,...` | Mark frames for the harness to capture (`MGL-SNAP`) |
