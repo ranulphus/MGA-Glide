@@ -14,8 +14,6 @@ uint32_t prof_wr, prof_fifo_rd;
 #endif
 
 int mga_fifo_free;                      /* slots known free (fifo_need's fast path) */
-int mga_dma_pending;                    /* vertices buffered or in flight by DMA (warp.c) */
-void (*mga_dma_flush)(void);            /* sends and waits for them: register writes come after */
 
 void fifo_reset(void) { mga_fifo_free = 0; }
 

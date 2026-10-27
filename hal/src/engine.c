@@ -16,6 +16,8 @@ const mga_target *engine_target = &cur;
 static uint32_t cur_maccess;
 static int cur_ydstorg_px;
 static int clip_x0, clip_y0, clip_x1 = 0x7FFF, clip_y1 = 0x7FFF;
+int mga_dma_pending;                    /* vertices buffered or in flight by DMA (warp.c; hal.h) */
+void (*mga_dma_flush)(void);            /* sends and waits for them: register writes come after */
 uint32_t mga_opmode = MGA_OPMODE_UNKNOWN;   /* what OPMODE holds (ILOAD here, vertices in warp.c) */
 static int pitch_reg = -1;         /* the value in PITCH: targets may differ in pitch */
 
