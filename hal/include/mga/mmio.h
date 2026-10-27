@@ -40,7 +40,7 @@ uint8_t  mga_host_rd8(uint32_t off);
  * 1; for any other it sends the list, waits until the chip has fetched it
  * and returns 0, and the write follows directly, never overtaking them.
  * MGA_WR32_DIRECT always writes at once. */
-extern int mga_cmd_open;
+extern int mga_cmd_open, mga_cmd_paused;
 extern int (*mga_cmd_route)(uint32_t off, uint32_t v);     /* (set by warp.c with the stream) */
 #  define MGA_CMD_REG(off) ((((off) & 0x3E00u) == 0x1C00u) || (((off) & 0x3E00u) == 0x2C00u))
 #  define MGA_WR32(off, v) do { MGA_TRACE((off), (v)); PROF_WR(); \

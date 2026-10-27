@@ -252,6 +252,7 @@ static void stream_close(void)
     if (mga_cmd_open && mga_dma_pending)
         dma_flush();
     mga_cmd_open = 0;
+    mga_cmd_paused = 0;
     fifo_reset();
 }
 
@@ -294,6 +295,7 @@ static void fail(void)
 void warp_abort(void)
 {
     mga_cmd_open = 0;
+    mga_cmd_paused = 0;
     mga_dma_pending = 0;
     inflight = 0;
     lused = vused = 0;

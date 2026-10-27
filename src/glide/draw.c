@@ -546,8 +546,12 @@ static void draw_textured(const GrVertex *a, const GrVertex *b, const GrVertex *
             run_lod = l;
         }
     }
-    if (!F.on)
-        draw_band(sa, sb, sc, ctx, plan, o, run_lod, run_start, r1, NULL);
+    if (!F.on) {
+        if (run_start == r0)            /* one level for the whole triangle: its rows need no clip */
+            draw_band(sa, sb, sc, ctx, plan, o, run_lod, 0, mg.rh, NULL);
+        else
+            draw_band(sa, sb, sc, ctx, plan, o, run_lod, run_start, r1, NULL);
+    }
 }
 
 static int atest_pass(int func, int a, int ref)
