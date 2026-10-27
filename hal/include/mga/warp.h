@@ -42,6 +42,12 @@ void warp_tex(int map, int log2w, int log2h, uint32_t texctl2);
  * mode. 0, or -1 when the chip stopped taking them (the rest is not sent;
  * the WARP is suspended and the engine reset). */
 int  warp_vertices(const mga_wvtx *v, int n);
+/* The same without a copy: room for n vertices (whole triangles) in the DMA
+ * stream, where the caller writes each one's dwords (*dwords of them: 8, or
+ * 10 for the T2 pipes, in mga_wvtx's order) and then calls warp_commit(n).
+ * NULL when there is no stream (warp_vertices then). */
+uint32_t *warp_reserve(int n, int *dwords);
+void warp_commit(int n);
 /* The DMA window back in general-purpose mode, the WARP suspended (before
  * the engine is used without it, or by another program). */
 void warp_stop(void);

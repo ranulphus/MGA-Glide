@@ -463,6 +463,34 @@ void warp_tex(int map, int log2w, int log2h, uint32_t texctl2)
     setup_stale = 1;                    /* (setup_triangle's TEXWIDTH/TEXHEIGHT shadows) */
 }
 
+uint32_t *warp_reserve(int n, int *dwords)
+{
+    int dw;
+    check_lost();
+    if (!running || !mga_cmd_open)
+        return NULL;
+    dw = (cur_pipe & WARP_T2) ? 10 : 8;
+    if (setup_wrote_texsize)
+        wtex_again();
+    if (vused + (uint32_t)(n * dw) * 4u > VERT_BYTES || lused + 12u > LIST_BYTES / 4u)
+        dma_kick();                     /* (the triangles stay whole within a run) */
+    if (!running || !mga_cmd_open)
+        return NULL;                    /* (a failed kick) */
+    if (vrun == NO_RUN)
+        vrun = vused;
+    *dwords = dw;
+    return dbuf[dcur].p + (LIST_BYTES + vused) / 4u;
+}
+
+void warp_commit(int n)
+{
+    vused += (uint32_t)(n * ((cur_pipe & WARP_T2) ? 10 : 8)) * 4u;
+    setup_stale = 1;
+    mga_dma_pending = 1;
+    mga_warp_pending = 1;
+    warp_tris += (uint32_t)(n / 3);
+}
+
 int warp_vertices(const mga_wvtx *v, int n)
 {
     int i, k, dw;
