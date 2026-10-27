@@ -16,7 +16,18 @@
 uint32_t warp_tris, warp_failures;
 
 static int cur_pipe = -1;           /* in the instruction memories */
+static int sel_pipe = -1;           /* the one warp_select asked for */
 static int running;                 /* started, not suspended */
+
+/* engine_init and engine_resync (a reset, or GLOS's GPU lock changing
+ * hands) leave OPMODE unknown: then nothing is known of the WARPs either. */
+static void check_lost(void)
+{
+    if (mga_opmode == MGA_OPMODE_UNKNOWN) {
+        running = 0;
+        cur_pipe = -1;
+    }
+}
 static uint32_t dmawin_pos;
 
 int warp_available(void)
@@ -104,6 +115,8 @@ int warp_select(int pipe)
     uint32_t st = 0;
     if (!warp_available() || pipe_code(pipe, &code, &len) != 0)
         return -1;
+    check_lost();
+    sel_pipe = pipe;
     if (running && pipe == cur_pipe)
         return 0;
     dma_mode(0);
@@ -189,10 +202,11 @@ void warp_tex(int map, int log2w, int log2h, uint32_t texctl2)
 
 int warp_vertices(const mga_wvtx *v, int n)
 {
-    const int t2 = (cur_pipe & WARP_T2) != 0, dw = t2 ? 10 : 8;
-    int i, k;
-    if (!running)
+    int i, k, dw;
+    check_lost();
+    if (!running && (sel_pipe < 0 || warp_select(sel_pipe) != 0))
         return -1;
+    dw = (cur_pipe & WARP_T2) ? 10 : 8;
     dma_mode(1);
     for (i = 0; i < n; i++) {
         union { float f; uint32_t u; } c;
