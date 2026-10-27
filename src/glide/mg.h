@@ -124,7 +124,7 @@ uint32_t mg_depth_clear_value(FxU16 depth);
 void mg_note_approx(void);
 void mg_census(void);
 /* frame.c */
-typedef struct { uint32_t tris; uint32_t tri_processed, tri_drawn; } mg_stats_t;
+typedef struct { uint32_t tris; uint32_t tri_processed, tri_drawn; uint32_t bands, banded; } mg_stats_t;
 extern mg_stats_t mg_stats;
 void mg_frame_end(void);
 

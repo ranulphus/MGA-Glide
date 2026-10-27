@@ -63,9 +63,9 @@ void mg_frame_end(void)
         if ((int)mg.frame == mg_config.snap[i])
             mg_line("MGL-SNAP %u", mg.frame);
     if (mg_config.stats_every && mg.frame % (unsigned)mg_config.stats_every == 0) {
-        mg_line("MGL-STAT frame=%u tris=%u vfallback=%u splits=%u", mg.frame, mg_stats.tris,
-                setup_stats.vfallback, setup_stats.splits);     /* totals: edges too flat, triangles too big */
-        mg_stats.tris = 0;
+        mg_line("MGL-STAT frame=%u tris=%u bands=%u banded=%u vfallback=%u splits=%u", mg.frame, mg_stats.tris,
+                mg_stats.bands, mg_stats.banded, setup_stats.vfallback, setup_stats.splits);
+        mg_stats.tris = mg_stats.bands = mg_stats.banded = 0;   /* (vfallback, splits: totals: edges too flat, triangles too big) */
 #ifdef MGA_PROF
         prof_line();
 #endif

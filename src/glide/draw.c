@@ -511,6 +511,9 @@ static void draw_band(const mga_svtx *a0, const mga_svtx *b0, const mga_svtx *c0
     tex_level_hw hw;
     double sig_s, sig_t;
     int po;
+    mg_stats.bands++;
+    if (row0 > 0 || row1 < mg.rh)
+        mg_stats.banded++;
     if (F && F->on)
         fog_band(F, row0, row1, &sa, &sb, &sc);
     po = PROF_SWITCH(PROF_G_TEXBIND);
