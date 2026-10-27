@@ -270,6 +270,11 @@ extern void (*mga_dma_flush)(void);
  * engine_sync clears it). On a G400 the clip registers do not wait for
  * them: emit_clip puts the DRM's barrier in front of a new clip. */
 extern int mga_warp_pending;
+/* Called by engine_reset after the soft reset (warp.c's DMA stream). */
+extern void (*mga_reset_hook)(void);
+/* DWGSYNC's tags: a new one, and the last given (one sequence). */
+uint32_t mga_dwgsync_next(void);
+uint32_t mga_dwgsync_last(void);
 MGA_INLINE void fifo_need(int n)
 {
     if (mga_fifo_free >= n)

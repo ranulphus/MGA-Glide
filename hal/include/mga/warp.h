@@ -56,7 +56,9 @@ uint32_t warp_dma_bandwidth(uint32_t bytes, uint64_t (*tsc)(void), uint64_t *tic
  * (*done). The number of triangles sent, or -1. */
 int warp_dma_vertex_bandwidth(const mga_wvtx *t, int ntris, uint64_t (*tsc)(void), uint64_t *fetch, uint64_t *done,
                               void (*flush)(void));
-/* EXPERIMENT: the DMA stream's fetches by AGP cycles (PRIMEND/SECEND bit 1). */
+/* The DMA stream's fetches by AGP cycles (PRIMEND/SECEND bit 1): set when
+ * the rings are write-combining and AGP is on. warp_pre_kick, EXPERIMENT
+ * (WARPTRI): called before each kick. */
 extern int warp_agp_xfer;
 extern void (*warp_pre_kick)(void);
 /* The DMA window back in general-purpose mode, the WARP suspended (before
@@ -72,6 +74,15 @@ extern uint32_t warp_tris, warp_failures, warp_dma_kicks;
  * the port can provide it (primary DMA in vertex mode); 0: through the DMA
  * window by the CPU. Read at the first warp_select. */
 extern int warp_use_dma;
+/* 1 (default): write-combining rings fetched by AGP cycles when GLOS gives
+ * them (GLOS_FN_CACHE, docs/g400-warp.md); 0: cached rings, PCI cycles. */
+extern int warp_use_agp;
+extern uint32_t warp_ring_bytes;        /* the rings' size at most (256 KB) */
+extern uint32_t warp_kick_bytes;        /* vertex bytes between kicks (6 KB) */
+/* What dma_setup got: 0 no rings, 1 cached (PCI), 2 write-combining (PCI),
+ * 3 write-combining by AGP; and their size. */
+extern int warp_ring_mode;
+extern uint32_t warp_ring_kb;
 /* DMAPAD writes just before the start (Linux's mga DRM writes three: "Padding
  * required due to hardware bug"). */
 extern int warp_start_pads;

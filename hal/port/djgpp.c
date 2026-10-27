@@ -196,3 +196,28 @@ void sys_unhook_exit(void)
 }
 
 void sys_terminate(int code) { exit(code); }
+
+/* GLOS_FN_CACHE (sys.h): through the entry DPMI 0A00h "GLOS" gives. */
+int sys_cache_wc(uint32_t lin, uint32_t bytes)
+{
+    static struct { unsigned long off; unsigned short sel; } __attribute__((packed)) entry;
+    static int found;                   /* 1 GLOS, -1 none */
+    __dpmi_paddr p;
+    unsigned a = 33, b = lin, c = bytes, d = 1;     /* GLOS_FN_CACHE, GLOS_CACHE_WC */
+    unsigned char failed;
+    if (!found) {
+        found = -1;
+        if (__dpmi_get_vendor_specific_api_entry_point("GLOS", &p) == 0) {
+            entry.off = p.offset32;
+            entry.sel = p.selector;
+            found = 1;
+        }
+    }
+    if (found < 0)
+        return -1;
+    __asm__ __volatile__("lcall *%[e]\n\tsetc %[f]"
+                         : "+a"(a), "+b"(b), "+c"(c), "+d"(d), [f] "=m"(failed)
+                         : [e] "m"(entry)
+                         : "esi", "edi", "cc", "memory");
+    return failed ? -1 : 0;
+}

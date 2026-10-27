@@ -38,6 +38,12 @@ int sys_rm_int(uint8_t intno, sys_rmregs *r);
 void *sys_dos_alloc(uint32_t bytes, uint16_t *rm_segment);
 void  sys_dos_free(void *p);
 
+/* GLOS (API 1.4, GLOS_FN_CACHE): conventional memory the program has from
+ * DOS made write-combining, `lin` its linear address (the segment times
+ * 16), whole 64 KB units below 80000h. 0, or -1 without GLOS or when it
+ * can't. */
+int sys_cache_wc(uint32_t lin, uint32_t bytes);
+
 /* Pointer to real-mode memory seg:off (first megabyte). */
 void *sys_real_ptr(uint16_t seg, uint16_t off);
 

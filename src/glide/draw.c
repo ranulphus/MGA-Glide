@@ -135,8 +135,10 @@ static int warp_tw = -1, warp_th = -1;  /* the map size the WARP's registers hol
  * registers (the engine keeps the target, clip and MACCESS flags). */
 static void warp_prepare(void)
 {
-    if (warp_ok < 0)
+    if (warp_ok < 0) {
         warp_ok = mg_config.warp && warp_available();
+        warp_use_agp = mg_config.agp;
+    }
     if (warp_ok && warp_select(WARP_S | WARP_A | WARP_F) != 0) {
         warp_ok = 0;
         mg_log(MG_LOG_WARN, "the WARP did not start: triangles are set up by the CPU");

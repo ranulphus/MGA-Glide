@@ -19,6 +19,8 @@ draw what a Voodoo Graphics board would.
 | `bpp` | `16` (default), `32` | Render in 32-bit colour (no dithering); falls back to 16 when no 32-bit mode fits |
 | `hwmip` | `0`, `1` | G200 and later: let the chip pick the mip level per pixel (it rounds where the Voodoo floors, so textures are a little softer; no 8-row bands) |
 | `trilinear` | `0`, `1` | G200 and later: blend between mip levels (implies `hwmip`) |
+| `warp` | `1` (default), `0` | G400 and G450: the chip's WARP engine sets triangles up from vertices sent by DMA; `0` keeps the CPU's setup, with the Voodoo's exact edge rule (docs/g400-warp.md) |
+| `agp` | `1` (default), `0` | With `warp`, under GLOS: the DMA rings write-combining and fetched by AGP cycles, about three times PCI's bandwidth; `0` keeps PCI |
 | `bilinear` | `0`, `1` | Filter every texture bilinearly |
 | `z32` | `-1` auto (default), `0`, `1` | 32-bit depth buffer. Auto uses it when VRAM allows (it makes W-buffering more precise than the Voodoo's) |
 | `zoom` | `0` (default), `1` | Show 320x240, 400x300, 512x384 and 640x512 (the latter through `res=640x512`) in the BIOS mode twice the size with the chip's line and pixel doubling: the same monitor signal, no scaling cost. Off until the bench confirms it on each card |

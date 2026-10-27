@@ -115,3 +115,4 @@ void sys_unhook_faults(void) { }
 int  sys_hook_exit(sys_exit_fn fn) { (void)fn; return -1; }
 void sys_terminate(int code) { exit(code); }
 void sys_unhook_exit(void) { }
+int sys_cache_wc(uint32_t lin, uint32_t bytes) { (void)lin; (void)bytes; return -1; }

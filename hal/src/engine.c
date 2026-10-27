@@ -20,6 +20,7 @@ static int clip_x0, clip_y0, clip_x1 = 0x7FFF, clip_y1 = 0x7FFF;
 int mga_dma_pending;                    /* vertices buffered or in flight by DMA (warp.c; hal.h) */
 int mga_warp_pending;                   /* WARP triangles since the engine was last idle (hal.h) */
 void (*mga_dma_flush)(void);            /* sends and waits for them: register writes come after */
+void (*mga_reset_hook)(void);
 int mga_cmd_open;                       /* the DMA command stream is taking register writes (mmio.h) */
 int (*mga_cmd_route)(uint32_t off, uint32_t v);
 uint32_t mga_opmode = MGA_OPMODE_UNKNOWN;   /* what OPMODE holds (ILOAD here, vertices in warp.c) */
@@ -112,21 +113,31 @@ void engine_init(int pitch_px, int bpp)
 static uint32_t fence_tag;
 static int fence_out;
 
+/* The tags DWGSYNC is given, the fence's and the WARP's DMA kicks' (warp.c)
+ * alike: one sequence, so a later tag passes an earlier one. */
+uint32_t mga_dwgsync_next(void)
+{
+    fence_tag += 4u;
+    return fence_tag;
+}
+
+uint32_t mga_dwgsync_last(void)
+{
+    return fence_tag;
+}
+
 static void warp_fence(void)
 {
     if (!mga_warp_pending || !mga.has_dwgsync || fence_out)
         return;
-    fence_tag = (fence_tag + 4u) & ~3u;
-    if (!fence_tag)
-        fence_tag = 4u;
     fifo_reserve(1);
-    MGA_WR32(MGAREG_DWGSYNC, fence_tag);
+    MGA_WR32(MGAREG_DWGSYNC, mga_dwgsync_next());
     fence_out = 1;
 }
 
 static int fence_passed(void)
 {
-    return !fence_out || MGA_RD32(MGAREG_DWGSYNC) == fence_tag;
+    return !fence_out || (int32_t)(MGA_RD32(MGAREG_DWGSYNC) - fence_tag) >= 0;
 }
 
 int engine_sync(uint32_t timeout_us)
@@ -201,6 +212,8 @@ void engine_reset(void)
     fifo_reset();
     fence_out = 0;                      /* (nothing drawn is waited for any more) */
     mga_warp_pending = 0;
+    if (mga_reset_hook)
+        mga_reset_hook();
     engine_init(cur.pitch_px ? cur.pitch_px : 1024, cur.bpp ? cur.bpp : 16);
     if (s.t.pitch_px && s.t.bpp)
         engine_restore(&s);             /* (engine_init leaves the target at offset 0) */

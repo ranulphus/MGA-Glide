@@ -46,6 +46,7 @@ static void set_opt(const char *key, const char *val)
     else if (!strcmp(key, "scale_filter")) mg_config.scale_filter = !strcmp(val, "bilinear") || !strcmp(val, "1");
     else if (!strcmp(key, "zoom")) mg_config.zoom = to_int(val);
     else if (!strcmp(key, "warp")) mg_config.warp = to_int(val);
+    else if (!strcmp(key, "agp")) mg_config.agp = to_int(val);
     else if (!strcmp(key, "res")) {
         const char *xp = val;
         mg_config.res_w = to_int(val);
@@ -103,6 +104,7 @@ void mg_config_load(void)
     mg_config.bpp = 16;
     mg_config.scale = 1;
     mg_config.warp = 1;
+    mg_config.agp = 1;
     strcpy(mg_config.trace_path, "MGTRACE.BIN");
     strcpy(mg_config.retail_path, "GLIDE2X.3DF");
     mg_config.trace_to = 0x7FFFFFFF;

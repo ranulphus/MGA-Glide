@@ -363,3 +363,36 @@ void sys_unhook_exit(void)
     dpmi_set(0x0205, 0x21, old_21.sel, old_21.off);
     exit_on = 0;
 }
+
+/* GLOS_FN_CACHE (sys.h): through the entry DPMI 0A00h "GLOS" gives (DOS/4GW
+ * is then GLOS's DPMI client). */
+static struct { uint32_t off; uint16_t sel; } glos_entry;
+static int glos_found;                  /* 1 GLOS, -1 none */
+int glos_far(void *entry, uint32_t fn, uint32_t b, uint32_t c, uint32_t d);
+#pragma aux glos_far = \
+    "call fword ptr [esi]" \
+    "sbb eax, eax" \
+    parm [esi] [eax] [ebx] [ecx] [edx] value [eax] modify [ebx ecx edx esi edi];
+
+int sys_cache_wc(uint32_t lin, uint32_t bytes)
+{
+    static const char name[] = "GLOS";
+    union REGS r;
+    struct SREGS sr;
+    if (!glos_found) {
+        glos_found = -1;
+        memset(&r, 0, sizeof r);
+        segread(&sr);
+        r.w.ax = 0x0A00;
+        r.x.esi = (uint32_t)name;
+        int386x(0x31, &r, &r, &sr);
+        if (!r.x.cflag) {
+            glos_entry.off = r.x.edi;
+            glos_entry.sel = sr.es;
+            glos_found = 1;
+        }
+    }
+    if (glos_found < 0)
+        return -1;
+    return glos_far(&glos_entry, 33, lin, bytes, 1) ? -1 : 0;     /* GLOS_FN_CACHE, GLOS_CACHE_WC */
+}

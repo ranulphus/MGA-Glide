@@ -55,11 +55,18 @@ hangs the PC. `WARPTRI` checks wbusy after starting and waits for FIFO room with
   write first sends the list and waits until it has been fetched, then goes direct: OPMODE, the microcode memories,
   RST, ILOAD data through the DMA window, the CRTC. `MGA_WR32_DIRECT` always writes at once (the kick registers, the
   failure path). FIFO pacing is off while the list holds anything.
-- **Memory.** There are two batches in conventional memory (`sys_dos_alloc`; the physical address is the segment
-  times 16 under DOS and GLOS), each 8 KB of list and 24 KB of vertices. A kick writes PRIMADDRESS = the list's
-  address (general purpose) and PRIMEND = its end, which starts the channel and clears STATUS.endprdmasts (bit 17).
-- **Waiting.** The CPU fills one batch while the chip fetches the other, and waits only for that fetch, with a time
-  limit. `engine_sync` and `engine_idle` send the list first.
+- **Memory.** The list and the vertices are two rings in one block of conventional memory (`sys_dos_alloc`; the
+  physical address is the segment times 16 under DOS and GLOS): 256 KB when DOS has it, halved down to 32 KB until it
+  does, an eighth of it for the list.
+- **Kicks.** A kick hands the chip what is new by writing PRIMEND further on; the specification allows that while the
+  channel is still fetching, provided the last packet before each end is DMAPADs (G400 specification 4-16), which it
+  is. PRIMADDRESS is written only with the chip idle: at the first kick, and after a wait for everything. A kick
+  comes every 6 KB of vertices, and before a wait.
+- **Waiting.** Each kick ends with a DWGSYNC write of a tag of its own (one sequence with `engine_sync`'s fence, so a
+  later tag passes an earlier one). Once DWGSYNC reads a kick's tag the chip has fetched its vertices, and their room
+  is free again. The CPU waits only when a ring is full, with a time limit. The list starts again from its beginning
+  only when the chip has fetched all of it; `engine_sync` and `engine_idle` send everything and wait for it, which
+  also starts both rings again. A soft reset (`engine_reset`) closes the stream (`mga_reset_hook`).
 - **Failure.** On a timeout the stream is closed, the WARP suspended (WIADDRNB2, bypassing the FIFO) and the engine
   reset. `warp_abort` does the same without waiting, for fault handlers.
 - **Mixed setup.** A WARP triangle marks the CPU setup's shadow registers stale (`setup_stale`). When the CPU setup
@@ -69,7 +76,9 @@ hangs the PC. `WARPTRI` checks wbusy after starting and waits for FIFO room with
   batch; a limit of 2 million reads (about a second on the bench) failed there once.
 
 On bench-g400 the stream cut DOSBench's DMA transfers from 257,655 to 80,121 for 20 million triangles, and its
-OpenGL score from 1,176 to 1,446.
+OpenGL score from 1,176 to 1,446. The rings, against two batches of 24 KB of vertices that took turns, made DOS-GL's
+scenes 18% to 36% faster (Arena 19.7 to 23.5 fps, Race 32.5 to 44.3): the CPU had waited whenever a batch was
+full and the other not yet fetched, though the bus was busy only about 60% of the time on average.
 
 ## Waiting for the WARPs
 
@@ -93,18 +102,38 @@ CPU, with the Voodoo's exact edge rule; the WARP's edges differ slightly, which 
 masks edges on the G400 family). The texture registers and ALPHACTRL are written only when they change (each write
 also ends a vertex run in the DMA stream).
 
-## AGP (experiments, 2026-10-27)
+## AGP
 
 The BIOS leaves bench-g400's 440BX with AGP off (its AGPCMD, A8h, reads 0) and the G400's AGP_CMD (F8h) at 1x with
-sideband addressing. With both set to 2x and sideband addressing (WARPTRI `agp=2`), PRIMEND's and SECEND's bit 1 make
-the channels fetch by AGP cycles:
+sideband addressing. With both set to 2x and sideband addressing, PRIMEND's and SECEND's bit 1 make the channels
+fetch by AGP cycles (WARPTRI `agp=N`, 2026-10-27):
 - **Bandwidth:** lists of DMAPAD packets go at 150 MB/s, against 46 by PCI (145 at 1x). By PCI the WARP takes at
-  most about 430,000 triangles a second (96 bytes each), which is where the CPU waits in DOSBench's scenes.
+  most about 430,000 triangles a second (96 bytes each).
 - **Coherency:** AGP reads don't snoop the CPU's caches. With the caches flushed before each kick (2 MB read) the
   WARP draws exactly as by PCI (`agpdraw`); without, nothing (`noflush`).
 
-For real use the buffers must be write-combining (an MTRR: ring 0), which the HAL can't do in a ring-3 DOS program.
-The plan is a GLOS service that gives a program write-combining DMA memory.
+So the rings must be write-combining, which takes ring 0 (the MTRRs). Under GLOS (API 1.4) the HAL asks for it:
+- `dma_setup` allocates the rings 64 KB larger and aligns them to 64 KB, and asks GLOS to make them write-combining
+  (`sys_cache_wc`: `GLOS_FN_CACHE`, which sets the fixed MTRRs below A0000h; GLOS gives them back when the program
+  ends). Without GLOS, or when GLOS can't, the block is freed and the plain rings are allocated, fetched by PCI.
+- With write-combining rings, AGP is turned on: the host bridge's AGP capability first, then the card's AGP_CMD,
+  at the fastest rate both have, with sideband addressing if both have it. `warp_stop` puts both commands back as
+  they were; the next start turns AGP on again.
+- A locked instruction drains the CPU's write-combining buffers before each kick. The list's packet headers are
+  written once, whole (a read of write-combining memory is uncached).
+- `warp_use_agp` (DOS-GL: `DGL_AGP=0`; Glide: `agp=0`) keeps the plain rings.
+
+On bench-g400 under GLOS, DOS-GL's scenes (frames per second):
+
+| Rings | Arena | Race | Space | City |
+|---|---|---|---|---|
+| cached, PCI | 25.73 | 45.43 | 39.26 | 20.98 |
+| write-combining, PCI | 26.37 | 46.11 | 40.56 | 21.25 |
+| write-combining, AGP | 26.78 | 47.16 | 40.76 | 21.54 |
+
+With the rings the bus is no longer what limits these scenes, so AGP adds about 4%. Write-combining memory wants
+each line written once, in order: DOS-GL's fast path wrote a vertex and then went back for its texture coordinates'
+wrap and flat shading's colour, and was 5% to 11% slower by AGP than by PCI until it wrote each word once.
 
 ## On silicon (bench-g400, `WARPTRI`, 2026-10-26 and 27)
 

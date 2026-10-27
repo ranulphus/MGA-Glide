@@ -32,6 +32,7 @@ typedef struct {
     int  scale_filter;         /* 0 nearest (default), 1 bilinear */
     int  zoom;                 /* 1: half-size modes by the chip's line and pixel doubling */
     int  warp;                 /* 1 (default): the G400 family's WARP sets triangles up (docs/g400-warp.md); 0 the CPU */
+    int  agp;                  /* 1 (default): under GLOS, write-combining DMA rings fetched by AGP cycles; 0 PCI */
 } mg_config_t;
 
 extern mg_config_t mg_config;
