@@ -1826,18 +1826,20 @@
  
  /* MGA-Glide local patch (WP-2): unsupported drawing-engine state must not
   * stop the emulator. fatal() shows a blocking message box, which hangs a
-@@ -94,6 +95,10 @@
+@@ -94,6 +95,12 @@
   * texels every time, and Loop A shows the missing flush. */
  #define MGA_TCACHE_LINES 1024
  #define MGA_TCACHE_LINE  32
 +/* MGA-Glide local patch: a write to a drawing register's address plus 100h
-+ * starts the engine, except that on the G400 1DC0h-1DFFh are the WARP's
-+ * registers (WIADDR, WFLAG, WGETMSB, WVRTXSZ, WACCEPTSEQ, WIADDR2, WFLAG1). */
-+#define MGA_EXEC_ADDR(m, a) ((((a) & 0x300) == 0x100) && !((m)->type >= MGA_G400 && ((a) & 0x3fc0) == 0x1dc0))
++ * starts the engine, except that on the G400 1DC0h-1DFFh (WIADDR, WFLAG,
++ * WGETMSB, WVRTXSZ, WACCEPTSEQ, WIADDR2, WFLAG1) and 2D00h-2DFFh (WR0-WR63)
++ * are the WARP's registers. */
++#define MGA_EXEC_ADDR(m, a) ((((a) & 0x300) == 0x100) && \
++                             !((m)->type >= MGA_G400 && (((a) & 0x3fc0) == 0x1dc0 || ((a) & 0x3f00) == 0x2d00)))
  #define MGA_BUS_FIFO(m) ((m)->type <= MGA_1064SG ? 32 : (m)->type >= MGA_G400 ? 16 : 64)
  
  #define FIFO_SIZE        65536
-@@ -636,6 +641,18 @@
+@@ -636,6 +643,18 @@
      uint32_t tcache_tag[MGA_TCACHE_LINES];
      uint8_t  tcache_data[MGA_TCACHE_LINES][MGA_TCACHE_LINE];
  
@@ -1856,7 +1858,7 @@
      struct {
          uint8_t r, g, b;
      } lut[256];
-@@ -798,6 +815,7 @@
+@@ -798,6 +817,7 @@
  static uint8_t  mystique_iload_read_b(uint32_t addr, void *priv);
  static uint32_t mystique_iload_read_l(uint32_t addr, void *priv);
  static void     mystique_iload_write_b(uint32_t addr, uint8_t val, void *priv);
@@ -1864,7 +1866,7 @@
  static void     mystique_iload_write_l(uint32_t addr, uint32_t val, void *priv);
  
  static uint32_t blit_idump_read(mystique_t *mystique);
-@@ -1841,6 +1859,8 @@
+@@ -1841,6 +1861,8 @@
                  break;
              case REG_STATUS + 2:
                  ret = (mystique->status >> 16) & 0xff;
@@ -1873,7 +1875,7 @@
                  if (mystique->busy || ((mystique->blitter_submit_refcount + mystique->blitter_submit_dma_refcount) != mystique->blitter_complete_refcount) || !FIFO_EMPTY
                  || mystique->dma.state != MGA_DMA_STATE_IDLE || mystique->softrap_pending || mystique->endprdmasts_pending)
                      ret |= (STATUS_DWGENGSTS >> 16);
-@@ -2007,7 +2027,7 @@
+@@ -2007,7 +2029,7 @@
      mystique_t *mystique   = (mystique_t *) priv;
      int         start_blit = 0;
  
@@ -1882,7 +1884,7 @@
          addr &= ~0x100;
          start_blit = 1;
      }
-@@ -2336,6 +2356,7 @@
+@@ -2336,6 +2358,7 @@
          case REG_OPMODE:
              mystique->dwgreg.dmamod   = (val >> 2) & 3;
              mystique->dma.iload_state = 0;
@@ -1890,7 +1892,7 @@
              break;
  
          default:
-@@ -2391,7 +2412,7 @@
+@@ -2391,7 +2414,7 @@
          return;
      }
      if ((addr & 0x3e00) == 0x1c00 || (addr & 0x3e00) == 0x2c00) {
@@ -1899,7 +1901,7 @@
              mystique->blitter_submit_refcount++;
          mystique_queue(mystique, addr & 0x3fff, val, FIFO_WRITE_CTRL_BYTE);
          return;
-@@ -2582,10 +2603,22 @@
+@@ -2582,10 +2605,22 @@
  static uint32_t
  mystique_ctrl_read_l(uint32_t addr, void *priv)
  {
@@ -1923,7 +1925,7 @@
  
      ret = mystique_ctrl_read_b(addr, priv);
      ret |= mystique_ctrl_read_b(addr + 1, priv) << 8;
-@@ -2601,7 +2634,7 @@
+@@ -2601,7 +2636,7 @@
      mystique_t *mystique   = (mystique_t *) priv;
      int         start_blit = 0;
  
@@ -1932,7 +1934,7 @@
          addr &= ~0x100;
          start_blit = 1;
      }
-@@ -2935,7 +2968,34 @@
+@@ -2935,7 +2970,34 @@
              mystique->tdualstage[((addr & 0x3ffc) - REG_TDUALSTAGE0) >> 2] = val;
              break;
  
@@ -1967,7 +1969,7 @@
              mystique_accel_ctrl_write_b_raw(addr, val & 0xff, priv);
              mystique_accel_ctrl_write_b_raw(addr + 1, (val >> 8) & 0xff, priv);
              mystique_accel_ctrl_write_b_raw(addr + 2, (val >> 16) & 0xff, priv);
-@@ -2981,7 +3041,7 @@
+@@ -2981,7 +3043,7 @@
  static void
  g400_texreg_write(mystique_t *mystique, uint32_t addr, uint32_t val, int bytes, void *priv)
  {
@@ -1976,7 +1978,7 @@
      const uint32_t a    = exec ? (addr & ~0x100) : addr;
      const uint32_t reg  = a & 0x3ffc;
      const uint32_t mask = bytes == 4 ? 0xffffffffu : (0xffu << (8 * (a & 3)));
-@@ -3017,7 +3077,7 @@
+@@ -3017,7 +3079,7 @@
  static int
  g400_routes(mystique_t *mystique, uint32_t addr)
  {
@@ -1985,7 +1987,7 @@
      return mystique->type >= MGA_G400 && g400_map_reg(mystique, a & 0x3ffc, 0) != NULL;
  }
  
-@@ -3043,19 +3103,132 @@
+@@ -3043,19 +3105,132 @@
          mystique_accel_ctrl_write_l_raw(addr, val, priv);
  }
  
@@ -2119,7 +2121,7 @@
              mystique->blitter_submit_refcount++;
          mystique_queue(mystique, addr & 0x3fff, val, FIFO_WRITE_CTRL_LONG);
          return;
-@@ -3109,7 +3282,7 @@
+@@ -3109,7 +3284,7 @@
              else
                  reg_addr += 0x1c00;
  
@@ -2128,7 +2130,7 @@
                  mystique->blitter_submit_refcount++;
  
              mystique_queue(mystique, reg_addr, val, FIFO_WRITE_CTRL_LONG);
-@@ -3182,7 +3355,7 @@
+@@ -3182,7 +3357,7 @@
                  else
                      reg_addr += 0x1c00;
  
@@ -2137,7 +2139,7 @@
                      mystique->blitter_submit_dma_refcount++;
                  mystique_accel_ctrl_write_l(reg_addr, val, mystique);
  
-@@ -3196,6 +3369,11 @@
+@@ -3196,6 +3371,11 @@
                  blit_iload_write(mystique, val, 32);
              break;
  
@@ -2149,7 +2151,7 @@
          default:
  #if 0
              pclog("ILOAD write DMAMOD %i\n", mystique->dwgreg.dmamod); */
-@@ -3365,7 +3543,7 @@
+@@ -3365,7 +3545,7 @@
                              else
                                  reg_addr += 0x1c00;
  
@@ -2158,7 +2160,7 @@
                                  mystique->blitter_submit_dma_refcount++;
  
                              //pclog("DMA value: 0x%08X to reg 0x%04X\n", val, reg_addr);
-@@ -3444,7 +3622,7 @@
+@@ -3444,7 +3624,7 @@
                          else
                              reg_addr += 0x1c00;
  
