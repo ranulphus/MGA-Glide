@@ -19,6 +19,9 @@ static int clip_x0, clip_y0, clip_x1 = 0x7FFF, clip_y1 = 0x7FFF;
 int mga_dma_pending;                    /* vertices buffered or in flight by DMA (warp.c; hal.h) */
 int mga_warp_pending;                   /* WARP triangles since the engine was last idle (hal.h) */
 void (*mga_dma_flush)(void);            /* sends and waits for them: register writes come after */
+int mga_cmd_open;                       /* the DMA command stream is taking register writes (mmio.h) */
+void (*mga_cmd_write)(uint32_t off, uint32_t v);
+void (*mga_cmd_other)(void);
 uint32_t mga_opmode = MGA_OPMODE_UNKNOWN;   /* what OPMODE holds (ILOAD here, vertices in warp.c) */
 static int pitch_reg = -1;         /* the value in PITCH: targets may differ in pitch */
 

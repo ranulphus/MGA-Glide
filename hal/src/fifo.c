@@ -20,6 +20,12 @@ void fifo_reset(void) { mga_fifo_free = 0; }
 void fifo_reserve(int n)
 {
     uint32_t spin = 0;
+    if (mga_cmd_open && mga_dma_pending) {
+        /* Queued in the DMA list (which makes its own room), or a write
+         * the list goes before (MGA_WR32): no FIFO slots to count. */
+        mga_fifo_free = 1 << 24;
+        return;
+    }
     if (mga_dma_pending && mga_dma_flush)
         mga_dma_flush();                /* (sets mga_fifo_free to 0: read below) */
 #ifdef MGA_PROF

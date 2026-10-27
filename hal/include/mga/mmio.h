@@ -24,6 +24,7 @@ uint32_t mga_host_rd32(uint32_t off);
 void     mga_host_wr8(uint32_t off, uint8_t v);
 uint8_t  mga_host_rd8(uint32_t off);
 #  define MGA_WR32(off, v) mga_host_wr32((off), (v))
+#  define MGA_WR32_DIRECT(off, v) mga_host_wr32((off), (v))
 #  define MGA_RD32(off)    mga_host_rd32(off)
 #  define MGA_WR8(off, v)  mga_host_wr8((off), (v))
 #  define MGA_RD8(off)     mga_host_rd8(off)
@@ -33,7 +34,22 @@ uint8_t  mga_host_rd8(uint32_t off);
 #  else
 #    define MGA_TRACE(off, v) ((void)0)
 #  endif
+/* The G400's DMA command stream (warp.c; docs/g400-warp.md). While it is
+ * open, writes to the registers a primary DMA list can reach (1C00h-1DFFh
+ * and 2C00h-2DFFh: drawing, texture, WARP) are queued in the list; any
+ * other write first sends the list and waits until the chip has fetched
+ * it, so it never overtakes them. MGA_WR32_DIRECT always writes at once. */
+extern int mga_cmd_open;
+extern void (*mga_cmd_write)(uint32_t off, uint32_t v);    /* (set by warp.c with the stream) */
+extern void (*mga_cmd_other)(void);
+#  define MGA_CMD_REG(off) ((((off) & 0x3E00u) == 0x1C00u) || (((off) & 0x3E00u) == 0x2C00u))
 #  define MGA_WR32(off, v) do { MGA_TRACE((off), (v)); PROF_WR(); \
+        if (mga_cmd_open) { \
+            if (MGA_CMD_REG(off)) { mga_cmd_write((off), (uint32_t)(v)); break; } \
+            mga_cmd_other(); \
+        } \
+        *(volatile uint32_t *)(mga_mmio + (off)) = (uint32_t)(v); } while (0)
+#  define MGA_WR32_DIRECT(off, v) do { MGA_TRACE((off), (v)); \
         *(volatile uint32_t *)(mga_mmio + (off)) = (uint32_t)(v); } while (0)
 #  define MGA_RD32(off)    (*(volatile uint32_t *)(mga_mmio + (off)))
 #  define MGA_WR8(off, v)  (*(volatile uint8_t *)(mga_mmio + (off)) = (uint8_t)(v))

@@ -1,17 +1,19 @@
-/* warp.c - the G400's WARP setup engine by PIO (docs/g400-warp.md).
+/* warp.c - the G400's WARP setup engine (docs/g400-warp.md).
  *
  * The microcode is linux-firmware's matrox/g400_warp.fw (warp_g400.h, MIT,
  * Copyright 1999 Matrox Graphics Inc.). With microcode caching off the two
  * WARPs run from their own 2 KB instruction memories, written through
  * WIMEMADDR and WIMEMDATA/WIMEMDATA1; the values written around a pipe are
  * those of Linux's mga DRM driver (mga_warp_init, mga_g400_emit_pipe).
- * Vertices go through the DMA window with OPMODE in vertex mode. */
+ * Vertices and register writes go by bus-master DMA (below), or the
+ * vertices through the DMA window with OPMODE in vertex mode. */
 #include "mga/warp.h"
 #include "mga/hal.h"
 #include "mga/mmio.h"
 #include "mga/regs_mga.h"
 #include "mga/setup.h"
 #include "mga/sys.h"
+#include "mga/prof.h"
 #include "warp_g400.h"
 
 uint32_t warp_tris, warp_failures, warp_dma_kicks;
@@ -20,18 +22,32 @@ int warp_start_pads = 3;
 int warp_reset_before_load = 1;
 uint32_t warp_diag[5];
 
-/* Bus-master DMA (the primary channel in vertex mode: PRIMADDRESS's low
- * bits select it; G400 specification 4.1.9): two buffers in conventional
- * memory, whose physical address is the linear one (under DOS and under
- * GLOS alike). One is filled while the chip fetches the other. */
-#define DMA_BYTES 16384u
-static struct { uint32_t *p; uint32_t phys; } dbuf[2];
+/* Bus-master DMA, as Linux's mga DRM does it (G400 specification 4.1.9): a
+ * primary display list in general-purpose mode, each packet a header of
+ * four register indexes and their four values, and runs of vertices beside
+ * it, which the list hands to the secondary channel in vertex mode (DMAPAD,
+ * DMAPAD, SECADDRESS, SECEND). While the stream is open (mga_cmd_open)
+ * MGA_WR32 queues writes to the registers a list can reach (mmio.h); any
+ * other write first sends the list and waits until it is fetched. Two
+ * batches in conventional memory, whose physical address is the linear one
+ * (under DOS and GLOS alike): one is filled while the chip fetches the
+ * other, and the CPU waits only for that fetch. */
+#define LIST_BYTES 8192u
+#define VERT_BYTES 24576u
+#define NO_RUN 0xFFFFFFFFu
+#define DMAREG(off) ((off) < 0x2000u ? ((off) - 0x1C00u) >> 2 : (((off) - 0x2C00u) >> 2) | 0x80u)
+static struct { uint32_t *p; uint32_t phys; } dbuf[2];   /* the list, then the vertices */
 static int dma_state;               /* 0 not tried, 1 in use, -1 not available */
-static int dcur;                    /* the buffer being filled */
-static uint32_t dused;              /* its bytes */
+static int dcur;                    /* the batch being filled */
+static uint32_t lused;              /* its list's dwords */
+static uint32_t vused;              /* its vertex area's bytes */
+static uint32_t vrun = NO_RUN;      /* the open vertex run's first byte */
+static uint32_t lhdr;               /* the open packet's header dword */
+static int lslots;                  /* registers in the open packet (0: none open) */
 static int inflight;                /* a kick the chip may still be fetching */
 
 static void dma_flush(void);
+static void stream_close(void);
 
 static int cur_pipe = -1;           /* in the instruction memories */
 static int sel_pipe = -1;           /* the one warp_select asked for */
@@ -112,44 +128,80 @@ static void suspend(void)
 
 void warp_stop(void)
 {
-    if (mga_dma_pending)
-        dma_flush();
+    stream_close();
     dma_mode(0);
     suspend();
 }
 
 static void fail(void);
 
-/* Wait until the chip has fetched the last kick (STATUS.endprdmasts). */
+/* Wait until the chip has fetched the last kick (STATUS.endprdmasts: the
+ * primary and secondary channels both done). */
 static int dma_wait(void)
 {
     long spin;
+    int o;
     if (!inflight)
         return 0;
+    o = PROF_SWITCH(PROF_FIFO);         /* (a wait for the chip, as fifo_reserve's) */
     for (spin = 0; spin < 2000000L; spin++)
         if (MGA_RD32(MGAREG_STATUS) & (1u << 17))
             break;
+    PROF_BACK(o);
     inflight = 0;
     return spin < 2000000L ? 0 : -1;
 }
 
+static void list_put(uint32_t idx, uint32_t v)
+{
+    uint32_t *l = dbuf[dcur].p;
+    if (!lslots) {
+        lhdr = lused++;
+        l[lhdr] = 0;
+    }
+    l[lhdr] |= idx << (8 * lslots);
+    l[lused++] = v;
+    lslots = (lslots + 1) & 3;
+}
+
+static void list_pad(void)
+{
+    while (lslots)
+        list_put(DMAREG(MGAREG_DMAPAD), 0);
+}
+
+/* The open vertex run handed to the secondary channel, in its own packet. */
+static void close_run(void)
+{
+    if (vrun == NO_RUN)
+        return;
+    list_pad();
+    list_put(DMAREG(MGAREG_DMAPAD), 0);
+    list_put(DMAREG(MGAREG_DMAPAD), 0);
+    list_put(DMAREG(MGAREG_SECADDRESS), (dbuf[dcur].phys + LIST_BYTES + vrun) | 3u);   /* vertex write */
+    list_put(DMAREG(MGAREG_SECEND), dbuf[dcur].phys + LIST_BYTES + vused);             /* PCI */
+    vrun = NO_RUN;
+}
+
 static void dma_kick(void)
 {
-    if (!dused)
+    close_run();
+    list_pad();
+    if (!lused)
         return;
     if (dma_wait() != 0) {
         fail();
         return;
     }
-    MGA_WR32(MGAREG_PRIMADDRESS, dbuf[dcur].phys | 3u);     /* vertex write */
-    MGA_WR32(MGAREG_PRIMEND, dbuf[dcur].phys + dused);      /* PCI memory; starts the channel */
+    MGA_WR32_DIRECT(MGAREG_PRIMADDRESS, dbuf[dcur].phys);              /* general purpose */
+    MGA_WR32_DIRECT(MGAREG_PRIMEND, dbuf[dcur].phys + lused * 4u);     /* PCI memory; starts the channel */
     inflight = 1;
     warp_dma_kicks++;
     dcur ^= 1;
-    dused = 0;
+    lused = vused = 0;
 }
 
-/* mga_dma_flush: everything buffered sent, and fetched. */
+/* mga_dma_flush: everything queued sent, and fetched. */
 static void dma_flush(void)
 {
     mga_dma_pending = 0;
@@ -157,6 +209,46 @@ static void dma_flush(void)
     if (dma_wait() != 0)
         fail();
     mga_fifo_free = 0;
+}
+
+/* mga_cmd_write: a register write into the list (room for it and a run's
+ * closing packet, and its padding: 12 dwords). */
+static void cmd_write(uint32_t off, uint32_t v)
+{
+    if (lused + 12u > LIST_BYTES / 4u)
+        dma_kick();
+    if (!mga_cmd_open) {                /* (the kick failed: the stream is closed) */
+        MGA_WR32_DIRECT(off, v);
+        return;
+    }
+    close_run();
+    list_put(DMAREG(off), v);
+    mga_dma_pending = 1;
+}
+
+/* mga_cmd_other: a write the list can't carry follows. */
+static void cmd_other(void)
+{
+    if (mga_dma_pending)
+        dma_flush();
+}
+
+static void stream_open(void)
+{
+    if (dma_state > 0) {
+        mga_cmd_write = cmd_write;
+        mga_cmd_other = cmd_other;
+        mga_cmd_open = 1;
+    }
+}
+
+/* Everything queued sent and fetched; register writes direct again. */
+static void stream_close(void)
+{
+    if (mga_cmd_open && mga_dma_pending)
+        dma_flush();
+    mga_cmd_open = 0;
+    fifo_reset();
 }
 
 static void dma_setup(void)
@@ -168,7 +260,7 @@ static void dma_setup(void)
     if (!warp_use_dma)
         return;
     for (i = 0; i < 2; i++) {
-        dbuf[i].p = (uint32_t *)sys_dos_alloc(DMA_BYTES, &seg);
+        dbuf[i].p = (uint32_t *)sys_dos_alloc(LIST_BYTES + VERT_BYTES, &seg);
         if (!dbuf[i].p)
             return;
         dbuf[i].phys = (uint32_t)seg << 4;
@@ -182,11 +274,14 @@ static void dma_setup(void)
 
 static void fail(void)
 {
+    mga_cmd_open = 0;                   /* (nothing more into the list: the reset is direct) */
     mga_dma_pending = 0;
     inflight = 0;
-    dused = 0;
+    lused = vused = 0;
+    lslots = 0;
+    vrun = NO_RUN;
     warp_failures++;
-    MGA_WR32(MGAREG_WIADDRNB2, WMODE_SUSPEND);      /* (bypassing the FIFO) */
+    MGA_WR32_DIRECT(MGAREG_WIADDRNB2, WMODE_SUSPEND);   /* (bypassing the FIFO) */
     running = 0;
     cur_pipe = -1;
     engine_reset();                     /* (OPMODE unknown after it) */
@@ -202,12 +297,11 @@ int warp_select(int pipe)
         return -1;
     if (!dma_state)
         dma_setup();
-    if (mga_dma_pending)
-        dma_flush();
     check_lost();
     sel_pipe = pipe;
     if (running && pipe == cur_pipe)
         return 0;
+    stream_close();                     /* (the start is direct work: loads, a reset, polling) */
     warp_diag[0] = MGA_RD32(MGAREG_STATUS);
     dma_mode(0);
     suspend();
@@ -268,6 +362,7 @@ int warp_select(int pipe)
         return -1;
     }
     running = 1;
+    stream_open();
     warp_tex_sizes(0, 0, 0, 0);
     return 0;
 }
@@ -314,15 +409,17 @@ int warp_vertices(const mga_wvtx *v, int n)
     if (!running && (sel_pipe < 0 || warp_select(sel_pipe) != 0))
         return -1;
     dw = (cur_pipe & WARP_T2) ? 10 : 8;
-    if (dma_state > 0) {
+    if (mga_cmd_open) {
+        if (vused + (uint32_t)(n * dw) * 4u > VERT_BYTES || lused + 12u > LIST_BYTES / 4u)
+            dma_kick();                 /* (the triangles stay whole within a run) */
+        if (!running || !mga_cmd_open)
+            return -1;                  /* (a failed kick) */
+        if (vrun == NO_RUN)
+            vrun = vused;
         for (i = 0; i < n; i++) {
             uint32_t *d;
             union { float f; uint32_t u; } c;
-            if (dused + (uint32_t)dw * 4u > DMA_BYTES)
-                dma_kick();
-            if (!running)
-                return -1;              /* (a failed kick) */
-            d = dbuf[dcur].p + dused / 4u;
+            d = dbuf[dcur].p + (LIST_BYTES + vused) / 4u;
             c.f = v[i].x; d[0] = c.u;
             c.f = v[i].y; d[1] = c.u;
             c.f = v[i].z; d[2] = c.u;
@@ -335,10 +432,9 @@ int warp_vertices(const mga_wvtx *v, int n)
                 c.f = v[i].u1; d[8] = c.u;
                 c.f = v[i].v1; d[9] = c.u;
             }
-            dused += (uint32_t)dw * 4u;
+            vused += (uint32_t)dw * 4u;
         }
-        mga_dma_pending = 1;            /* register writes wait for these */
-        mga_fifo_free = 0;
+        mga_dma_pending = 1;
         warp_tris += (uint32_t)(n / 3);
         mga_warp_pending = 1;
         return 0;
