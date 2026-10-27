@@ -197,6 +197,9 @@ It found six places where 86Box differed, and GLOS's tests found more. Local pat
   start-the-engine aliases. Like the silicon, a start after the third load of the instruction memories since a
   soft reset leaves the WARPs dead. Unlike the silicon, the model's WARP finishes each triangle at once, so
   Loop A can't show work still in the WARPs when STATUS reads idle (`engine_sync`'s DWGSYNC fence).
+- **0123:** the WARPs' ACCEPT sequencer (WACCEPTSEQ): after the first triangle of a sequence each vertex goes to
+  the bank `seqdst[seqptr]` names and the three banks make the next triangle, so strips and fans draw as on a real
+  G400 (WARPTRI `seq` there: pixel for pixel the same triangles as a list). seqoff is lists, as before.
 - **0003 dropped:** it indexed the 16-bit DAC palette by each component's top bits. A real G400 indexes it by the
   component's own value, the layout its BIOS loads, so the runtimes' ramps, written for 0003, put every frame on
   the card's monitor at an eighth of its brightness. `dac_set_ramp` now writes the BIOS's layout.

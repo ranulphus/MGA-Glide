@@ -175,7 +175,7 @@ int main(int argc, char **argv)
     static const vtx z1[3] = { { 30, 260, 1000, 255, 255, 0 }, { 280, 270, 60000, 255, 255, 0 }, { 150, 460, 30000, 255, 255, 0 } };
     static const vtx z2[3] = { { 40, 450, 60000, 0, 255, 255 }, { 290, 300, 1000, 0, 255, 255 }, { 200, 470, 30000, 0, 255, 255 } };
     int pipe = 0, count = 4000, i, ok, pitch, cover, colour, drawn, starts = 0, reload = 0, keep = 0, dmabw = 0;
-    int agpinfo = 0, agp_rate = 0, agp_draw = 0, agp_noflush = 0;
+    int agpinfo = 0, agp_rate = 0, agp_draw = 0, agp_noflush = 0, seqtest = 0;
     mga_vbe_mode mode;
     mga_target tg;
     uint64_t t0, t1;
@@ -196,6 +196,7 @@ int main(int argc, char **argv)
         else if (!strncmp(argv[i], "agp=", 4)) agp_rate = atoi(argv[i] + 4);
         else if (!strcmp(argv[i], "agpdraw")) agp_draw = 1;     /* with agp=N: the drawing tests, not dmabw */
         else if (!strcmp(argv[i], "noflush")) agp_noflush = 1;  /* EXPERIMENT: does the bridge snoop AGP reads? */
+        else if (!strcmp(argv[i], "seq")) seqtest = 1;          /* EXPERIMENT: strips and fans by the ACCEPT sequencer */
     }
     hx_init(1, argv, "warptri");
     ok = mga_find(&mga) == 0 && mga_map(&mga) == 0;
@@ -329,6 +330,78 @@ int main(int argc, char **argv)
                 blank, warp_start_pads, reload ? "reloading" : "one pipe", warp_use_dma ? "dma" : "pio",
                 warp_reset_before_load ? "reset before loads" : "no reset");
         aborted = 1;
+        goto out;
+    }
+
+    if (seqtest) {
+        /* EXPERIMENT: a fan and a strip by the WARPs' ACCEPT sequencer
+         * (WACCEPTSEQ, G400 specification 3-260: after the first triangle's
+         * three vertices, each vertex goes to the next of the seqdst slots),
+         * with Mesa's values for pipes without a second map
+         * (MGA_WA_TRIFAN_T0, MGA_WA_TRISTRIP_T0), on the left; the same
+         * triangles as a list 320 pixels to the right; compared. Then a
+         * list triangle, to see the WARP still takes lists. */
+        static const vtx fan[6] = { { 160, 120, 0, 255, 255, 255 }, { 260, 120, 0, 255, 0, 0 }, { 230, 200, 0, 0, 255, 0 },
+                                    { 160, 220, 0, 0, 0, 255 }, { 90, 200, 0, 255, 255, 0 }, { 60, 120, 0, 0, 255, 255 } };
+        static const vtx strip[6] = { { 20, 300, 0, 255, 0, 0 }, { 20, 400, 0, 0, 255, 0 }, { 120, 300, 0, 0, 0, 255 },
+                                      { 120, 400, 0, 255, 255, 0 }, { 220, 300, 0, 0, 255, 255 }, { 220, 400, 0, 255, 0, 255 } };
+        static const vtx tail[3] = { { 240, 420, 0, 255, 255, 255 }, { 300, 420, 0, 255, 255, 255 }, { 270, 470, 0, 255, 255, 255 } };
+        mga_wvtx w[6];
+        vtx t[3];
+        int k, cf = 0, kf = 0, df = 0, cs = 0, ks = 0, ds = 0, tl = 0, x, y;
+        uint32_t fanseq = 0x01000408u, stripseq = 0x02010200u;
+        if (warp_select(pipe) != 0) {
+            hx_test("seq", 0, "the WARP did not start");
+            goto out;
+        }
+        engine_fill(0, 0, SW, SH, 0);
+        engine_sync(200000);
+        context(dw_i);
+        for (k = 0; k < 6; k++)
+            w[k] = wv(&fan[k]);
+        MGA_WR32(MGAREG_WACCEPTSEQ, fanseq);
+        if (!aborted && warp_vertices(w, 6) != 0)
+            aborted = 1;
+        for (k = 0; k < 6; k++)
+            w[k] = wv(&strip[k]);
+        MGA_WR32(MGAREG_WACCEPTSEQ, stripseq);
+        if (!aborted && warp_vertices(w, 6) != 0)
+            aborted = 1;
+        MGA_WR32(MGAREG_WACCEPTSEQ, 0x18000000u);     /* lists again */
+        warp_tri(tail);
+        warp_stop();
+        engine_sync(200000);
+        hx_log("HX-STAT warptri seq after: status=%08lx aborted=%d failures=%lu", (unsigned long)MGA_RD32(MGAREG_STATUS),
+               aborted, (unsigned long)warp_failures);
+        if (aborted || warp_select(pipe) != 0)
+            goto seqout;
+        context(dw_i);
+        for (k = 1; k + 1 < 6; k++) {   /* the fan as a list, 320 to the right */
+            t[0] = fan[0]; t[1] = fan[k]; t[2] = fan[k + 1];
+            t[0].x += 320; t[1].x += 320; t[2].x += 320;
+            warp_tri(t);
+        }
+        for (k = 0; k + 2 < 6; k++) {   /* the strip as a list */
+            t[0] = strip[k]; t[1] = strip[k + 1]; t[2] = strip[k + 2];
+            t[0].x += 320; t[1].x += 320; t[2].x += 320;
+            warp_tri(t);
+        }
+        warp_stop();
+        engine_sync(200000);
+        compare(0, 0, 320, 240, 320, 24, &cf, &kf, &df);
+        compare(0, 290, 320, 410, 320, 24, &cs, &ks, &ds);
+        for (y = 420; y < 470; y++)
+            for (x = 240; x < 300; x++)
+                tl += px(x, y) != 0;
+    seqout:
+        save();
+        hx_test("seq-fan", !aborted && df > 1000 && cf <= df / 100 && kf <= df / 100,
+                "WACCEPTSEQ %08lx: %d of %d pixels differ in coverage, %d in colour, from the list", (unsigned long)fanseq,
+                cf, df, kf);
+        hx_test("seq-strip", !aborted && ds > 1000 && cs <= ds / 100 && ks <= ds / 100,
+                "WACCEPTSEQ %08lx: %d of %d pixels differ in coverage, %d in colour, from the list", (unsigned long)stripseq,
+                cs, ds, ks);
+        hx_test("seq-lists-after", !aborted && tl > 500, "a list triangle after them: %d pixels", tl);
         goto out;
     }
 

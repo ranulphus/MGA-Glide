@@ -83,6 +83,21 @@ OpenGL score from 1,176 to 1,446. The rings, against two batches of 24 KB of ver
 scenes 18% to 36% faster (Arena 19.7 to 23.5 fps, Race 32.5 to 44.3): the CPU had waited whenever a batch was
 full and the other not yet fetched, though the bus was busy only about 60% of the time on average.
 
+## Strips and fans (the ACCEPT sequencer)
+
+The WARPs take strips and fans by their ACCEPT sequencer (WACCEPTSEQ, G400 specification 3-260): after the first
+triangle's three vertices, each vertex goes to the WR bank `seqdst[seqptr]` names, `seqptr` cycling through
+`seqlen + 1` of them, and the three banks make the next triangle. Mesa's mga driver defined the values for pipes
+without a second map, `MGA_WA_TRIFAN_T0` (01000408h: banks 8 and 16 in turn, the first vertex staying) and
+`MGA_WA_TRISTRIP_T0` (02010200h: banks 0, 8 and 16 in turn, the oldest going), but never used them. On bench-g400
+(WARPTRI `seq`, 2026-10-27) both draw pixel for pixel the same triangles as a list, and lists work again after
+WACCEPTSEQ is written back to 18000000h. The WARPs cull nothing here (WFLAG 0), so the alternating winding of
+the sequencer's triangles doesn't matter.
+
+`warp_reserve_seq` and `warp_commit_seq` send one strip or fan as a run of vertices between the two WACCEPTSEQ
+writes: each vertex once, not three times a triangle. Pipes without a second map only (the T2 pipes' values are
+untried). 86Box patch 0123 models the sequencer.
+
 ## Waiting for the WARPs
 
 STATUS can read idle while the WARPs still have triangles to set up: on bench-g400 a batch of 256 WARP triangles read

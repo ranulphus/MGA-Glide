@@ -819,6 +819,47 @@ void warp_commit(int n)
         dma_kick();
 }
 
+/* Strips and fans by the WARPs' ACCEPT sequencer (WACCEPTSEQ, G400
+ * specification 3-260; Mesa's MGA_WA_TRIFAN_T0 and MGA_WA_TRISTRIP_T0, which
+ * Mesa never used): after the first triangle's three vertices, each vertex
+ * makes the next triangle with two of the last three, as GL_TRIANGLE_FAN
+ * and GL_TRIANGLE_STRIP have it (in their windings: nothing is culled here).
+ * A real G400 draws them pixel for pixel as the same triangles in a list
+ * (WARPTRI seq, 2026-10-27). One run of vertices between two WACCEPTSEQ
+ * writes, the second back to lists (warp_select's value). */
+#define SEQ_FAN   0x01000408u           /* seqdst 8, 16: the first vertex stays */
+#define SEQ_STRIP 0x02010200u           /* seqdst 0, 8, 16: the oldest goes */
+#define SEQ_LIST  0x18000000u           /* seqoff (and wsametag): three a triangle */
+
+uint32_t *warp_reserve_seq(int fan, int n, int *dwords)
+{
+    check_lost();
+    if (!running || !mga_cmd_open || (cur_pipe & WARP_T2) || n < 3)
+        return NULL;                    /* (T2 pipes: 10-dword vertices, not tried on silicon) */
+    if (setup_wrote_texsize)
+        wtex_again();
+    if (list_room(32) != 0 || vert_room((uint32_t)n * 32u) != 0 || !running || !mga_cmd_open)
+        return NULL;
+    cmd_write(MGAREG_WACCEPTSEQ, fan ? SEQ_FAN : SEQ_STRIP);   /* (ends the open run; room kept above) */
+    vrun = vused;
+    *dwords = 8;
+    return vring + vused / 4u;
+}
+
+void warp_commit_seq(int n)
+{
+    uint32_t b = (uint32_t)n * 32u;
+    vused += b;
+    vsince += b;
+    setup_stale = 1;
+    mga_dma_pending = 1;
+    mga_warp_pending = 1;
+    warp_tris += (uint32_t)(n - 2);
+    cmd_write(MGAREG_WACCEPTSEQ, SEQ_LIST);    /* lists again (ends the run) */
+    if (vsince >= warp_kick_bytes)
+        dma_kick();
+}
+
 int warp_vertices(const mga_wvtx *v, int n)
 {
     int i, k, dw;

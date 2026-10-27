@@ -1,0 +1,85 @@
+--- a/src/video/vid_mga.c
++++ b/src/video/vid_mga.c
+@@ -654,6 +654,8 @@
+         int      loads;         /* loads of the instruction memories since a soft reset */
+         uint32_t v[3][64];
+         int      vdw, vn;
++        uint32_t vs[64];            /* MGA-Glide local patch: a vertex for the ACCEPT sequencer's slot */
++        int      seq_first, seqptr; /* ... the first triangle still to come whole; the next seqdst */
+     } warp;
+ 
+     struct {
+@@ -2994,6 +2996,9 @@
+             break;
+         case 0x1dd4:
+             mystique->warp.wacceptseq = val;
++            mystique->warp.vdw = mystique->warp.vn = 0;     /* (the sequencer starts again: seqptr to seqdst0) */
++            mystique->warp.seq_first = 1;
++            mystique->warp.seqptr    = 0;
+             break;
+         case 0x1de0:
+             mystique->warp.wflag1 = val;
+@@ -3155,6 +3160,8 @@
+                 pclog("MGA-Glide: WARP started on microcode it does not know (%08x)\n", a);
+             mystique->warp.running = mystique->warp.pipe >= 0;
+             mystique->warp.vdw = mystique->warp.vn = 0;
++            mystique->warp.seq_first = 1;   /* MGA-Glide local patch: (the sequencer from its first triangle) */
++            mystique->warp.seqptr    = 0;
+             break;
+     }
+ }
+@@ -3171,18 +3178,45 @@
+ static void
+ warp_input(mystique_t *mystique, uint32_t val)
+ {
+-    const int    size = (int) (mystique->warp.wvrtxsz & 0x3f) + 1;
+-    mgawarp_regs r;
++    const int      size = (int) (mystique->warp.wvrtxsz & 0x3f) + 1;
++    const uint32_t seq  = mystique->warp.wacceptseq;
++    mgawarp_regs   r;
+ 
+     if (!mystique->warp.running)
+         return;
+-    mystique->warp.v[mystique->warp.vn][mystique->warp.vdw++] = val;
+-    if (mystique->warp.vdw < size)
+-        return;
+-    mystique->warp.vdw = 0;
+-    if (++mystique->warp.vn < 3)
+-        return;
+-    mystique->warp.vn = 0;
++    if ((seq & (1u << 28)) || mystique->warp.seq_first) {
++        /* Three vertices a triangle: lists (seqoff), and the first
++         * triangle of a sequence (its primsz, contiguous in the WR banks). */
++        mystique->warp.v[mystique->warp.vn][mystique->warp.vdw++] = val;
++        if (mystique->warp.vdw < size)
++            return;
++        mystique->warp.vdw = 0;
++        if (++mystique->warp.vn < 3)
++            return;
++        mystique->warp.vn = 0;
++        if (!(seq & (1u << 28)))
++            mystique->warp.seq_first = 0;
++    } else {
++        /* MGA-Glide local patch: the ACCEPT sequencer (WACCEPTSEQ, G400
++         * specification 3-260): each further vertex goes to the WR bank
++         * seqdst[seqptr] names (banks of 8 registers, or 16 for vertices
++         * of more than 8), seqptr cycling through seqlen + 1 of them, and the
++         * three banks make the next triangle: strips and fans (Mesa's
++         * MGA_WA_TRISTRIP_T0 and MGA_WA_TRIFAN_T0; checked on a real G400 by
++         * MGA-Glide's WARPTRI seq, 2026-10-27). */
++        const int bank = size > 8 ? 16 : 8;
++        int       slot;
++        mystique->warp.vs[mystique->warp.vdw++] = val;
++        if (mystique->warp.vdw < size)
++            return;
++        mystique->warp.vdw = 0;
++        slot = (int) ((seq >> (6 * mystique->warp.seqptr)) & 63) / bank;
++        if (slot > 2)
++            slot = 2;
++        memcpy(mystique->warp.v[slot], mystique->warp.vs, (size_t) size * 4);
++        if (++mystique->warp.seqptr > (int) ((seq >> 24) & 3))
++            mystique->warp.seqptr = 0;
++    }
+     r.pipe       = mystique->warp.pipe;
+     r.dwgctl     = mystique->dwgreg.dwgctrl;
+     r.maccess    = mystique->maccess;

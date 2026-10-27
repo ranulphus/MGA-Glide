@@ -48,6 +48,13 @@ int  warp_vertices(const mga_wvtx *v, int n);
  * NULL when there is no stream (warp_vertices then). */
 uint32_t *warp_reserve(int n, int *dwords);
 void warp_commit(int n);
+/* A strip (fan 0) or fan (fan 1) of n vertices by the WARPs' sequencer, as
+ * GL_TRIANGLE_STRIP and GL_TRIANGLE_FAN make triangles of them (any
+ * winding: the WARPs cull nothing): room for them in the DMA stream, 8
+ * dwords each, then warp_commit_seq(n). NULL for the T2 pipes (or as
+ * warp_reserve): the caller sends triangles. */
+uint32_t *warp_reserve_seq(int fan, int n, int *dwords);
+void warp_commit_seq(int n);
 /* Diagnostic: a list of DMAPAD packets (up to the list's size) fetched by
  * the primary channel; its bytes, and the ticks of tsc() it took in *ticks. */
 uint32_t warp_dma_bandwidth(uint32_t bytes, uint64_t (*tsc)(void), uint64_t *ticks, void (*flush)(void));
