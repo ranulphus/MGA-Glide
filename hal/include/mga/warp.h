@@ -48,6 +48,9 @@ int  warp_vertices(const mga_wvtx *v, int n);
  * NULL when there is no stream (warp_vertices then). */
 uint32_t *warp_reserve(int n, int *dwords);
 void warp_commit(int n);
+/* Diagnostic: a list of DMAPAD packets (up to the list's size) fetched by
+ * the primary channel; its bytes, and the ticks of tsc() it took in *ticks. */
+uint32_t warp_dma_bandwidth(uint32_t bytes, uint64_t (*tsc)(void), uint64_t *ticks);
 /* The DMA window back in general-purpose mode, the WARP suspended (before
  * the engine is used without it, or by another program). */
 void warp_stop(void);

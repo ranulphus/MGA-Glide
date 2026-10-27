@@ -447,6 +447,8 @@ static int ensure_block(int ri)
 static int last_hwfmt = HW_TW16;
 int tex_level_alpha_class(void) { return last_hwfmt; }
 
+uint32_t tex_vram_gen;
+
 int tex_bind_level(GrLOD_t lod, const tex_variant *var, tex_level_hw *hw)
 {
     uint32_t vkey = tex_variant_key(var);
@@ -485,6 +487,7 @@ int tex_bind_level(GrLOD_t lod, const tex_variant *var, tex_level_hw *hw)
         for (y = 0; y < hw_h; y++)
             memcpy((void *)(mga_fb + lv->org + (uint32_t)(y * hw_w * 2)), staging + y * hw_w, (size_t)hw_w * 2);
         r->hw_valid[lod] = 1;
+        tex_vram_gen++;
         PROF_BACK(po);
     }
     *hw = r->hw[lod];

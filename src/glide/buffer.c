@@ -16,6 +16,7 @@ static void present(uint32_t src, int to_front)
     engine_present(&rs, &ds, mg.plan.dx, mg.plan.dy, mg.plan.dw, mg.plan.dh,
                    mg_config.scale_filter ? MGA_PRESENT_BILINEAR : MGA_PRESENT_NEAREST);
     FPU_LEAVE();
+    mg_state_forget();
     mg.dirty |= MG_DIRTY_TARGET | MG_DIRTY_CLIP | MG_DIRTY_RASTER;
 }
 

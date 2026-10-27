@@ -463,6 +463,28 @@ void warp_tex(int map, int log2w, int log2h, uint32_t texctl2)
     setup_stale = 1;                    /* (setup_triangle's TEXWIDTH/TEXHEIGHT shadows) */
 }
 
+/* Diagnostic: bytes of DMAPAD packets fetched by the primary channel, and
+ * the TSC ticks it took (0 when there is no stream). */
+uint32_t warp_dma_bandwidth(uint32_t bytes, uint64_t (*tsc)(void), uint64_t *ticks)
+{
+    uint32_t n = 0, packets;
+    uint64_t t0;
+    if (dma_state <= 0 || !mga_cmd_open)
+        return 0;
+    if (mga_dma_pending)
+        dma_flush();
+    packets = bytes / 20u;
+    if (packets * 5u > LIST_BYTES / 4u)
+        packets = LIST_BYTES / 4u / 5u;
+    for (n = 0; n < packets * 4u; n++)
+        list_put(DMAREG(MGAREG_DMAPAD), 0);
+    t0 = tsc();
+    dma_kick();
+    dma_wait();
+    *ticks = tsc() - t0;
+    return packets * 20u;
+}
+
 uint32_t *warp_reserve(int n, int *dwords)
 {
     int dw;

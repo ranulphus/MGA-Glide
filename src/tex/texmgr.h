@@ -57,6 +57,9 @@ void tex_heap_init(uint32_t start, uint32_t end);
 /* Ensure level 'lod' of the current source is resident; fills *hw.
  * Returns 0, or -1 when there is no usable texture (draw with white). */
 int  tex_bind_level(GrLOD_t lod, const tex_variant *var, tex_level_hw *hw);
+/* Counts the levels written into VRAM: texture state written before one is
+ * written again (on the G400 a TEXORG write empties its texture cache). */
+extern uint32_t tex_vram_gen;
 /* Alpha at a texel is binary (0/255) for the bound texture's level? Used
  * to decide whether an alpha test can use the hardware key directly. */
 int  tex_level_alpha_class(void);

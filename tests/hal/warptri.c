@@ -157,7 +157,7 @@ int main(int argc, char **argv)
     static const vtx g[3] = { { 40, 30, 0, 255, 0, 0 }, { 290, 60, 0, 0, 255, 0 }, { 120, 200, 0, 0, 0, 255 } };
     static const vtx z1[3] = { { 30, 260, 1000, 255, 255, 0 }, { 280, 270, 60000, 255, 255, 0 }, { 150, 460, 30000, 255, 255, 0 } };
     static const vtx z2[3] = { { 40, 450, 60000, 0, 255, 255 }, { 290, 300, 1000, 0, 255, 255 }, { 200, 470, 30000, 0, 255, 255 } };
-    int pipe = 0, count = 4000, i, ok, pitch, cover, colour, drawn, starts = 0, reload = 0, keep = 0;
+    int pipe = 0, count = 4000, i, ok, pitch, cover, colour, drawn, starts = 0, reload = 0, keep = 0, dmabw = 0;
     mga_vbe_mode mode;
     mga_target tg;
     uint64_t t0, t1;
@@ -173,6 +173,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "reload")) reload = 1;
         else if (!strcmp(argv[i], "keep")) keep = 1;
         else if (!strcmp(argv[i], "noreset")) warp_reset_before_load = 0;
+        else if (!strcmp(argv[i], "dmabw")) dmabw = 1;
     }
     hx_init(1, argv, "warptri");
     ok = mga_find(&mga) == 0 && mga_map(&mga) == 0;
@@ -196,6 +197,24 @@ int main(int argc, char **argv)
     hx_log("HX-STAT warptri pipe=%d status=%08lx opmode=%08lx", pipe, (unsigned long)MGA_RD32(MGAREG_STATUS),
            (unsigned long)opmode_saved);
 
+    if (dmabw) {
+        uint64_t ticks = 0, best = ~(uint64_t)0;
+        uint32_t got = 0;
+        int k;
+        if (warp_select(pipe) != 0) {
+            hx_test("dmabw", 0, "the WARP did not start");
+            goto out;
+        }
+        for (k = 0; k < 20; k++) {
+            got = warp_dma_bandwidth(8192, rdtsc, &ticks);
+            if (got && ticks < best)
+                best = ticks;
+        }
+        hx_log("HX-STAT warptri dmabw bytes=%lu ticks=%lu mb_s=%lu", (unsigned long)got, (unsigned long)best,
+               got && best ? (unsigned long)((double)got * 398.0 / (double)best) : 0ul);
+        hx_test("dmabw", got != 0, "%lu bytes", (unsigned long)got);
+        goto out;
+    }
     if (starts > 0) {
         static const vtx s1[3] = { { 20, 20, 0, 255, 255, 255 }, { 60, 22, 0, 255, 255, 255 }, { 30, 50, 0, 255, 255, 255 } };
         int k, x, y, fails = 0, vfails = 0, blank = 0;

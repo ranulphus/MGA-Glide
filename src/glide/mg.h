@@ -97,6 +97,7 @@ void mg_fatal(const char *msg);
 /* state.c */
 void mg_state_defaults(void);
 void mg_validate(void);
+void mg_state_forget(void);        /* draw.c: the texture state and ALPHACTRL to be written again */
 void mg_warp_stop(void);           /* draw.c: the WARP suspended, its DMA stream sent */
 uint32_t mg_color_to_argb(GrColor_t c);
 GrColor_t mg_argb_to_color(uint32_t argb);

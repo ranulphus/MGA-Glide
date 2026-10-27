@@ -336,6 +336,62 @@ typedef struct {
     uint32_t    texctl2;      /* G200: TEXCTL2 (specular enable) */
 } draw_opts;
 
+/* The texture registers and ALPHACTRL as last written, so a triangle leaves
+ * out writes of the values they hold (each write also ends the WARP's
+ * vertex run in the DMA stream, and costs the chip a secondary transfer).
+ * Forgotten when anything else may have changed them: a level written into
+ * VRAM (the G400's texture cache empties on TEXORG), an engine reset, a new
+ * frame (the scaled present samples its own texture). */
+static struct { int valid, tex; uint32_t frame, resets, vram_gen, alphactrl; mga_texstate t; } scache;
+
+/* Forgotten by the present (buffer.c), which writes ALPHACTRL and the
+ * texture registers for its own scaling. */
+void mg_state_forget(void)
+{
+    scache.valid = 0;
+}
+
+static int scache_fresh(void)
+{
+    return scache.valid && scache.frame == mg.frame && scache.resets == engine_resets &&
+           scache.vram_gen == tex_vram_gen;
+}
+
+static void scache_keep(const mga_texstate *t, uint32_t alphactrl)
+{
+    scache.valid = 1;
+    scache.frame = mg.frame;
+    scache.resets = engine_resets;
+    scache.vram_gen = tex_vram_gen;
+    scache.alphactrl = alphactrl;
+    scache.tex = t != NULL;
+    if (t)
+        scache.t = *t;
+}
+
+/* 1 when the texture state and ALPHACTRL already hold these values;
+ * otherwise records them (the caller writes them). */
+static int state_cached(const mga_texstate *t, uint32_t alphactrl)
+{
+    if (scache_fresh() && scache.tex && scache.alphactrl == alphactrl && !memcmp(&scache.t, t, sizeof *t))
+        return 1;
+    scache_keep(t, alphactrl);
+    return 0;
+}
+
+/* The same for an untextured draw's ALPHACTRL (the texture state is kept). */
+static int alphactrl_cached(uint32_t alphactrl)
+{
+    if (scache_fresh() && scache.alphactrl == alphactrl)
+        return 1;
+    if (scache_fresh() && scache.tex) {
+        scache.alphactrl = alphactrl;
+        return 0;
+    }
+    scache_keep(NULL, alphactrl);
+    return 0;
+}
+
 static void emit_texture_state(const tex_level_hw *hw, int modulate, const draw_opts *o,
                                const uint32_t *mip_org, int mip_n)
 {
@@ -351,6 +407,8 @@ static void emit_texture_state(const tex_level_hw *hw, int modulate, const draw_
     t.mip_n = mip_n;
     for (k = 0; k < mip_n && k < 5; k++)
         t.mip_org[k] = mip_org[k];
+    if (state_cached(&t, o->alphactrl))
+        return;
     tex_emit(&t);
     fifo_reserve(1);
     MGA_WR32(MGAREG_ALPHACTRL, o->alphactrl);
@@ -480,8 +538,32 @@ static void draw_band(const mga_svtx *a0, const mga_svtx *b0, const mga_svtx *c0
     if (mg_log_level() >= MG_LOG_TRACE)
         mg_log(MG_LOG_TRACE, "band lod=%d rows=%d..%d org=%x tw=%d th=%d fmt=%d mod=%d", lod, ctx->clip_y0,
                ctx->clip_y1, hw.org, hw.w_log2, hw.h_log2, hw.hwfmt, plan->modulate);
-    if (row0 <= 0 && row1 >= mg.rh && !F && warp_tri(&sa, &sb, &sc, ctx) == 0)
-        return;                         /* (a band of rows needs the CPU's row clip) */
+    if (warp_ok > 0 && !(ctx->flags & MGA_S_TEX2) && !F) {
+        /* Every band of levels through the WARP, a band as the whole
+         * triangle under the clip narrowed to its rows: the same depths and
+         * edges in every band and every pass (a surface's passes mixing the
+         * WARP and the CPU's setup flickered where their depths differed).
+         * A band with its own fog fit stays on the CPU: the fit holds
+         * within the band and its vertices' factors leave 0..255, which a
+         * WARP vertex's fog byte can't carry (conformance t17). */
+        const int banded = row0 > 0 || row1 < mg.rh;
+        mga_engine_state es;
+        int r;
+        if (banded) {
+            int y0, y1;
+            engine_save(&es);
+            y0 = es.clip[1] > row0 ? es.clip[1] : row0;
+            y1 = es.clip[3] < row1 ? es.clip[3] : row1;
+            if (y1 <= y0)
+                return;                 /* (none of its rows visible) */
+            engine_set_clip(es.clip[0], y0, es.clip[2], y1);
+        }
+        r = warp_tri(&sa, &sb, &sc, ctx);
+        if (banded)
+            engine_set_clip(es.clip[0], es.clip[1], es.clip[2], es.clip[3]);
+        if (r == 0)
+            return;
+    }
     cpu_tri(&sa, &sb, &sc, ctx);
 }
 
@@ -901,7 +983,7 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
         ctx.dwgctl |= DWG_OPCOD_TRAP;
         if (plan.color_src == CS_ITERATED || plan.color_src == CS_ITER_ALPHA || plan.color_src == CS_SOFT)
             ctx.flags |= MGA_S_COLOR;
-        if (mga.has_alpha_blend) {
+        if (mga.has_alpha_blend && !alphactrl_cached(opts.alphactrl)) {
             /* The G200 blends and alpha-tests plain trapezoids too. */
             fifo_reserve(1);
             MGA_WR32(MGAREG_ALPHACTRL, opts.alphactrl);
