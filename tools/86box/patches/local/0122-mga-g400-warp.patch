@@ -1,0 +1,2396 @@
+--- /dev/null
++++ b/src/include/86box/vid_mga_warp.h
+@@ -0,0 +1,30 @@
++/* MGA-Glide local patch: the G400's WARP setup engine, at a high level
++ * (src/video/vid_mga_warp.c). */
++#ifndef VIDEO_MGA_WARP_H
++#define VIDEO_MGA_WARP_H
++#include <stdint.h>
++
++/* Pipe flags, as Linux's mga_drm.h numbers the G400's pipes. */
++#define MGAWARP_F  0x1  /* fog */
++#define MGAWARP_A  0x2  /* alpha */
++#define MGAWARP_S  0x4  /* specular */
++#define MGAWARP_T2 0x8  /* two textures */
++
++/* The pipe whose microcode starts at code (at most len bytes), or -1. */
++int mgawarp_pipe_of(const uint8_t *code, int len);
++
++/* What a triangle's setup needs of the chip's registers. */
++typedef struct {
++    int      pipe;                  /* MGAWARP_* */
++    uint32_t dwgctl, maccess, wflag;
++    uint32_t texctl, texwidth, texheight;       /* map 0 */
++    uint32_t texctl1, texwidth1, texheight1, texctl2_1;   /* map 1 (T2 pipes) */
++} mgawarp_regs;
++
++/* One triangle from three vertices as the WARP takes them (Mesa's mga
++ * vertex: x, y, z, 1/w, BGRA, specular BGR with fog, u0, v0 [, u1, v1]):
++ * the trapezoid registers it would write, through wr. */
++void mgawarp_triangle(const uint32_t *v0, const uint32_t *v1, const uint32_t *v2, const mgawarp_regs *r,
++                      void (*wr)(void *p, uint32_t reg, uint32_t val), void *p);
++
++#endif
+--- a/src/video/CMakeLists.txt
++++ b/src/video/CMakeLists.txt
+@@ -148,6 +148,7 @@
+ 
+     # Matrox
+     vid_mga.c
++    vid_mga_warp.c
+ 
+     # NVidia (pending)
+     nv/nv_rivatimer.c
+@@ -187,3 +188,6 @@
+ if(NOT MSVC AND (ARCH STREQUAL "i386" OR ARCH STREQUAL "x86_64"))
+     target_compile_options(voodoo PRIVATE "-msse2")
+ endif()
++
++# MGA-Glide local patch: the WARP model includes MGA-Glide's HAL setup (mgahal/).
++set_property(SOURCE vid_mga_warp.c APPEND PROPERTY INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/mgahal)
+--- /dev/null
++++ b/src/video/mgahal/LICENSE
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2026 The Nulph
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+--- /dev/null
++++ b/src/video/mgahal/mga/fp.h
+@@ -0,0 +1,149 @@
++/* fp.h - x87 control-word handling for code running inside a game.
++ *
++ * Games often run the FPU at 24-bit precision and may change rounding.
++ * Entry points that do setup maths switch to round-to-nearest, 53-bit,
++ * all exceptions masked, and restore the game's control word on exit. */
++#ifndef MGA_FP_H
++#define MGA_FP_H
++#include "mga/types.h"
++
++#if defined(__WATCOMC__) && defined(__386__)
++unsigned short fp_get_cw(void);
++#pragma aux fp_get_cw = \
++    "sub esp, 4" \
++    "fnstcw [esp]" \
++    "movzx eax, word ptr [esp]" \
++    "add esp, 4" \
++    value [ax];
++void fp_set_cw(unsigned short cw);
++#pragma aux fp_set_cw = \
++    "push eax" \
++    "fldcw [esp]" \
++    "pop eax" \
++    parm [ax];
++#  define FPU_ENTER() unsigned short fp_saved_cw_ = fp_get_cw(); fp_set_cw(0x027F)
++#  define FPU_LEAVE() fp_set_cw(fp_saved_cw_)
++#elif defined(__GNUC__) && (defined(__i386__) || defined(__x86_64__))
++MGA_INLINE unsigned short fp_get_cw(void) { unsigned short cw; __asm__ __volatile__("fnstcw %0" : "=m"(cw)); return cw; }
++MGA_INLINE void fp_set_cw(unsigned short cw) { __asm__ __volatile__("fldcw %0" : : "m"(cw)); }
++#  define FPU_ENTER() unsigned short fp_saved_cw_ = fp_get_cw(); fp_set_cw(0x027F)
++#  define FPU_LEAVE() fp_set_cw(fp_saved_cw_)
++#else
++#  define FPU_ENTER() ((void)0)
++#  define FPU_LEAVE() ((void)0)
++#endif
++
++/* Float to integer without changing the control word. A C cast truncates,
++ * so on the x87 the compiler wraps each FISTP in two FLDCWs, which stall a
++ * P6 (a cast cost 35 emulated cycles, setup's fx() 91). FISTP alone rounds
++ * in the current mode and lands on floor(v) or ceil(v), so one comparison
++ * makes floor or truncation exact in any rounding and precision mode.
++ *   mga_irint(v)    v rounded in the current mode (what lrint() does)
++ *   mga_ifloor(v)   floor(v), exactly
++ *   mga_itrunc(v)   v truncated toward zero, exactly
++ * valid for -2^31+1 < v < 2^31-1 (callers check; NaN fails such a check);
++ * the 64-bit forms for |v| < 2^62. 86Box's FISTP rounds tiny negatives
++ * (|v| < 2^-53) to +1 in round-to-nearest (x87_fround: floor(v + 1.0) is
++ * 1), so the floor steps down twice if it has to; real x87s never need the
++ * second step. Exact in every mode means the same
++ * results as the casts they replace: tests/unit/test_fp.c (host, x87) and
++ * tests/hal/fpcheck.c (Watcom and DJGPP, in 86Box) check it. */
++#if defined(__GNUC__) && defined(__i386__)
++MGA_INLINE int32_t mga_irint(double v)
++{
++    int32_t r;
++    __asm__ __volatile__("fistpl %0" : "=m"(r) : "t"(v) : "st");
++    return r;
++}
++MGA_INLINE int64_t mga_irint64(double v)
++{
++    int64_t r;
++    __asm__ __volatile__("fistpll %0" : "=m"(r) : "t"(v) : "st");
++    return r;
++}
++#  define MGA_FISTP 1
++#elif defined(__WATCOMC__) && defined(__386__)
++int32_t mga_irint(double v);
++#pragma aux mga_irint = \
++    "sub esp, 4" \
++    "fistp dword ptr [esp]" \
++    "pop eax" \
++    parm [8087] value [eax] modify exact [eax 8087];
++int64_t mga_irint64(double v);
++#pragma aux mga_irint64 = \
++    "sub esp, 8" \
++    "fistp qword ptr [esp]" \
++    "pop eax" \
++    "pop edx" \
++    parm [8087] value [edx eax] modify exact [eax edx 8087];
++#  define MGA_FISTP 1
++#endif
++
++#ifdef MGA_FISTP
++MGA_INLINE int32_t mga_ifloor(double v)
++{
++    int32_t r = mga_irint(v);
++    if ((double)r > v) {
++        r--;
++        if ((double)r > v)
++            r--;
++    }
++    return r;
++}
++MGA_INLINE int32_t mga_itrunc(double v)
++{
++    int32_t r = mga_ifloor(v);
++    return v < 0 && (double)r != v ? r + 1 : r;
++}
++MGA_INLINE int64_t mga_ifloor64(double v)
++{
++    int64_t r = mga_irint64(v);
++    if ((double)r > v) {
++        r--;
++        if ((double)r > v)
++            r--;
++    }
++    return r;
++}
++MGA_INLINE int64_t mga_itrunc64(double v)
++{
++    int64_t r = mga_ifloor64(v);
++    return v < 0 && (double)r != v ? r + 1 : r;
++}
++#else
++/* Other targets (the x86-64 host build): the plain conversions. */
++MGA_INLINE int32_t mga_itrunc(double v) { return (int32_t)v; }
++MGA_INLINE int32_t mga_ifloor(double v) { int32_t r = (int32_t)v; return (double)r > v ? r - 1 : r; }
++MGA_INLINE int64_t mga_itrunc64(double v) { return (int64_t)v; }
++MGA_INLINE int64_t mga_ifloor64(double v) { int64_t r = (int64_t)v; return (double)r > v ? r - 1 : r; }
++#  if defined(__GNUC__)
++MGA_INLINE int32_t mga_irint(double v) { return (int32_t)__builtin_lrint(v); }
++MGA_INLINE int64_t mga_irint64(double v) { return (int64_t)__builtin_llrint(v); }
++#  endif
++#endif
++
++/* lrint() for code inside FPU_ENTER (round to nearest): FISTP, corrected
++ * where 86Box's rounds a tiny negative to +1 (above). On an x87 in that
++ * mode the result is never more than half above v, so the step never
++ * fires; DJGPP's lrint() gets the 86Box case right, and so must this. */
++MGA_INLINE int32_t mga_irint_nearest(double v)
++{
++    int32_t r = mga_irint(v);
++    return (double)r - v > 0.5 ? r - 1 : r;
++}
++
++/* floor() without the C maths library (the DLL links no libm). Exact for
++ * |v| < 2^31; larger magnitudes are returned unchanged (already integral
++ * at double precision for our uses, or clamped by the caller). */
++MGA_INLINE double mga_floor(double v)
++{
++    double t;
++    if (v > -2147483647.0 && v < 2147483647.0)
++        return (double)mga_ifloor(v);
++    if (v >= 2147483647.0 || v <= -2147483647.0)
++        return v;
++    t = (double)(int32_t)v;             /* NaN */
++    return t > v ? t - 1.0 : t;
++}
++
++#endif
+--- /dev/null
++++ b/src/video/mgahal/mga/hal.h
+@@ -0,0 +1,262 @@
++/* hal.h - shared Matrox HAL (PRD D3): device discovery, capabilities,
++ * mode setting, drawing-engine control and trapezoid setup. */
++#ifndef MGA_HAL_H
++#define MGA_HAL_H
++#include "mga/types.h"
++
++typedef enum {
++    MGA_FAMILY_NONE = 0,
++    MGA_FAMILY_G100,
++    MGA_FAMILY_G200,
++    MGA_FAMILY_G400,      /* G400 and G450 */
++    MGA_FAMILY_G200E      /* server variants: reference only */
++} mga_family;
++
++typedef struct {
++    /* Identity. */
++    uint16_t   device_id;
++    uint8_t    revision;
++    uint8_t    bus, dev, fn;
++    mga_family family;
++    const char *name;
++    uint32_t   subsys;          /* subsystem vendor:device */
++    /* Apertures (physical) and PCI OPTION register. */
++    uint32_t   fb_phys, fb_size;
++    uint32_t   mmio_phys;
++    uint32_t   iload_phys;
++    uint32_t   option;
++    uint32_t   vram_bytes;
++    int        emulated;        /* 86Box unit tester present */
++    /* Capabilities (PRD §5.3; plan §3). */
++    uint8_t    fifo_depth, fifo_mask;
++    uint8_t    max_mip_levels;  /* 1 (G100), 5 (G200), 11 (G400) */
++    uint8_t    ar_bits;         /* AR0/2/4/5/6 width, signed: 18 (G100, G200), 22 (G400); 0 = unlimited */
++    uint8_t    min_tex_dim;
++    uint16_t   max_tex_size;
++    unsigned   has_dwgsync:1, has_dstorg:1, has_ydstorg:1, zorg_ydst_relative:1,
++               has_texctl2:1, has_alpha_blend:1, has_alpha_test:1, has_tlut:1,
++               has_specular:1, has_decalblend:1, fog_textrap_only:1,
++               alphasel_tex_always:1, blk_clear_ok:1, g400_clip_quirk:1,
++               has_dual_tex:1,  /* G400: two texture maps, TDUALSTAGE combiner */
++               texel_centre:1;  /* bilinear filtering samples at texel centres itself (G400: bench-g400);
++                                   otherwise from texel corners, and tex_adjust_coords shifts half a texel */
++} mga_chip;
++
++extern mga_chip mga;                 /* the device in use */
++extern volatile uint8_t *mga_fb;     /* mapped framebuffer (BAR0) */
++
++/* pci.c / chip.c */
++uint32_t mga_pci_read32(int bus, int dev, int fn, int reg);
++void     mga_pci_write32(int bus, int dev, int fn, int reg, uint32_t v);
++int      mga_find(mga_chip *c);      /* 0 on success */
++int      mga_map(mga_chip *c);       /* maps MMIO + framebuffer */
++void     mga_unmap(void);
++const char *mga_family_name(mga_family f);
++int      mga_detect_emulator(void);
++void     mga_chip_caps(mga_chip *c);   /* fill capabilities from c->family */
++uint32_t mga_probe_vram(void);
++
++/* vbe.c: modes via the card BIOS (VBE 2.0+). */
++typedef struct {
++    uint16_t mode, width, height, bpp, pitch_bytes;
++    uint32_t lfb_phys;
++    uint8_t  red_size, red_pos, green_size, green_pos, blue_size, blue_pos;
++} mga_vbe_mode;
++int  vbe_find_mode(int w, int h, int bpp, mga_vbe_mode *out);
++int  vbe_enumerate(void (*cb)(const mga_vbe_mode *m, void *ctx), void *ctx);
++int  vbe_set_mode(const mga_vbe_mode *m, int pitch_px, int *actual_pitch_px);
++int  vbe_set_display_start(uint32_t byte_offset, int pitch_bytes, int bpp);
++void vbe_set_text_mode(void);
++int  vbe_version(void);
++uint32_t vbe_total_memory(void);   /* bytes, from the VBE info block (0 if unknown) */
++
++/* The mode planner: how a requested size is shown with the modes this
++ * card's BIOS offers (16 bpp means RGB565; only modes on the card's own
++ * aperture). In order of preference:
++ *   NATIVE   the BIOS has the size: draw straight into the display buffers;
++ *   ZOOM     (MGA_PLAN_ZOOM) the BIOS has twice the size: draw into the
++ *            display buffers at the BIOS pitch and turn on the chip's line
++ *            and pixel doubling (vbe_set_zoom), same monitor signal;
++ *   INTEGER  2x, 3x or 4x the size is a BIOS mode: draw into a render
++ *            buffer and scale it up at every swap (engine_present);
++ *   FILL     a CRT-era size (320x200, 640x200, 640x350, 640x400, 400x256,
++ *            512x256): stretched to fill the smallest 4:3 mode, as a CRT
++ *            showed it;
++ *   ASPECT   anything else: the smallest mode that holds it, scaled
++ *            evenly, centred with black bars;
++ *   TOPLEFT  (MGA_PLAN_TOPLEFT, instead of scaling) the smallest mode that
++ *            holds it, drawn 1:1 in its top-left corner.
++ * MGA_PLAN_FORCE takes the scaled path (INTEGER at 1x) even when the BIOS
++ * has the size: a test switch. dx, dy, dw, dh is where the picture lands
++ * in the display mode. */
++enum { MGA_FIT_NATIVE, MGA_FIT_ZOOM, MGA_FIT_INTEGER, MGA_FIT_FILL, MGA_FIT_ASPECT, MGA_FIT_TOPLEFT };
++#define MGA_PLAN_ZOOM    1u
++#define MGA_PLAN_TOPLEFT 2u
++#define MGA_PLAN_FORCE   4u
++typedef struct {
++    int          w, h;             /* the requested size: what the program draws */
++    mga_vbe_mode disp;             /* the BIOS mode shown */
++    int          fit;              /* MGA_FIT_* */
++    int          zoom;             /* 2 for MGA_FIT_ZOOM, else 1 */
++    int          dx, dy, dw, dh;   /* the picture's rectangle in the display mode */
++} mga_mode_plan;
++int  mga_plan_from_list(const mga_vbe_mode *list, int n, int w, int h, int bpp, unsigned flags, mga_mode_plan *p);
++int  vbe_plan_mode(int w, int h, int bpp, unsigned flags, mga_mode_plan *p);   /* 0, or -1: nothing fits */
++const char *mga_fit_name(int fit);
++int  mga_pow2_pitch(int w);        /* a render surface's pitch: the next power of two, at least 32 */
++/* Line and pixel doubling for MGA_FIT_ZOOM: CRTC9's maxscan repeats lines
++ * and XZOOMCTRL repeats pixels (factor 1, 2 or 4), after vbe_set_mode.
++ * Undone by vbe_set_zoom(1) and before text mode. */
++void vbe_set_zoom(int factor);
++
++/* engine.c */
++typedef struct {
++    uint32_t color_off;    /* byte offset of the colour buffer in VRAM */
++    uint32_t z_off;        /* byte offset of the depth buffer (0 = none) */
++    int      pitch_px;     /* shared by colour and depth */
++    int      bpp;          /* 16 or 32 (8 for 2D drawing only) */
++    int      zbits;        /* 16 or 32 */
++} mga_target;
++
++void     engine_init(int pitch_px, int bpp);
++/* Another program has used the engine since this copy of the HAL last did
++ * (GLOS's GPU lock changing hands): forget what is known of the registers
++ * and write the current target, clip and MACCESS again. */
++void     engine_resync(void);
++int      engine_sync(uint32_t timeout_us);     /* 0 ok, -1 timeout (engine reset) */
++int      engine_idle(void);                    /* 1 when the FIFO is empty and the engine idle (no wait) */
++void     engine_reset(void);
++void     engine_set_target(const mga_target *t);
++void     engine_set_maccess_flags(uint32_t flags);     /* MACCESS_NODITHER / MACCESS_FOGEN */
++void     engine_set_clip(int x0, int y0, int x1, int y1);   /* inclusive-exclusive */
++void     engine_fill(int x, int y, int w, int h, uint32_t value);
++uint32_t engine_colour(uint32_t value);                /* a pixel value repeated to 32 bits, at the target's depth */
++void     engine_fill_depth(int x, int y, int w, int h, uint32_t zvalue);
++void     engine_tlut_load(uint32_t off, int first, int count);   /* G200+: texture LUT from VRAM (RGB565) */
++/* G200+: write a w x h rectangle at (x, y) of the surface at VRAM offset off
++ * (pitch_px pixels a line, bpp 8 or 16) through the engine (ILOAD), queued in
++ * order with drawing. begin returns the dwords per row (pixels in the
++ * surface's format, first pixel in the low bits, each row padded to a
++ * dword), or 0 when the surface can't be loaded so (pitch not a multiple of
++ * 32 pixels, or 64 at 8 bpp; origin not 64-byte aligned); then exactly h
++ * calls of engine_iload_row, then engine_iload_end. */
++int      engine_iload_begin(uint32_t off, int pitch_px, int bpp, int x, int y, int w, int h);
++void     engine_iload_row(const uint32_t *d);
++void     engine_iload_end(void);
++
++/* 2D drawing (engine.c, blit.c; docs/matrox-2d.md). On the target
++ * (engine_set_target: its origin 64-byte aligned, its pitch a multiple of
++ * 32 pixels, 8, 16 or 32 bits a pixel) inside the clip, queued in order
++ * with other drawing; colours are pixel values in the target's format.
++ * engine_fill fills. */
++/* A rectangle of the target copied elsewhere on it; the two may overlap. */
++void     engine_copy(int sx, int sy, int dx, int dy, int w, int h);
++/* From another surface in VRAM of the target's depth (its origin a whole
++ * pixel, any pitch) to the target. */
++void     engine_copy_from(uint32_t src_off, int src_pitch_px, int sx, int sy, int dx, int dy, int w, int h);
++/* Colour expansion of one-bit pixels: a set bit draws fg, a clear one bg,
++ * or leaves the pixel as it was. From the CPU: rows stride bytes apart,
++ * the leftmost pixel in bit 7 of a row's first byte (as GLOS's glyphs and
++ * Windows' monochrome bitmaps are). */
++#define MGA_MONO_TRANSPARENT 1u              /* clear bits leave the pixel as it was */
++void     engine_mono(int x, int y, int w, int h, const uint8_t *bits, int stride, uint32_t fg, uint32_t bg,
++                     unsigned flags);
++/* From VRAM: engine_mono_store writes such rows at off (the engine must not
++ * be using those bytes; the G100 keeps them in its own bit order), and
++ * engine_mono_vram expands them. A G100's rows had best not cross a 2 MB
++ * boundary. */
++void     engine_mono_store(uint32_t off, const uint8_t *bits, int stride, int w, int h);
++void     engine_mono_vram(uint32_t off, int stride, int x, int y, int w, int h, uint32_t fg, uint32_t bg,
++                          unsigned flags);
++/* Pixels from the CPU in the target's format to (x, y) of the target,
++ * clipped: returns the dwords of each row (padded to a dword; 0 when it
++ * can't), then exactly h calls of engine_iload_row, then engine_iload_end. */
++int      engine_image_begin(int x, int y, int w, int h);
++
++/* cursor.c: the hardware cursor (64 x 64, of the chip's own DAC) and the
++ * display start through the CRTC. The image: rows of 8 bytes, the leftmost
++ * pixel in bit 7, an AND mask and an XOR mask as DOS and Windows have them
++ * (AND 0: colour 0 for XOR 0, colour 1 for XOR 1; AND 1: the screen, or the
++ * screen inverted for XOR 1), written to VRAM at off, a multiple of 1 KB in
++ * the first 16 MB (8 MB on a G100): 0, or -1. Colours are 0xRRGGBB.
++ * cursor_move takes the image's top left corner (as far as 63 pixels off
++ * the top or the left), and waits for the vertical retrace to end. */
++#define MGA_CURSOR_BYTES 1024u
++int      cursor_load(uint32_t off, const uint8_t and_mask[512], const uint8_t xor_mask[512]);
++void     cursor_colours(uint32_t c0, uint32_t c1);
++void     cursor_show(int on);
++void     cursor_move(int x, int y);
++/* The first byte shown (a multiple of 8, below 16 MB), from the next line
++ * on: call in the vertical blank (engine_vsync_wait) to change it between
++ * frames. 0, or -1. */
++int      crtc_set_start(uint32_t byte_off);
++int      engine_vsync_wait(uint32_t timeout_us);
++int      engine_in_vblank(void);
++uint32_t engine_vcount(void);
++extern const mga_target *engine_target;
++extern uint32_t engine_resets, engine_timeouts;
++/* The engine state the HAL owns (target, clip, MACCESS flags), saved and
++ * restored around work that borrows the engine, such as engine_present. */
++typedef struct { mga_target t; int clip[4]; uint32_t maccess_flags; } mga_engine_state;
++void     engine_save(mga_engine_state *s);
++void     engine_restore(const mga_engine_state *s);
++
++/* present.c: draw a 16-bit render surface onto a display surface, scaled
++ * to the rectangle (dx, dy, dw, dh), for the scaled fits of the mode
++ * planner. The render surface is sampled as one TW16 texture, so its pitch
++ * must be a power of two, a multiple of 32 and at most 2048 texels, its
++ * height at most 2048 and its offset 64-byte aligned (mga_present_ok).
++ * Nearest filtering gives exact pixel repetition at 2x (texel = floor of
++ * (pixel centre x source/destination + 1/64)); bilinear maps the
++ * first and last pixel centres to the first and last texel centres. The
++ * caller has finished drawing the render surface (engine drained) and runs
++ * inside its FPU guard. Overwritten and not restored, so the caller must
++ * re-emit them before its next draw: DWGCTL, TEXORG, TEXCTL, TEXCTL2,
++ * TEXFILTER, TEXTRANS, TEXWIDTH, TEXHEIGHT, TMR0-8, the DR registers,
++ * ALPHACTRL, PLNWT and, on the G400, TDUALSTAGE0/1. Target, clip and MACCESS
++ * flags are restored; setup_stats is left as it was. */
++typedef struct { uint32_t off; int w, h, pitch_px; } mga_surface;
++enum { MGA_PRESENT_NEAREST, MGA_PRESENT_BILINEAR };
++int      mga_present_ok(const mga_surface *src);
++void     engine_present(const mga_surface *src, const mga_surface *dst, int dx, int dy, int dw, int dh,
++                        int filter);
++
++/* dac.c */
++void dac_set_ramp(const uint8_t ramp[256]);
++
++/* vram.c: the card's memory shared out among owners (any non-zero tag the
++ * caller chooses): blocks in address order covering [base, end), each free
++ * or one owner's, neighbouring free blocks merged. Functions returning int
++ * give 0, or -1 (no room, the table full, a bad argument). */
++#define MGA_VRAM_BLOCKS 256
++#define MGA_VRAM_TOP    1u           /* vram_alloc: as high as it fits, not as low */
++typedef struct { uint32_t off, size, owner; } mga_vram_block;
++typedef struct {
++    uint32_t base, end;
++    int n;
++    mga_vram_block b[MGA_VRAM_BLOCKS];
++} mga_vram;
++void     vram_init(mga_vram *v, uint32_t base, uint32_t end);
++int      vram_alloc(mga_vram *v, uint32_t bytes, uint32_t align, unsigned flags, uint32_t owner, uint32_t *off);
++int      vram_reserve(mga_vram *v, uint32_t off, uint32_t bytes, uint32_t owner);   /* a given place */
++int      vram_free(mga_vram *v, uint32_t off);                 /* a block, by where it starts */
++void     vram_free_owner(mga_vram *v, uint32_t owner);         /* all of an owner's */
++uint32_t vram_size_of(const mga_vram *v, uint32_t off);        /* an owned block's size, 0 if none starts there */
++uint32_t vram_free_bytes(const mga_vram *v, uint32_t *largest);
++uint32_t vram_owned_bytes(const mga_vram *v, uint32_t owner);
++
++/* fifo.c: the single choke point for register writes (PRD §10). */
++void fifo_reserve(int n);
++void fifo_reset(void);
++/* fifo_reserve's fast path, inline: most reservations fit the slots the
++ * last FIFOSTATUS read found free, and cost no call. */
++extern int mga_fifo_free;
++MGA_INLINE void fifo_need(int n)
++{
++    if (mga_fifo_free >= n)
++        mga_fifo_free -= n;
++    else
++        fifo_reserve(n);
++}
++
++#endif
+--- /dev/null
++++ b/src/video/mgahal/mga/mmio.h
+@@ -0,0 +1,43 @@
++/* mmio.h - access to the MGA control aperture.
++ *
++ * All drawing-register writes go through MGA_WR32 so the debug build can
++ * record them (register write trace, PRD §9) and the host build can feed
++ * them to the reference rasteriser. */
++#ifndef MGA_MMIO_H
++#define MGA_MMIO_H
++#include "mga/types.h"
++#include "mga/prof.h"
++
++extern volatile uint8_t *mga_mmio;
++
++/* Register write trace (hal/src/debug/regtrace.c). Recording is compiled
++ * into MGA_WR32 with MGA_TRACE_MMIO or MG_DEBUG; the functions always exist. */
++void     mga_trace_record(uint32_t off, uint32_t v);
++void     mga_trace_record_at(uint32_t off, uint32_t v, const char *file, int line);
++void     mga_trace_dump(void (*out)(const char *line), int max);   /* oldest first; max 0 = all */
++uint32_t mga_trace_count(void);
++void     mga_trace_clear(void);
++
++#if defined(MGA_HOST)
++void     mga_host_wr32(uint32_t off, uint32_t v);
++uint32_t mga_host_rd32(uint32_t off);
++void     mga_host_wr8(uint32_t off, uint8_t v);
++uint8_t  mga_host_rd8(uint32_t off);
++#  define MGA_WR32(off, v) mga_host_wr32((off), (v))
++#  define MGA_RD32(off)    mga_host_rd32(off)
++#  define MGA_WR8(off, v)  mga_host_wr8((off), (v))
++#  define MGA_RD8(off)     mga_host_rd8(off)
++#else
++#  if defined(MG_DEBUG) || defined(MGA_TRACE_MMIO)
++#    define MGA_TRACE(off, v) mga_trace_record_at((off), (v), __FILE__, __LINE__)
++#  else
++#    define MGA_TRACE(off, v) ((void)0)
++#  endif
++#  define MGA_WR32(off, v) do { MGA_TRACE((off), (v)); PROF_WR(); \
++        *(volatile uint32_t *)(mga_mmio + (off)) = (uint32_t)(v); } while (0)
++#  define MGA_RD32(off)    (*(volatile uint32_t *)(mga_mmio + (off)))
++#  define MGA_WR8(off, v)  (*(volatile uint8_t *)(mga_mmio + (off)) = (uint8_t)(v))
++#  define MGA_RD8(off)     (*(volatile uint8_t *)(mga_mmio + (off)))
++#endif
++
++#endif
+--- /dev/null
++++ b/src/video/mgahal/mga/prof.h
+@@ -0,0 +1,94 @@
++/* prof.h - exclusive cycle accounting by stage, for builds with MGA_PROF.
++ *
++ * One stage is current at a time. prof_switch(c) charges the cycles since
++ * the last switch (RDTSC; in 86Box the emulated CPU's cycles) to the current
++ * stage, makes c current and counts an entry; prof_back(o) returns to an
++ * earlier stage without counting one. Stage 0 (PROF_APP) is everything
++ * outside the library: the game. The HAL owns stages 1-7; MGA-Glide and
++ * DOS-GL number theirs from PROF_CLIENT. Each switch costs a few dozen
++ * cycles (measured and printed by the clients), so the timers sit at stage
++ * boundaries, never per pixel or per register. Needs a Pentium (RDTSC).
++ * Without MGA_PROF every macro is empty. */
++#ifndef MGA_PROF_H
++#define MGA_PROF_H
++#include "mga/types.h"
++
++enum {
++    PROF_APP,           /* outside the library */
++    PROF_FIFO,          /* fifo_reserve polling FIFOSTATUS */
++    PROF_SPLANE,        /* setup_triangle: sorting and plane gradients */
++    PROF_SINC,          /* setup_triangle: per-triangle increments */
++    PROF_STRAP,         /* setup_triangle: per trapezoid (edges, starts, start) */
++    PROF_CLIENT = 8,    /* the first stage a client may use */
++    PROF_N = 24
++};
++
++#ifdef MGA_PROF
++extern uint64_t prof_cyc[PROF_N];      /* cycles charged to each stage */
++extern uint32_t prof_n[PROF_N];        /* entries into each stage */
++extern uint64_t prof_t;                /* time of the last switch */
++extern int      prof_cur;              /* the current stage */
++extern uint32_t prof_wr, prof_fifo_rd; /* register writes, FIFOSTATUS reads */
++
++#  if defined(__WATCOMC__)
++uint64_t prof_rdtsc(void);
++#    pragma aux prof_rdtsc = 0x0F 0x31 value [edx eax] modify exact [eax edx];
++#  else
++MGA_INLINE uint64_t prof_rdtsc(void)
++{
++    uint32_t lo, hi;
++    __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
++    return ((uint64_t)hi << 32) | lo;
++}
++#  endif
++
++MGA_INLINE int prof_switch(int c)
++{
++    uint64_t t = prof_rdtsc();
++    int o = prof_cur;
++    prof_cyc[o] += t - prof_t;
++    prof_t = t;
++    prof_cur = c;
++    prof_n[c]++;
++    return o;
++}
++
++MGA_INLINE void prof_back(int c)
++{
++    uint64_t t = prof_rdtsc();
++    prof_cyc[prof_cur] += t - prof_t;
++    prof_t = t;
++    prof_cur = c;
++}
++
++/* Clear the counters and start timing now, in stage c. */
++MGA_INLINE void prof_reset(int c)
++{
++    int i;
++    for (i = 0; i < PROF_N; i++) {
++        prof_cyc[i] = 0;
++        prof_n[i] = 0;
++    }
++    prof_wr = prof_fifo_rd = 0;
++    prof_cur = c;
++    prof_t = prof_rdtsc();
++}
++
++#  define PROF_SWITCH(c) prof_switch(c)
++#  define PROF_BACK(o)   prof_back(o)
++#  define PROF_WR()      (prof_wr++)
++#  if defined(__GNUC__)
++MGA_INLINE void prof_scope_end_(int *o) { prof_back(*o); }
++/* GCC only: the rest of this block is stage c; the stage before comes back
++ * at any exit. */
++#    define PROF_SCOPE(c) int prof_scope_ __attribute__((cleanup(prof_scope_end_))) = prof_switch(c)
++#  endif
++#else
++MGA_INLINE int prof_switch_off(int c) { (void)c; return 0; }
++#  define PROF_SWITCH(c) prof_switch_off(c)
++#  define PROF_BACK(o)   ((void)(o))
++#  define PROF_WR()      ((void)0)
++#  define PROF_SCOPE(c)  ((void)0)
++#endif
++
++#endif
+--- /dev/null
++++ b/src/video/mgahal/mga/regs_mga.h
+@@ -0,0 +1,280 @@
++/* regs_mga.h - Matrox MGA drawing-engine and CRTC register map.
++ *
++ * Offsets and bit fields from the MGA-G100 (Feb 1998), MGA-G200 (Nov 1998)
++ * and MGA-G400 (Jun 1999) specifications, cross-checked against the X.org
++ * xf86-video-mga driver (MIT) and 86Box's vid_mga.c model. */
++#ifndef MGA_REGS_H
++#define MGA_REGS_H
++
++/* ---- Drawing registers (MMIO aperture, BAR1) ---------------------------- */
++#define MGAREG_DWGCTL       0x1C00
++#define MGAREG_MACCESS      0x1C04
++#define MGAREG_MCTLWTST     0x1C08
++#define MGAREG_ZORG         0x1C0C
++#define MGAREG_PAT0         0x1C10
++#define MGAREG_PAT1         0x1C14
++#define MGAREG_PLNWT        0x1C1C
++#define MGAREG_BCOL         0x1C20
++#define MGAREG_FCOL         0x1C24
++#define MGAREG_SRC0         0x1C30
++#define MGAREG_XYSTRT       0x1C40
++#define MGAREG_XYEND        0x1C44
++#define MGAREG_SHIFT        0x1C50
++#define MGAREG_DMAPAD       0x1C54
++#define MGAREG_SGN          0x1C58
++#define MGAREG_LEN          0x1C5C
++#define MGAREG_AR0          0x1C60
++#define MGAREG_AR1          0x1C64
++#define MGAREG_AR2          0x1C68
++#define MGAREG_AR3          0x1C6C
++#define MGAREG_AR4          0x1C70
++#define MGAREG_AR5          0x1C74
++#define MGAREG_AR6          0x1C78
++#define MGAREG_CXBNDRY      0x1C80
++#define MGAREG_FXBNDRY      0x1C84
++#define MGAREG_YDSTLEN      0x1C88
++#define MGAREG_PITCH        0x1C8C
++#define MGAREG_YDST         0x1C90
++#define MGAREG_YDSTORG      0x1C94
++#define MGAREG_YTOP         0x1C98
++#define MGAREG_YBOT         0x1C9C
++#define MGAREG_CXLEFT       0x1CA0
++#define MGAREG_CXRIGHT      0x1CA4
++#define MGAREG_FXLEFT       0x1CA8
++#define MGAREG_FXRIGHT      0x1CAC
++#define MGAREG_XDST         0x1CB0
++#define MGAREG_DR0          0x1CC0
++#define MGAREG_FOGSTART     0x1CC4
++#define MGAREG_DR2          0x1CC8
++#define MGAREG_DR3          0x1CCC
++#define MGAREG_DR4          0x1CD0
++#define MGAREG_FOGXINC      0x1CD4
++#define MGAREG_DR6          0x1CD8
++#define MGAREG_DR7          0x1CDC
++#define MGAREG_DR8          0x1CE0
++#define MGAREG_FOGYINC      0x1CE4
++#define MGAREG_DR10         0x1CE8
++#define MGAREG_DR11         0x1CEC
++#define MGAREG_DR12         0x1CF0
++#define MGAREG_FOGCOL       0x1CF4
++#define MGAREG_DR14         0x1CF8
++#define MGAREG_DR15         0x1CFC
++#define MGAREG_EXEC         0x0100      /* add to a drawing register to start the engine */
++#define MGAREG_DMAWIN       0x0000      /* 0000h-1BFFh: ILOAD data (pseudo-DMA window) */
++#define MGA_DMAWIN_SIZE     0x1C00
++
++#define MGAREG_FIFOSTATUS   0x1E10
++#define MGAREG_STATUS       0x1E14
++#define MGAREG_ICLEAR       0x1E18
++#define MGAREG_IEN          0x1E1C
++#define MGAREG_VCOUNT       0x1E20
++#define MGAREG_RST          0x1E40
++#define MGAREG_OPMODE       0x1E54
++#define OPMODE_DMAMOD_BLIT  (1u << 2)   /* DMA window writes are ILOAD data */
++#define MGAREG_PRIMADDRESS  0x1E58
++#define MGAREG_PRIMEND      0x1E5C
++
++#define MGAREG_TMR0         0x2C00      /* TMR0..TMR8 at +4 each */
++#define MGAREG_TMR(n)       (0x2C00 + 4 * (n))
++#define MGAREG_TEXORG       0x2C24
++#define MGAREG_TEXWIDTH     0x2C28
++#define MGAREG_TEXHEIGHT    0x2C2C
++#define MGAREG_TEXCTL       0x2C30
++#define MGAREG_TEXTRANS     0x2C34
++#define MGAREG_TEXTRANSHIGH 0x2C38      /* G200+ */
++#define MGAREG_TEXCTL2      0x2C3C      /* G200+ */
++#define MGAREG_SECADDRESS   0x2C40
++#define MGAREG_SECEND       0x2C44
++#define MGAREG_SOFTRAP      0x2C48
++#define MGAREG_DWGSYNC      0x2C4C      /* G200+ */
++#define MGAREG_DR0_Z32LSB   0x2C50
++#define MGAREG_DR0_Z32MSB   0x2C54
++#define MGAREG_TEXFILTER    0x2C58
++#define MGAREG_DR2_Z32LSB   0x2C60
++#define MGAREG_DR2_Z32MSB   0x2C64
++#define MGAREG_DR3_Z32LSB   0x2C68
++#define MGAREG_DR3_Z32MSB   0x2C6C
++#define MGAREG_ALPHASTART   0x2C70
++#define MGAREG_ALPHAXINC    0x2C74
++#define MGAREG_ALPHAYINC    0x2C78
++#define MGAREG_ALPHACTRL    0x2C7C
++#define MGAREG_SPECRSTART   0x2C80      /* G200+ specular start/xinc/yinc R,G,B */
++#define MGAREG_SPECRXINC    0x2C84
++#define MGAREG_SPECRYINC    0x2C88
++#define MGAREG_SPECGSTART   0x2C8C
++#define MGAREG_SPECGXINC    0x2C90
++#define MGAREG_SPECGYINC    0x2C94
++#define MGAREG_SPECBSTART   0x2C98
++#define MGAREG_SPECBXINC    0x2C9C
++#define MGAREG_SPECBYINC    0x2CA0
++#define MGAREG_TEXORG1      0x2CA4      /* G200+ mip origins */
++#define MGAREG_TEXORG2      0x2CA8
++#define MGAREG_TEXORG3      0x2CAC
++#define MGAREG_TEXORG4      0x2CB0
++#define MGAREG_SRCORG       0x2CB4
++#define MGAREG_DSTORG       0x2CB8
++
++/* VGA/CRTC through MMIO. */
++#define MGAREG_SEQ_INDEX    0x1FC4
++#define MGAREG_SEQ_DATA     0x1FC5
++#define MGAREG_CRTC_INDEX   0x1FD4
++#define MGAREG_CRTC_DATA    0x1FD5
++#define MGAREG_INSTS1       0x1FDA
++#define MGAREG_CRTCEXT_INDEX 0x1FDE
++#define MGAREG_CRTCEXT_DATA 0x1FDF
++/* RAMDAC. */
++#define MGAREG_PALWTADD     0x3C00      /* also the index of the indirect registers (X_DATAREG) */
++#define MGAREG_PALDATA      0x3C01
++#define MGAREG_PIXRDMSK     0x3C02
++#define MGAREG_PALRDADD     0x3C03
++#define MGAREG_X_DATAREG    0x3C0A
++#define MGAREG_CURPOSXL     0x3C0C      /* XL, XH, YL, YH: the cursor's bottom right corner + 1 */
++/* Indirect DAC registers. */
++#define XREG_XCURADDL       0x04        /* the cursor image's address, bits 17:10 */
++#define XREG_XCURADDH       0x05        /* bits 22:18 (G100), 23:18 (G200, G400) */
++#define XREG_XCURCTRL       0x06
++#define XCURCTRL_OFF        0x00
++#define XCURCTRL_XGA        0x02        /* planes 1, 0: 00 colour 0, 01 colour 1, 10 transparent, 11 inverted */
++#define XREG_XCURCOL0R      0x08        /* G, B follow; colour 1 at 0Ch, colour 2 at 10h */
++#define XREG_XCURCOL1R      0x0C
++/* CRTC: the display start. */
++#define CRTC_STARTADD_HI    0x0C        /* startadd<15:8> */
++#define CRTC_STARTADD_LO    0x0D        /* startadd<7:0> */
++#define CRTCEXT0            0x00        /* <3:0> startadd<19:16>, <6> startadd<20>; <5:4>, <7> kept */
++
++/* ---- DWGCTL ----------------------------------------------------------- */
++#define DWG_OPCOD_LINE_OPEN     0x0
++#define DWG_OPCOD_TRAP          0x4
++#define DWG_OPCOD_TEXTURE_TRAP  0x6
++#define DWG_OPCOD_BITBLT        0x8
++#define DWG_OPCOD_ILOAD         0x9
++#define DWG_OPCOD_IDUMP         0xA
++#define DWG_OPCOD_FBITBLT       0xC     /* the Millennium's: Reserved on the G100, G200 and G400 */
++#define DWG_ATYPE_RPL           (0u << 4)
++#define DWG_ATYPE_RSTR          (1u << 4)
++#define DWG_ATYPE_ZI            (3u << 4)
++#define DWG_ATYPE_BLK           (4u << 4)
++#define DWG_ATYPE_I             (7u << 4)
++#define DWG_LINEAR              (1u << 7)
++#define DWG_ZMODE_NOZCMP        (0u << 8)
++#define DWG_ZMODE_ZE            (2u << 8)
++#define DWG_ZMODE_ZNE           (3u << 8)
++#define DWG_ZMODE_ZLT           (4u << 8)
++#define DWG_ZMODE_ZLTE          (5u << 8)
++#define DWG_ZMODE_ZGT           (6u << 8)
++#define DWG_ZMODE_ZGTE          (7u << 8)
++#define DWG_SOLID               (1u << 11)
++#define DWG_ARZERO              (1u << 12)
++#define DWG_SGNZERO             (1u << 13)
++#define DWG_SHFTZERO            (1u << 14)
++#define DWG_BOP(x)              ((uint32_t)(x) << 16)
++#define DWG_BOP_COPY            DWG_BOP(0xC)
++#define DWG_TRANS(x)            ((uint32_t)(x) << 20)
++#define DWG_BLTMOD_BMONOLEF     (0x0u << 25)
++#define DWG_BLTMOD_BFCOL        (0x2u << 25)
++#define DWG_BLTMOD_BMONOWF      (0x4u << 25)    /* one-bit source, the first pixel in bit 7 of each byte */
++#define DWG_BLTMOD_BU32RGB      (0x7u << 25)
++#define DWG_PATTERN             (1u << 29)
++#define DWG_TRANSC              (1u << 30)
++#define DWG_CLIPDIS             (1u << 31)
++
++/* ---- MACCESS ------------------------------------------------------------- */
++#define MACCESS_PW8             0x0u
++#define MACCESS_PW16            0x1u
++#define MACCESS_PW32            0x2u
++#define MACCESS_PW24            0x3u
++#define MACCESS_ZW32            (1u << 3)
++#define MACCESS_MEMRESET        (1u << 15)
++#define MACCESS_FOGEN           (1u << 26)
++#define MACCESS_TLUTLOAD        (1u << 29)
++#define MACCESS_NODITHER        (1u << 30)
++#define MACCESS_DIT555          (1u << 31)
++
++/* ---- SGN ------------------------------------------------------------------ */
++#define SGN_SDYDXL              (1u << 0)
++#define SGN_SCANLEFT            (1u << 0)
++#define SGN_SDXL                (1u << 1)
++#define SGN_SDY                 (1u << 2)
++#define SGN_SDXR                (1u << 5)
++
++/* ---- STATUS ------------------------------------------------------------- */
++#define STATUS_VSYNCSTS         (1u << 3)
++#define STATUS_DWGENGSTS        (1u << 16)
++
++/* ---- TEXCTL -------------------------------------------------------------- */
++#define TEXCTL_TW4              0x0u
++#define TEXCTL_TW8              0x1u
++#define TEXCTL_TW15             0x2u
++#define TEXCTL_TW16             0x3u
++#define TEXCTL_TW12             0x4u
++#define TEXCTL_TW32             0x6u      /* G200+ */
++#define TEXCTL_TW422            0xAu      /* G200+ */
++#define TEXCTL_PALSEL(x)        ((uint32_t)(x) << 4)
++#define TEXCTL_TPITCHLIN        (1u << 8)
++#define TEXCTL_TPITCHEXT(x)     ((uint32_t)(x) << 9)
++#define TEXCTL_NPCEN            (1u << 21)
++#define TEXCTL_AZEROEXTEND      (1u << 23)
++#define TEXCTL_DECALCKEY        (1u << 24)
++#define TEXCTL_TAKEY            (1u << 25)
++#define TEXCTL_TAMASK           (1u << 26)
++#define TEXCTL_CLAMPV           (1u << 27)
++#define TEXCTL_CLAMPU           (1u << 28)
++#define TEXCTL_TMODULATE        (1u << 29)
++#define TEXCTL_STRANS           (1u << 30)
++#define TEXCTL_ITRANS           (1u << 31)
++
++/* TEXCTL2 (G200+). */
++#define TEXCTL2_DECALBLEND      (1u << 0)
++#define TEXCTL2_IDECAL          (1u << 1)
++#define TEXCTL2_DECALDIS        (1u << 2)
++#define TEXCTL2_SPECEN          (1u << 6)
++#define TEXCTL2_DUALTEX         (1u << 7)    /* G400: two texture maps and both combiner stages */
++#define TEXCTL2_MAP1            (1u << 31)   /* G400: the next writes reach map 1 only (tmap0dis) */
++/* G400 texture combiner (TDUALSTAGE0/1, one copy each; docs/g400-dual-texture.md). */
++#define MGAREG_TEXBORDERCOL     0x2C5C
++#define MGAREG_TDUALSTAGE0      0x2CF8
++#define MGAREG_TDUALSTAGE1      0x2CFC
++
++/* TEXWIDTH / TEXHEIGHT: tw[5:0], rfw[14:9], twmask[28:18]. */
++#define TEXWH(log2, rf, mask)   ((uint32_t)(log2) | ((uint32_t)((rf) & 63) << 9) | ((uint32_t)(mask) << 18))
++
++/* TEXFILTER: minfilter[3:0], magfilter[7:4] (G200+ codes). */
++#define TEXFILTER_NRST          0x0u
++#define TEXFILTER_BILIN         0x2u
++#define TEXFILTER_CNST          0x3u
++#define TEXFILTER_MM1S          0x8u      /* G200+: nearest level, point */
++#define TEXFILTER_MM2S          0x9u      /* nearest level, bilinear */
++#define TEXFILTER_MM4S          0xAu      /* two levels, point */
++#define TEXFILTER_MM8S          0xCu      /* two levels, bilinear */
++#define TEXFILTER_FILTERALPHA   (1u << 20)
++#define TEXFILTER_FTHRES(x)     ((uint32_t)(x) << 21)
++#define TEXFILTER_MAPNB(x)      ((uint32_t)(x) << 29)
++#define TEXFILTER_MIN(x)        ((uint32_t)(x))
++#define TEXFILTER_MAG(x)        ((uint32_t)(x) << 4)
++
++/* ALPHACTRL. */
++#define ALPHACTRL_SRC(x)        ((uint32_t)(x))
++#define ALPHACTRL_DST(x)        ((uint32_t)(x) << 4)
++#define ALPHACTRL_ASTIPPLE      (1u << 11)
++#define ALPHACTRL_ATEN          (1u << 12)
++#define ALPHACTRL_ATMODE(x)     ((uint32_t)(x) << 13)
++#define ALPHACTRL_ATREF(x)      ((uint32_t)(x) << 16)
++#define ALPHACTRL_ALPHASEL(x)   ((uint32_t)(x) << 24)
++#define ALPHASEL_TEXTURE        0u
++#define ALPHASEL_DIFFUSE        1u
++#define ALPHASEL_MODULATED      2u
++/* Blend factor codes (G200+). G100 requires the reserved field = 0x54. */
++#define BLEND_ZERO              0x0u
++#define BLEND_ONE               0x1u
++#define BLEND_DST_COLOR         0x2u
++#define BLEND_ONE_MINUS_DST_COLOR 0x3u
++#define BLEND_SRC_ALPHA         0x4u
++#define BLEND_ONE_MINUS_SRC_ALPHA 0x5u
++#define BLEND_DST_ALPHA         0x6u
++#define BLEND_ONE_MINUS_DST_ALPHA 0x7u
++#define BLEND_SRC_ALPHA_SATURATE 0x8u
++#define BLEND_SRC_COLOR         0x2u      /* as destination factor */
++#define BLEND_ONE_MINUS_SRC_COLOR 0x3u
++#define ALPHACTRL_G100_FIXED    0x54u
++
++#endif
+--- /dev/null
++++ b/src/video/mgahal/mga/setupconv.h
+@@ -0,0 +1,82 @@
++/* setupconv.h - the triangle setup's float to fixed-point conversions
++ * (setup/trap.c), in a header so tests/unit/test_fp.c can hold them
++ * against the code they replaced.
++ *
++ * Each has a fast path through fp.h's FISTP helpers inside a range where
++ * it gives exactly what the original gave, and the original code, verbatim,
++ * outside it (huge values, NaN). The clamps are written as the original's
++ * expressions, never as hand-computed constants. */
++#ifndef MGA_SETUPCONV_H
++#define MGA_SETUPCONV_H
++#include "mga/fp.h"
++
++/* Round to fixed point: floor(v * scale + 0.5), saturated to int32. */
++MGA_INLINE int32_t fx(double v, double scale)
++{
++    double r, x = v * scale + 0.5;
++    if (x > -2147483647.0 && x < 2147483647.0)
++        return mga_ifloor(x);
++    r = mga_floor(x);
++    if (r > 2147483647.0) r = 2147483647.0;
++    if (r < -2147483648.0) r = -2147483648.0;
++    return (int32_t)r;
++}
++
++/* Start value for colour-like 9.15 channels: truncating engine, so bias by
++ * half an LSB of the 8-bit result is not applied (matches Voodoo floor). */
++MGA_INLINE uint32_t col_start(double v)
++{
++    double r, x = v * 32768.0;
++    if (x > -2147483647.0 && x < 2147483647.0) {
++        int32_t f = mga_ifloor(x);
++        if (f < 0)
++            return 0;
++        return (double)f > 255.999 * 32768.0 ? (uint32_t)(255.999 * 32768.0) : (uint32_t)f;
++    }
++    r = mga_floor(x);
++    if (r < 0) r = 0;
++    if (r > 255.999 * 32768.0) r = 255.999 * 32768.0;
++    return (uint32_t)r;
++}
++
++MGA_INLINE uint32_t z16_start(double z)
++{
++    double r, x = z * 32768.0;
++    if (x > -2147483647.0 && x < 2147483647.0) {
++        int32_t f = mga_ifloor(x);
++        if (f < 0)
++            return 0;
++        return (double)f > 65535.999 * 32768.0 ? (uint32_t)(65535.999 * 32768.0) : (uint32_t)f;
++    }
++    r = mga_floor(x);
++    if (r < 0) r = 0;
++    if (r > 65535.999 * 32768.0) r = 65535.999 * 32768.0;
++    return (uint32_t)r;
++}
++
++MGA_INLINE uint64_t z32_start(double z)
++{
++    double r, x = z * 32768.0;
++    if (x >= 0.0 && x < 4611686018427387904.0) {               /* 2^62 */
++        int64_t f = mga_ifloor64(x);
++        return (double)f > 4294967295.999 * 32768.0 ? (uint64_t)(4294967295.999 * 32768.0) : (uint64_t)f;
++    }
++    r = mga_floor(x);
++    if (r < 0) r = 0;
++    if (r > 4294967295.999 * 32768.0) r = 4294967295.999 * 32768.0;
++    return (uint64_t)r;
++}
++
++/* As the original: floor inside +-(2^31 - 1), truncation toward zero beyond
++ * (mga_floor returns large values unchanged and the cast truncates). */
++MGA_INLINE int64_t z32_inc(double d)
++{
++    double x = d * 32768.0 + 0.5;
++    if (x > -2147483647.0 && x < 2147483647.0)
++        return (int64_t)mga_ifloor(x);
++    if (x > -4611686018427387904.0 && x < 4611686018427387904.0)
++        return mga_itrunc64(x);
++    return (int64_t)mga_floor(x);
++}
++
++#endif
+--- /dev/null
++++ b/src/video/mgahal/mga/setup.h
+@@ -0,0 +1,69 @@
++/* setup.h - chip-independent triangle -> trapezoid setup (PRD §7.2, D2).
++ *
++ * Input vertices are in screen space with x, y in 1/16-pixel units. Each
++ * triangle becomes at most two integer trapezoids whose edge DDAs are
++ * exact, so neighbouring triangles are watertight under the top-left fill
++ * rule. Attributes are planes evaluated at pixel centres. */
++#ifndef MGA_SETUP_H
++#define MGA_SETUP_H
++#include "mga/types.h"
++
++typedef struct {
++    int32_t X16, Y16;      /* position, 1/16 pixel */
++    double  z;             /* 16-bit Z units (0..65535) or 32-bit units (0..2^32-1) */
++    float   r, g, b, a;    /* 0..255 */
++    float   fog;           /* 0..255 fog factor (255 = no fog) */
++    float   sr, sg, sb;    /* 0..255 specular colour added after texturing (G200+) */
++    float   s, t, q;       /* texture: s/w, t/w, 1/w, already scaled (see texture setup) */
++    float   s1, t1;        /* G400 map 1 (MGA_S_TEX2): s/w, t/w for the second texture, same q */
++} mga_svtx;
++
++enum {
++    MGA_S_Z      = 1u << 0,    /* interpolate depth */
++    MGA_S_Z32    = 1u << 1,    /* 32-bit depth (DR*_Z32 registers) */
++    MGA_S_COLOR  = 1u << 2,    /* interpolate r, g, b */
++    MGA_S_ALPHA  = 1u << 3,    /* interpolate alpha (TEXTURE_TRAP only on G100) */
++    MGA_S_FOG    = 1u << 4,    /* interpolate fog */
++    MGA_S_TEX    = 1u << 5,    /* interpolate s, t, q */
++    MGA_S_AFFINE = 1u << 6,    /* q constant: texture is affine (NPCEN) */
++    MGA_S_VOODOO_EDGES = 1u << 7,  /* Voodoo column rule instead of exact centres */
++    MGA_S_SPEC   = 1u << 8,    /* interpolate the specular colour (G200+, TEXCTL2.specen) */
++    MGA_S_TEX2   = 1u << 9     /* G400: also map 1 (s1, t1), after tex_emit_dual */
++};
++
++typedef struct {
++    uint32_t dwgctl;           /* DWGCTL for the trapezoids (opcode, atype, zmode, trans) */
++    uint32_t flags;            /* MGA_S_* */
++    int      clip_y0, clip_y1; /* rows [y0, y1) that may be drawn */
++    int      tex_tw, tex_th;   /* texture log2 width/height (hardware) */
++    int      tex_tw1, tex_th1; /* map 1's (MGA_S_TEX2) */
++    uint32_t texctl2_1;        /* map 1's TEXCTL2 (with TEXCTL2_DUALTEX), for the map-1 step */
++} mga_tri_ctx;
++
++/* Statistics for benchmarks and tests. */
++typedef struct {
++    uint32_t tris, traps, culled_empty;
++    uint32_t vfallback;        /* Voodoo edges too flat for the AR fields: drawn with the centre rule */
++    uint32_t splits;           /* triangles over 8191 pixels on the G100/G200: drawn as four */
++} mga_setup_stats;
++extern mga_setup_stats setup_stats;
++
++void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri_ctx *ctx);
++/* setup_triangle leaves out writes of values a register already holds
++ * (increments, DWGCTL, texture sizes: they keep their value across draws).
++ * Code that writes those registers otherwise tells it: engine_init (reset,
++ * mode set) and engine_resync call setup_invalidate, the engine's fills,
++ * blits, TLUT loads and ILOADs setup_forget_dwgctl. Which shadows hold is
++ * setup_valid, kept in engine.c with these two, so the engine links
++ * without the set-up (GLOS's kernel, which has no FPU code). */
++extern unsigned setup_valid;
++#define SETUP_VALID_DWG 1u
++void setup_invalidate(void);
++void setup_forget_dwgctl(void);
++
++/* Exposed for unit tests: one edge at its first row. */
++typedef struct { int32_t x; int32_t ar_step, ar_err, ar_dec; int neg; } mga_edge;
++void setup_edge(int32_t Xa, int32_t Ya, int32_t Xb, int32_t Yb, int32_t ys, mga_edge *e);
++void setup_edge_voodoo(int32_t Xa, int32_t Ya, int32_t Xb, int32_t Yb, int32_t ys, mga_edge *e);
++
++#endif
+--- /dev/null
++++ b/src/video/mgahal/mga/types.h
+@@ -0,0 +1,17 @@
++/* types.h - fixed-width types shared by the HAL and its clients.
++ * Open Watcom, DJGPP and host gcc all provide <stdint.h>. */
++#ifndef MGA_TYPES_H
++#define MGA_TYPES_H
++#include <stdint.h>
++#include <stddef.h>
++
++#if defined(__WATCOMC__) || defined(__GNUC__)
++#  define MGA_INLINE static inline
++#else
++#  define MGA_INLINE static
++#endif
++
++#define MGA_ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
++#define MGA_UNUSED(x) ((void)(x))
++
++#endif
+--- /dev/null
++++ b/src/video/mgahal/trap.c
+@@ -0,0 +1,721 @@
++/* trap.c - triangle setup for the MGA trapezoid engine.
++ *
++ * Coverage: a pixel (x, y) is drawn when its centre (x+0.5, y+0.5) lies
++ * inside the triangle, with the top and left edges inclusive (the top-left
++ * rule). Rows and edge positions are computed exactly in integers from
++ * 1/16-pixel vertices; the engine's edge DDA
++ *     while (AR1 < 0) { AR1 += AR0; x += dir; }  AR1 += AR2;
++ * then reproduces the same columns row after row. */
++#include "mga/setup.h"
++#include "mga/hal.h"
++#include "mga/mmio.h"
++#include "mga/regs_mga.h"
++#include "mga/fp.h"
++#include "mga/setupconv.h"
++#include "mga/prof.h"
++
++/* The planes and texture values are set and used under the same flags,
++ * which GCC's -O2 does not always see once they are inlined. */
++#if defined(__GNUC__) && !defined(__clang__)
++#  pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
++#endif
++
++mga_setup_stats setup_stats;
++
++/* What setup_triangle last wrote to registers that keep their value across
++ * draws, so an equal value is not written again (the start values, which
++ * the engine advances, are always written). On the G400 the texture
++ * registers exist per map: a write while tmap0dis is clear reaches both
++ * (bank 0 and 1), the map-1 step's only map 1. setup.h says who clears
++ * them. tests/unit/test_setupgold.c checks the register state at every
++ * draw against the setup before the shadows. */
++enum {
++    SH_DWG = 1u << 0, SH_Z = 1u << 1, SH_COL = 1u << 2, SH_ALPHA = 1u << 3, SH_FOG = 1u << 4,
++    SH_SPEC = 1u << 5, SH_WH0 = 1u << 6, SH_WH1 = 1u << 7, SH_TM0 = 1u << 8, SH_TM1 = 1u << 9
++};
++#define DWG_WRITE_TIME (DWG_SOLID | DWG_ARZERO | DWG_SGNZERO | DWG_SHFTZERO)  /* act when DWGCTL is written */
++static struct {
++    uint32_t dwgctl;
++    int      zn;                       /* 2: DR2, DR3; 4: the Z32 LSB/MSB pairs (the same registers) */
++    uint32_t z[4], col[6], alpha[2], fog[2], spec[6];
++    uint32_t wh[2][2], tm[2][6];       /* [map] TEXWIDTH, TEXHEIGHT; TMR0-5 */
++} sh;
++
++typedef char sh_dwg_is_bit_0[SH_DWG == SETUP_VALID_DWG ? 1 : -1];   /* (setup_forget_dwgctl, in engine.c) */
++
++static int same(const uint32_t *a, const uint32_t *b, int n)
++{
++    int i;
++    for (i = 0; i < n; i++)
++        if (a[i] != b[i])
++            return 0;
++    return 1;
++}
++
++static void keep(uint32_t *dst, const uint32_t *src, int n)
++{
++    int i;
++    for (i = 0; i < n; i++)
++        dst[i] = src[i];
++}
++
++/* Does a broadcast write of these texture values change anything? (Both
++ * maps on the G400, the one map elsewhere.) */
++static int tex_changes(unsigned bit0, unsigned bit1, const uint32_t *v0, const uint32_t *v1, const uint32_t *val, int n)
++{
++    if (!(setup_valid & bit0) || !same(v0, val, n))
++        return 1;
++    return mga.has_dual_tex && (!(setup_valid & bit1) || !same(v1, val, n));
++}
++
++static int64_t floordiv64(int64_t a, int64_t b)
++{
++    int64_t q = a / b;
++    if ((a % b != 0) && ((a < 0) != (b < 0)))
++        q--;
++    return q;
++}
++
++/* First covered row for an edge starting at Y (1/16 px): ceil((Y-8)/16),
++ * i.e. floor((Y + 7) / 16), an arithmetic shift while Y + 7 fits. */
++static int32_t first_row(int32_t Y)
++{
++    if (Y <= 0x7FFFFFF8)
++        return (Y + 7) >> 4;
++    return (int32_t)floordiv64((int64_t)Y - 8 + 15, 16);
++}
++
++/* floor(a / b) for b > 0, and *r = a - q * b in [0, b): for |a| < 2^52 and
++ * a quotient inside int32 (the edges' sizes) a double quotient, at most one
++ * off, corrected exactly in integers; otherwise the 64-bit division (a
++ * library call on the x87 compilers). */
++static int64_t floordiv_pos(int64_t a, int32_t b, int64_t *r)
++{
++    double qd = (double)a / (double)b;
++    if (a > -4503599627370496LL && a < 4503599627370496LL && qd > -2147483645.0 && qd < 2147483645.0) {
++        int32_t q = mga_ifloor(qd);
++        int64_t rem = a - (int64_t)q * b;
++        if (rem < 0) { q--; rem += b; }
++        else if (rem >= b) { q++; rem -= b; }
++        if (rem >= 0 && rem < b) {
++            *r = rem;
++            return q;
++        }
++    }
++    {
++        int64_t q = floordiv64(a, b);
++        *r = a - q * b;
++        return q;
++    }
++}
++
++/* An edge whose first covered column on row k (k = 0 at the trapezoid's
++ * first row) is x_k = floor((N0 + S*k) / D), D > 0. The engine walks it
++ * with: while (AR1 < 0) { AR1 += AR0; x += dir; } AR1 += AR2. */
++static void edge_set(int64_t x0, int64_t r0, int64_t S, int64_t D, mga_edge *e)
++{
++    e->x = (int32_t)x0;
++    e->neg = S < 0;
++    e->ar_step = (int32_t)D;
++    e->ar_dec = (int32_t)(S < 0 ? S : -S);
++    e->ar_err = (int32_t)((S < 0 ? r0 : (D - 1 - r0)) + e->ar_dec);
++}
++
++/* The chip keeps an edge's D, -|S| and its error term, which stays in
++ * [-|S|, D), in AR fields of mga.ar_bits bits, signed (18 on the G100 and
++ * G200, 22 on the G400; 0: no limit): they fit when D < 2^(b-1) and
++ * |S| <= 2^(b-1). */
++static int32_t ar_lim(void)
++{
++    return mga.ar_bits ? (int32_t)1 << (mga.ar_bits - 1) : 0x7FFFFFFF;
++}
++
++static int edge_fits(const mga_edge *e, int32_t lim)
++{
++    return e->ar_step < lim && e->ar_dec >= -lim;
++}
++
++/* An edge that does not fit loses factors of 2 common to S and D, with
++ * r0 = N0 - x0*D (recovered from the error term) floored: every x_k stays
++ * the same (floor(floor(a/2) / b) = floor(a / 2b)). Exact edges' S and D
++ * are multiples of 16 (1/16 pixel twice), so they fit up to 8191 pixels. */
++static void edge_reduce(mga_edge *e, int32_t lim)
++{
++    int32_t d = e->ar_step, s = e->neg ? e->ar_dec : -e->ar_dec;
++    int32_t r = e->neg ? e->ar_err - e->ar_dec : d - 1 - (e->ar_err - e->ar_dec);
++    while ((d >= lim || s > lim || s < -lim) && !((d | s) & 1)) {
++        d >>= 1;
++        s /= 2;
++        r >>= 1;
++    }
++    e->ar_step = d;
++    e->ar_dec = s < 0 ? s : -s;
++    e->ar_err = (s < 0 ? r : d - 1 - r) + e->ar_dec;
++}
++
++static void edge_from_line(int64_t N0, int64_t S, int64_t D, mga_edge *e)
++{
++    int64_t x0, r0;
++    if (D > 0 && D <= 0x7FFFFFFF)
++        x0 = floordiv_pos(N0, (int32_t)D, &r0);
++    else {
++        x0 = floordiv64(N0, D);
++        r0 = N0 - x0 * D;                          /* 0 <= r0 < D */
++    }
++    edge_set(x0, r0, S, D, e);
++}
++
++/* Exact mode: column covered when its centre is inside (top-left rule). */
++static void edge_exact(int32_t Xa, int32_t Ya, int32_t Xb, int32_t Yb, int32_t ys, mga_edge *e)
++{
++    int64_t dY = (int64_t)Yb - Ya, dX = (int64_t)Xb - Xa;
++    int64_t P = (int64_t)Xa * dY + ((int64_t)16 * ys + 8 - Ya) * dX;    /* X(ys) * dY */
++    /* ceil(X/16 - 1/2) = floor((P - 8dY + 16dY - 1) / 16dY) */
++    edge_from_line(P - 8 * dY + 16 * dY - 1, 16 * dX, 16 * dY, e);
++}
++
++void setup_edge(int32_t Xa, int32_t Ya, int32_t Xb, int32_t Yb, int32_t ys, mga_edge *e)
++{
++    edge_exact(Xa, Ya, Xb, Yb, ys, e);
++    edge_reduce(e, ar_lim());
++}
++
++/* The Voodoo's 16.16 slope, truncated toward zero: (dX << 16) / dY with
++ * dY > 0, from a double estimate corrected in integers (as floordiv_pos). */
++static int64_t voodoo_slope(int32_t Xa, int32_t Ya, int32_t Xb, int32_t Yb)
++{
++    int64_t n = ((int64_t)Xb - Xa) << 16, dY = (int64_t)Yb - Ya;
++    if (dY > 0 && n > -4503599627370496LL && n < 4503599627370496LL) {
++        int64_t q = mga_itrunc64((double)n / (double)dY), rem = n - q * dY;
++        if (n >= 0) {
++            if (rem < 0) { q--; rem += dY; }
++            else if (rem >= dY) { q++; rem -= dY; }
++            if (rem >= 0 && rem < dY)
++                return q;
++        } else {
++            if (rem > 0) { q++; rem -= dY; }
++            else if (rem <= -dY) { q--; rem += dY; }
++            if (rem <= 0 && rem > -dY)
++                return q;
++        }
++    }
++    return n / dY;                                  /* truncates toward zero */
++}
++
++/* A Voodoo edge with its slope d known; x0 = floor(N0 / 65536) is a shift
++ * and prod >> 4 is floor(prod / 16) (arithmetic shifts on every target). */
++static void edge_voodoo(int32_t Xa, int32_t Ya, int64_t d, int32_t ys, mga_edge *e)
++{
++    int64_t c0 = (int64_t)16 * ys + 8 - Ya;
++    int64_t prod = d * c0;
++    int64_t N0 = ((int64_t)Xa << 12) + (prod >> 4) + 0x7000;
++    int64_t x0 = N0 >> 16;
++    edge_set(x0, N0 - x0 * 65536, d, 65536, e);
++}
++
++/* Voodoo mode: the Voodoo evaluates each edge in 16.16 fixed point with a
++ * truncated slope and takes columns [floor(xl + 7/16), floor(xr + 7/16)),
++ * sampling at x + 9/16. Matching it keeps shared edges identical to the
++ * reference frames. */
++void setup_edge_voodoo(int32_t Xa, int32_t Ya, int32_t Xb, int32_t Yb, int32_t ys, mga_edge *e)
++{
++    edge_voodoo(Xa, Ya, voodoo_slope(Xa, Ya, Xb, Yb), ys, e);
++    edge_reduce(e, ar_lim());
++}
++
++/* Plane A(x, y) = A0 + dx*(x - x0) + dy*(y - y0) in pixel units. */
++typedef struct { double a0, dx, dy; } plane;
++
++/* The sorted triangle in pixels relative to v0, computed once for every
++ * plane (multiples of 1/16: exact). */
++typedef struct { double x0, y0, x1, y1, x2, y2, inv; } geom;
++
++static void make_plane(plane *p, const geom *g, double a0, double a1, double a2)
++{
++    double d1 = a1 - a0, d2 = a2 - a0;
++    p->a0 = a0;
++    p->dx = (d1 * g->y2 - d2 * g->y1) * g->inv;
++    p->dy = (g->x1 * d2 - g->x2 * d1) * g->inv;
++}
++
++/* The plane at the pixel centre (x0 + ex, y0 + ey); ex and ey are exact. */
++static double eval(const plane *p, double ex, double ey)
++{
++    return p->a0 + p->dx * ex + p->dy * ey;
++}
++
++/* The texture prescale K = 2^k: the largest k in [-8, 15] with
++ * ms * 2^k < 2047 and mq * 2^k < 32767 (TMR6 12.20, TMR8 16.16), from exact
++ * thresholds (scaling by 2^k is exact, so the comparisons are those of
++ * multiplying ms and mq through, NaN and infinity included). */
++static int prescale(double ms, double mq, double *K)
++{
++    static double ts[24], tq[24], tk[24];
++    int k;
++    if (tk[0] == 0.0) {
++        for (k = -8; k <= 15; k++) {
++            double m = 1.0;
++            int j;
++            for (j = 0; j < (k < 0 ? -k : k); j++)
++                m *= 2.0;
++            tk[k + 8] = k < 0 ? 1.0 / m : m;
++            ts[k + 8] = 2047.0 / tk[k + 8];
++            tq[k + 8] = 32767.0 / tk[k + 8];
++        }
++    }
++    k = 15;
++    while (k > -8 && (ms >= ts[k + 8] || mq >= tq[k + 8]))
++        k--;
++    *K = tk[k + 8];
++    return k;
++}
++
++/* Each register write takes its FIFO slot as it goes (fifo_need is inline):
++ * a FIFOSTATUS read happens only when the slots the last one found free
++ * are used up, never because a group did not fit what was left. */
++#define WR(reg, val) do { fifo_need(1); MGA_WR32((reg), (val)); } while (0)
++
++static void split4(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri_ctx *ctx);
++
++#ifdef MGA_PROF
++/* The setup in three stages (planes, increments, trapezoids), returning to
++ * the caller's stage. */
++static void setup_tri(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri_ctx *ctx);
++void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri_ctx *ctx)
++{
++    int o = PROF_SWITCH(PROF_SPLANE);
++    setup_tri(a, b, c, ctx);
++    PROF_BACK(o);
++}
++#  define SETUP_TRI static void setup_tri
++#  define SETUP_SELF setup_tri
++#else
++#  define SETUP_TRI void setup_triangle
++#  define SETUP_SELF setup_triangle
++#endif
++
++/* The midpoint of two vertices: position rounded down to 1/16 pixel (the
++ * same whichever comes first), attributes averaged; all are linear in
++ * screen space (s, t and q are s/w, t/w, 1/w). */
++static void midpoint(const mga_svtx *p, const mga_svtx *q, mga_svtx *m)
++{
++    m->X16 = (int32_t)(((int64_t)p->X16 + q->X16) >> 1);
++    m->Y16 = (int32_t)(((int64_t)p->Y16 + q->Y16) >> 1);
++    m->z = (p->z + q->z) * 0.5;
++    m->r = (p->r + q->r) * 0.5f; m->g = (p->g + q->g) * 0.5f;
++    m->b = (p->b + q->b) * 0.5f; m->a = (p->a + q->a) * 0.5f;
++    m->fog = (p->fog + q->fog) * 0.5f;
++    m->sr = (p->sr + q->sr) * 0.5f; m->sg = (p->sg + q->sg) * 0.5f; m->sb = (p->sb + q->sb) * 0.5f;
++    m->s = (p->s + q->s) * 0.5f; m->t = (p->t + q->t) * 0.5f; m->q = (p->q + q->q) * 0.5f;
++    m->s1 = (p->s1 + q->s1) * 0.5f; m->t1 = (p->t1 + q->t1) * 0.5f;
++}
++
++static void split4(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri_ctx *ctx)
++{
++    mga_svtx ab, bc, ca;
++    midpoint(a, b, &ab);
++    midpoint(b, c, &bc);
++    midpoint(c, a, &ca);
++    setup_stats.splits++;
++    SETUP_SELF(a, &ab, &ca, ctx);
++    SETUP_SELF(&ab, b, &bc, ctx);
++    SETUP_SELF(&ca, &bc, c, ctx);
++    SETUP_SELF(&ab, &bc, &ca, ctx);
++}
++
++SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri_ctx *ctx)
++{
++    const mga_svtx *v[3], *t;
++    int64_t area2, cross;
++    int mid_right;
++    double inv;
++    plane pz, pr, pg, pb, pa, pf, ps, pt, pq, psr, psg, psb, ps1, pt1, pq1;
++    geom g;
++    int64_t d_long = 0;
++    double K = 1.0;
++    int k = 0, k1 = 0, map1_sizes = 1;
++    int32_t y_top, y_mid, y_bot, part;
++    int reduce;
++    uint32_t flags = ctx->flags;
++
++    area2 = (int64_t)(b->X16 - a->X16) * (c->Y16 - a->Y16) - (int64_t)(c->X16 - a->X16) * (b->Y16 - a->Y16);
++    if (area2 == 0) {
++        setup_stats.culled_empty++;
++        return;
++    }
++    /* Sort top to bottom (ties by x) so v0 is top, v2 bottom. */
++    v[0] = a; v[1] = b; v[2] = c;
++#define LESS(p, q) ((p)->Y16 < (q)->Y16 || ((p)->Y16 == (q)->Y16 && (p)->X16 < (q)->X16))
++    if (LESS(v[1], v[0])) { t = v[0]; v[0] = v[1]; v[1] = t; }
++    if (LESS(v[2], v[1])) { t = v[1]; v[1] = v[2]; v[2] = t; }
++    if (LESS(v[1], v[0])) { t = v[0]; v[0] = v[1]; v[1] = t; }
++#undef LESS
++    cross = (int64_t)(v[2]->X16 - v[0]->X16) * (v[1]->Y16 - v[0]->Y16) -
++            (int64_t)(v[2]->Y16 - v[0]->Y16) * (v[1]->X16 - v[0]->X16);
++    if (cross == 0) {
++        setup_stats.culled_empty++;
++        return;
++    }
++    mid_right = cross < 0;
++    {
++        /* Exact edges have S = 16 dX16 and D = 16 dY16: within 1/16 of the
++         * AR limit, every edge fits as it is (the usual case: nothing to
++         * do); within the limit, it fits divided by 16; beyond it (over
++         * 8191 pixels on the G100/G200, only from callers that do not clip:
++         * DOS-GL's guard band keeps edges within 4000 pixels, Glide's
++         * vertices within about 2048), the triangle is drawn as four, split
++         * at its edges' midpoints. */
++        int32_t x0 = v[0]->X16, x1 = v[1]->X16, x2 = v[2]->X16, xmin, xmax, ey, ex, lim;
++        xmin = x0 < x1 ? x0 : x1;
++        xmax = x0 < x1 ? x1 : x0;
++        if (x2 < xmin) xmin = x2;
++        if (x2 > xmax) xmax = x2;
++        ey = v[2]->Y16 - v[0]->Y16;
++        ex = xmax - xmin;
++        lim = ar_lim();
++        if (ey >= lim || ex > lim) {
++            split4(v[0], v[1], v[2], ctx);
++            return;
++        }
++        reduce = ey >= lim >> 4 || ex > lim >> 4;
++    }
++    setup_stats.tris++;
++
++    /* Plane gradients in pixel units (area of the sorted triangle). */
++    {
++        double x1 = (v[1]->X16 - v[0]->X16) / 16.0, y1 = (v[1]->Y16 - v[0]->Y16) / 16.0;
++        double x2 = (v[2]->X16 - v[0]->X16) / 16.0, y2 = (v[2]->Y16 - v[0]->Y16) / 16.0;
++        inv = 1.0 / (x1 * y2 - x2 * y1);
++    }
++    g.x0 = v[0]->X16 / 16.0; g.y0 = v[0]->Y16 / 16.0;
++    g.x1 = v[1]->X16 / 16.0 - g.x0; g.y1 = v[1]->Y16 / 16.0 - g.y0;
++    g.x2 = v[2]->X16 / 16.0 - g.x0; g.y2 = v[2]->Y16 / 16.0 - g.y0;
++    g.inv = inv;
++    if (flags & MGA_S_Z)
++        make_plane(&pz, &g, v[0]->z, v[1]->z, v[2]->z);
++    if (flags & MGA_S_COLOR) {
++        make_plane(&pr, &g, v[0]->r, v[1]->r, v[2]->r);
++        make_plane(&pg, &g, v[0]->g, v[1]->g, v[2]->g);
++        make_plane(&pb, &g, v[0]->b, v[1]->b, v[2]->b);
++    }
++    if (flags & MGA_S_ALPHA)
++        make_plane(&pa, &g, v[0]->a, v[1]->a, v[2]->a);
++    if (flags & MGA_S_FOG)
++        make_plane(&pf, &g, v[0]->fog, v[1]->fog, v[2]->fog);
++    if (flags & MGA_S_SPEC) {
++        make_plane(&psr, &g, v[0]->sr, v[1]->sr, v[2]->sr);
++        make_plane(&psg, &g, v[0]->sg, v[1]->sg, v[2]->sg);
++        make_plane(&psb, &g, v[0]->sb, v[1]->sb, v[2]->sb);
++    }
++    if (flags & MGA_S_TEX) {
++        /* Prescale K = 2^k keeps the most bits through the engine's
++         * truncation of s/w before the divide by q (TMR6 12.20 < 2048,
++         * TMR8 16.16 < 32768). */
++        double ms = 0, mq = 0;
++        int i;
++        for (i = 0; i < 3; i++) {
++            double as = v[i]->s < 0 ? -v[i]->s : v[i]->s, at = v[i]->t < 0 ? -v[i]->t : v[i]->t;
++            if (as > ms) ms = as;
++            if (at > ms) ms = at;
++            if (v[i]->q > mq) mq = v[i]->q;
++        }
++        k = prescale(ms, mq, &K);
++        make_plane(&ps, &g, v[0]->s * K, v[1]->s * K, v[2]->s * K);
++        make_plane(&pt, &g, v[0]->t * K, v[1]->t * K, v[2]->t * K);
++        make_plane(&pq, &g, v[0]->q * K, v[1]->q * K, v[2]->q * K);
++    }
++    if (flags & MGA_S_TEX2) {
++        /* Map 1 (G400) gets its own prescale: its coordinates can span far
++         * more (lightmaps) or less than map 0's; q is shared. */
++        double ms = 0, mq = 0, K1;
++        int i;
++        for (i = 0; i < 3; i++) {
++            double as = v[i]->s1 < 0 ? -v[i]->s1 : v[i]->s1, at = v[i]->t1 < 0 ? -v[i]->t1 : v[i]->t1;
++            if (as > ms) ms = as;
++            if (at > ms) ms = at;
++            if (v[i]->q > mq) mq = v[i]->q;
++        }
++        k1 = prescale(ms, mq, &K1);
++        make_plane(&ps1, &g, v[0]->s1 * K1, v[1]->s1 * K1, v[2]->s1 * K1);
++        make_plane(&pt1, &g, v[0]->t1 * K1, v[1]->t1 * K1, v[2]->t1 * K1);
++        make_plane(&pq1, &g, v[0]->q * K1, v[1]->q * K1, v[2]->q * K1);
++    }
++
++    /* Per-triangle increments: values a register already holds are left
++     * out (the shadows above); otherwise the writes and their order are
++     * those of the full setup. */
++    PROF_SWITCH(PROF_SINC);
++    {
++        uint32_t zi[4], ci[6], ai[2], fi[2], si[6], wh[2], tm[6];
++        int zn = 0, w_dwg, w_z = 0, w_c, w_a = 0, w_f = 0, w_s = 0, w_wh = 0, w_tm = 0;
++        w_dwg = !(setup_valid & SH_DWG) || sh.dwgctl != ctx->dwgctl || (ctx->dwgctl & DWG_WRITE_TIME);
++        if (flags & MGA_S_Z) {
++            if (flags & MGA_S_Z32) {
++                int64_t zx = z32_inc(pz.dx), zy = z32_inc(pz.dy);
++                zi[0] = (uint32_t)zx;
++                zi[1] = (uint32_t)((uint64_t)zx >> 32) & 0xFFFF;
++                zi[2] = (uint32_t)zy;
++                zi[3] = (uint32_t)((uint64_t)zy >> 32) & 0xFFFF;
++                zn = 4;
++            } else {
++                zi[0] = (uint32_t)fx(pz.dx, 32768.0);
++                zi[1] = (uint32_t)fx(pz.dy, 32768.0);
++                zn = 2;
++            }
++            w_z = !(setup_valid & SH_Z) || sh.zn != zn || !same(sh.z, zi, zn);
++        }
++        if (flags & MGA_S_COLOR) {
++            ci[0] = (uint32_t)fx(pr.dx, 32768.0);
++            ci[1] = (uint32_t)fx(pr.dy, 32768.0);
++            ci[2] = (uint32_t)fx(pg.dx, 32768.0);
++            ci[3] = (uint32_t)fx(pg.dy, 32768.0);
++            ci[4] = (uint32_t)fx(pb.dx, 32768.0);
++            ci[5] = (uint32_t)fx(pb.dy, 32768.0);
++        } else
++            ci[0] = ci[1] = ci[2] = ci[3] = ci[4] = ci[5] = 0;
++        w_c = !(setup_valid & SH_COL) || !same(sh.col, ci, 6);
++        if (flags & MGA_S_ALPHA) {
++            ai[0] = (uint32_t)fx(pa.dx, 32768.0) & 0xFFFFFF;
++            ai[1] = (uint32_t)fx(pa.dy, 32768.0) & 0xFFFFFF;
++            w_a = !(setup_valid & SH_ALPHA) || !same(sh.alpha, ai, 2);
++        }
++        if (flags & MGA_S_FOG) {
++            fi[0] = (uint32_t)fx(pf.dx, 32768.0) & 0xFFFFFF;
++            fi[1] = (uint32_t)fx(pf.dy, 32768.0) & 0xFFFFFF;
++            w_f = !(setup_valid & SH_FOG) || !same(sh.fog, fi, 2);
++        }
++        if (flags & MGA_S_SPEC) {
++            si[0] = (uint32_t)fx(psr.dx, 32768.0) & 0xFFFFFF;
++            si[1] = (uint32_t)fx(psr.dy, 32768.0) & 0xFFFFFF;
++            si[2] = (uint32_t)fx(psg.dx, 32768.0) & 0xFFFFFF;
++            si[3] = (uint32_t)fx(psg.dy, 32768.0) & 0xFFFFFF;
++            si[4] = (uint32_t)fx(psb.dx, 32768.0) & 0xFFFFFF;
++            si[5] = (uint32_t)fx(psb.dy, 32768.0) & 0xFFFFFF;
++            w_s = !(setup_valid & SH_SPEC) || !same(sh.spec, si, 6);
++        }
++        if (flags & MGA_S_TEX) {
++            int tw = ctx->tex_tw, th = ctx->tex_th;
++            wh[0] = TEXWH(tw, 8 - tw - k, (1u << tw) - 1);
++            wh[1] = TEXWH(th, 8 - th - k, (1u << th) - 1);
++            tm[0] = (uint32_t)fx(ps.dx, 1048576.0);
++            tm[1] = (uint32_t)fx(ps.dy, 1048576.0);
++            tm[2] = (uint32_t)fx(pt.dx, 1048576.0);
++            tm[3] = (uint32_t)fx(pt.dy, 1048576.0);
++            tm[4] = (uint32_t)fx(pq.dx, 65536.0);
++            tm[5] = (uint32_t)fx(pq.dy, 65536.0);
++            w_wh = tex_changes(SH_WH0, SH_WH1, sh.wh[0], sh.wh[1], wh, 2);
++            w_tm = tex_changes(SH_TM0, SH_TM1, sh.tm[0], sh.tm[1], tm, 6);
++        }
++
++        if (w_dwg) {
++            WR(MGAREG_DWGCTL, ctx->dwgctl);
++            sh.dwgctl = ctx->dwgctl;
++            setup_valid |= SH_DWG;
++        }
++        if (w_z) {
++            if (zn == 4) {
++                WR(MGAREG_DR2_Z32LSB, zi[0]);
++                WR(MGAREG_DR2_Z32MSB, zi[1]);
++                WR(MGAREG_DR3_Z32LSB, zi[2]);
++                WR(MGAREG_DR3_Z32MSB, zi[3]);
++            } else {
++                WR(MGAREG_DR2, zi[0]);
++                WR(MGAREG_DR3, zi[1]);
++            }
++            keep(sh.z, zi, zn);
++            sh.zn = zn;
++            setup_valid |= SH_Z;
++        }
++        if (w_c) {
++            WR(MGAREG_DR6, ci[0]);
++            WR(MGAREG_DR7, ci[1]);
++            WR(MGAREG_DR10, ci[2]);
++            WR(MGAREG_DR11, ci[3]);
++            WR(MGAREG_DR14, ci[4]);
++            WR(MGAREG_DR15, ci[5]);
++            keep(sh.col, ci, 6);
++            setup_valid |= SH_COL;
++        }
++        if (w_a) {
++            WR(MGAREG_ALPHAXINC, ai[0]);
++            WR(MGAREG_ALPHAYINC, ai[1]);
++            keep(sh.alpha, ai, 2);
++            setup_valid |= SH_ALPHA;
++        }
++        if (w_f) {
++            WR(MGAREG_FOGXINC, fi[0]);
++            WR(MGAREG_FOGYINC, fi[1]);
++            keep(sh.fog, fi, 2);
++            setup_valid |= SH_FOG;
++        }
++        if (w_s) {
++            WR(MGAREG_SPECRXINC, si[0]);
++            WR(MGAREG_SPECRYINC, si[1]);
++            WR(MGAREG_SPECGXINC, si[2]);
++            WR(MGAREG_SPECGYINC, si[3]);
++            WR(MGAREG_SPECBXINC, si[4]);
++            WR(MGAREG_SPECBYINC, si[5]);
++            keep(sh.spec, si, 6);
++            setup_valid |= SH_SPEC;
++        }
++        if (w_wh) {                     /* tmap0dis is clear here: both maps */
++            WR(MGAREG_TEXWIDTH, wh[0]);
++            WR(MGAREG_TEXHEIGHT, wh[1]);
++            keep(sh.wh[0], wh, 2);
++            keep(sh.wh[1], wh, 2);
++            setup_valid |= SH_WH0 | SH_WH1;
++        }
++        if (w_tm) {
++            WR(MGAREG_TMR(0), tm[0]);
++            WR(MGAREG_TMR(1), tm[1]);
++            WR(MGAREG_TMR(2), tm[2]);
++            WR(MGAREG_TMR(3), tm[3]);
++            WR(MGAREG_TMR(4), tm[4]);
++            WR(MGAREG_TMR(5), tm[5]);
++            keep(sh.tm[0], tm, 6);
++            keep(sh.tm[1], tm, 6);
++            setup_valid |= SH_TM0 | SH_TM1;
++        }
++    }
++
++    PROF_SWITCH(PROF_STRAP);
++    y_top = first_row(v[0]->Y16);
++    y_mid = first_row(v[1]->Y16);
++    y_bot = first_row(v[2]->Y16);
++    if (flags & MGA_S_VOODOO_EDGES)
++        d_long = voodoo_slope(v[0]->X16, v[0]->Y16, v[2]->X16, v[2]->Y16);   /* both trapezoids' long edge */
++
++    for (part = 0; part < 2; part++) {
++        int32_t ys = part ? y_mid : y_top, ye = part ? y_bot : y_mid;
++        const mga_svtx *sa = part ? v[1] : v[0], *sb = part ? v[2] : v[1];
++        mga_edge el, er, lng, sht;
++        double ex, ey;
++        if (ys < ctx->clip_y0) ys = ctx->clip_y0;
++        if (ye > ctx->clip_y1) ye = ctx->clip_y1;
++        if (ye <= ys)
++            continue;
++        if (flags & MGA_S_VOODOO_EDGES) {
++            /* An edge whose Voodoo slope does not fit, even reduced (flatter
++             * than 2 pixels a row on the G100/G200, 32 on the G400), takes
++             * the exact centre rule, which always does. The choice is the
++             * edge's own, so a triangle sharing it chooses alike: no cracks. */
++            int32_t vl = ar_lim();
++            edge_voodoo(v[0]->X16, v[0]->Y16, d_long, ys, &lng);
++            if (!edge_fits(&lng, vl)) {
++                edge_reduce(&lng, vl);
++                if (!edge_fits(&lng, vl)) {
++                    edge_exact(v[0]->X16, v[0]->Y16, v[2]->X16, v[2]->Y16, ys, &lng);
++                    edge_reduce(&lng, vl);
++                    setup_stats.vfallback++;
++                }
++            }
++            edge_voodoo(sa->X16, sa->Y16, voodoo_slope(sa->X16, sa->Y16, sb->X16, sb->Y16), ys, &sht);
++            if (!edge_fits(&sht, vl)) {
++                edge_reduce(&sht, vl);
++                if (!edge_fits(&sht, vl)) {
++                    edge_exact(sa->X16, sa->Y16, sb->X16, sb->Y16, ys, &sht);
++                    edge_reduce(&sht, vl);
++                    setup_stats.vfallback++;
++                }
++            }
++        } else {
++            edge_exact(v[0]->X16, v[0]->Y16, v[2]->X16, v[2]->Y16, ys, &lng);
++            edge_exact(sa->X16, sa->Y16, sb->X16, sb->Y16, ys, &sht);
++            if (reduce) {
++                edge_reduce(&lng, ar_lim());
++                edge_reduce(&sht, ar_lim());
++            }
++        }
++        if (mid_right) { el = lng; er = sht; } else { el = sht; er = lng; }
++        setup_stats.traps++;
++        ex = (el.x + 0.5) - g.x0;          /* exact: multiples of 1/16 */
++        ey = (ys + 0.5) - g.y0;
++        WR(MGAREG_AR0, (uint32_t)el.ar_step);
++        WR(MGAREG_AR1, (uint32_t)el.ar_err);
++        WR(MGAREG_AR2, (uint32_t)el.ar_dec);
++        WR(MGAREG_AR4, (uint32_t)er.ar_err);
++        WR(MGAREG_AR5, (uint32_t)er.ar_dec);
++        WR(MGAREG_AR6, (uint32_t)er.ar_step);
++        WR(MGAREG_SGN, (el.neg ? SGN_SDXL : 0) | (er.neg ? SGN_SDXR : 0));
++        WR(MGAREG_FXBNDRY, ((uint32_t)(er.x & 0xFFFF) << 16) | (uint32_t)(el.x & 0xFFFF));
++        if (flags & MGA_S_Z) {
++            double z = eval(&pz, ex, ey);
++            if (flags & MGA_S_Z32) {
++                uint64_t zs = z32_start(z);
++                WR(MGAREG_DR0_Z32LSB, (uint32_t)zs);
++                WR(MGAREG_DR0_Z32MSB, (uint32_t)(zs >> 32) & 0xFFFF);
++            } else {
++                WR(MGAREG_DR0, z16_start(z));
++            }
++        }
++        if (flags & MGA_S_COLOR) {
++            WR(MGAREG_DR4, col_start(eval(&pr, ex, ey)));
++            WR(MGAREG_DR8, col_start(eval(&pg, ex, ey)));
++            WR(MGAREG_DR12, col_start(eval(&pb, ex, ey)));
++        } else {
++            WR(MGAREG_DR4, col_start(v[0]->r));
++            WR(MGAREG_DR8, col_start(v[0]->g));
++            WR(MGAREG_DR12, col_start(v[0]->b));
++        }
++        if (flags & MGA_S_ALPHA) {
++            WR(MGAREG_ALPHASTART, col_start(eval(&pa, ex, ey)));
++        }
++        if (flags & MGA_S_FOG) {
++            WR(MGAREG_FOGSTART, col_start(eval(&pf, ex, ey)));
++        }
++        if (flags & MGA_S_SPEC) {
++            WR(MGAREG_SPECRSTART, col_start(eval(&psr, ex, ey)));
++            WR(MGAREG_SPECGSTART, col_start(eval(&psg, ex, ey)));
++            WR(MGAREG_SPECBSTART, col_start(eval(&psb, ex, ey)));
++        }
++        if (flags & MGA_S_TEX) {
++            WR(MGAREG_TMR(6), (uint32_t)fx(eval(&ps, ex, ey), 1048576.0));
++            WR(MGAREG_TMR(7), (uint32_t)fx(eval(&pt, ex, ey), 1048576.0));
++            WR(MGAREG_TMR(8), (uint32_t)fx(eval(&pq, ex, ey), 65536.0));
++        }
++        if (flags & MGA_S_TEX2) {
++            /* The G400's second programming step (specification §4.5.5.5):
++             * everything above reached both maps; now map 1 alone, then
++             * start the engine. Its sizes and increments go with the first
++             * trapezoid drawn and stay for the second. */
++            int tw = ctx->tex_tw1, th = ctx->tex_th1;
++            WR(MGAREG_TEXCTL2, ctx->texctl2_1 | TEXCTL2_MAP1);
++            if (map1_sizes) {
++                uint32_t wh1[2], tm1[6];
++                int w_wh1, w_tm1;
++                wh1[0] = TEXWH(tw, 8 - tw - k1, (1u << tw) - 1);
++                wh1[1] = TEXWH(th, 8 - th - k1, (1u << th) - 1);
++                tm1[0] = (uint32_t)fx(ps1.dx, 1048576.0);
++                tm1[1] = (uint32_t)fx(ps1.dy, 1048576.0);
++                tm1[2] = (uint32_t)fx(pt1.dx, 1048576.0);
++                tm1[3] = (uint32_t)fx(pt1.dy, 1048576.0);
++                tm1[4] = (uint32_t)fx(pq1.dx, 65536.0);
++                tm1[5] = (uint32_t)fx(pq1.dy, 65536.0);
++                w_wh1 = !(setup_valid & SH_WH1) || !same(sh.wh[1], wh1, 2);
++                w_tm1 = !(setup_valid & SH_TM1) || !same(sh.tm[1], tm1, 6);
++                if (w_wh1) {            /* map 1 only */
++                    WR(MGAREG_TEXWIDTH, wh1[0]);
++                    WR(MGAREG_TEXHEIGHT, wh1[1]);
++                    keep(sh.wh[1], wh1, 2);
++                    setup_valid |= SH_WH1;
++                }
++                if (w_tm1) {
++                    WR(MGAREG_TMR(0), tm1[0]);
++                    WR(MGAREG_TMR(1), tm1[1]);
++                    WR(MGAREG_TMR(2), tm1[2]);
++                    WR(MGAREG_TMR(3), tm1[3]);
++                    WR(MGAREG_TMR(4), tm1[4]);
++                    WR(MGAREG_TMR(5), tm1[5]);
++                    keep(sh.tm[1], tm1, 6);
++                    setup_valid |= SH_TM1;
++                }
++                map1_sizes = 0;
++            }
++            WR(MGAREG_TMR(6), (uint32_t)fx(eval(&ps1, ex, ey), 1048576.0));
++            WR(MGAREG_TMR(7), (uint32_t)fx(eval(&pt1, ex, ey), 1048576.0));
++            WR(MGAREG_TMR(8), (uint32_t)fx(eval(&pq1, ex, ey), 65536.0));
++            WR(MGAREG_TEXCTL2, ctx->texctl2_1);   /* map 1 only; broadcast from the next write */
++        }
++        WR(MGAREG_YDSTLEN + MGAREG_EXEC, ((uint32_t)(ys & 0xFFFF) << 16) | (uint32_t)(ye - ys));
++    }
++}
+--- a/src/video/vid_mga.c
++++ b/src/video/vid_mga.c
+@@ -37,6 +37,7 @@
+ #include <86box/vid_xga.h>
+ #include <86box/vid_svga.h>
+ #include <86box/vid_svga_render.h>
++#include <86box/vid_mga_warp.h>
+ 
+ /* MGA-Glide local patch (WP-2): unsupported drawing-engine state must not
+  * stop the emulator. fatal() shows a blocking message box, which hangs a
+@@ -94,6 +95,10 @@
+  * texels every time, and Loop A shows the missing flush. */
+ #define MGA_TCACHE_LINES 1024
+ #define MGA_TCACHE_LINE  32
++/* MGA-Glide local patch: a write to a drawing register's address plus 100h
++ * starts the engine, except that on the G400 1DC0h-1DFFh are the WARP's
++ * registers (WIADDR, WFLAG, WGETMSB, WVRTXSZ, WACCEPTSEQ, WIADDR2, WFLAG1). */
++#define MGA_EXEC_ADDR(m, a) ((((a) & 0x300) == 0x100) && !((m)->type >= MGA_G400 && ((a) & 0x3fc0) == 0x1dc0))
+ #define MGA_BUS_FIFO(m) ((m)->type <= MGA_1064SG ? 32 : (m)->type >= MGA_G400 ? 16 : 64)
+ 
+ #define FIFO_SIZE        65536
+@@ -636,6 +641,18 @@
+     uint32_t tcache_tag[MGA_TCACHE_LINES];
+     uint8_t  tcache_data[MGA_TCACHE_LINES][MGA_TCACHE_LINE];
+ 
++    /* MGA-Glide local patch: the WARP setup engine (G400; vid_mga_warp.c):
++     * the two WARPs' instruction memories, as bytes, their registers, and
++     * the vertices of the triangle being received. */
++    struct {
++        uint8_t  imem[2][256 * 8];
++        int      imem_addr, imem_half;
++        uint32_t wmisc, wvrtxsz, wacceptseq, wflag, wflag1, wgetmsb, wr[64];
++        int      running, pipe;
++        uint32_t v[3][64];
++        int      vdw, vn;
++    } warp;
++
+     struct {
+         uint8_t r, g, b;
+     } lut[256];
+@@ -798,6 +815,7 @@
+ static uint8_t  mystique_iload_read_b(uint32_t addr, void *priv);
+ static uint32_t mystique_iload_read_l(uint32_t addr, void *priv);
+ static void     mystique_iload_write_b(uint32_t addr, uint8_t val, void *priv);
++static void     warp_start(mystique_t *mystique, uint32_t wiaddr);
+ static void     mystique_iload_write_l(uint32_t addr, uint32_t val, void *priv);
+ 
+ static uint32_t blit_idump_read(mystique_t *mystique);
+@@ -1841,6 +1859,8 @@
+                 break;
+             case REG_STATUS + 2:
+                 ret = (mystique->status >> 16) & 0xff;
++                if (mystique->warp.running)
++                    ret |= 0x0c;        /* MGA-Glide local patch: wbusy, wbusy1 (also while waiting for vertices) */
+                 if (mystique->busy || ((mystique->blitter_submit_refcount + mystique->blitter_submit_dma_refcount) != mystique->blitter_complete_refcount) || !FIFO_EMPTY
+                 || mystique->dma.state != MGA_DMA_STATE_IDLE || mystique->softrap_pending || mystique->endprdmasts_pending)
+                     ret |= (STATUS_DWGENGSTS >> 16);
+@@ -2007,7 +2027,7 @@
+     mystique_t *mystique   = (mystique_t *) priv;
+     int         start_blit = 0;
+ 
+-    if ((addr & 0x300) == 0x100) {
++    if MGA_EXEC_ADDR(mystique, addr) {
+         addr &= ~0x100;
+         start_blit = 1;
+     }
+@@ -2336,6 +2356,7 @@
+         case REG_OPMODE:
+             mystique->dwgreg.dmamod   = (val >> 2) & 3;
+             mystique->dma.iload_state = 0;
++            mystique->warp.vdw = mystique->warp.vn = 0;     /* MGA-Glide local patch: (ends a vertex sequence) */
+             break;
+ 
+         default:
+@@ -2391,7 +2412,7 @@
+         return;
+     }
+     if ((addr & 0x3e00) == 0x1c00 || (addr & 0x3e00) == 0x2c00) {
+-        if ((addr & 0x300) == 0x100)
++        if MGA_EXEC_ADDR(mystique, addr)
+             mystique->blitter_submit_refcount++;
+         mystique_queue(mystique, addr & 0x3fff, val, FIFO_WRITE_CTRL_BYTE);
+         return;
+@@ -2582,10 +2603,22 @@
+ static uint32_t
+ mystique_ctrl_read_l(uint32_t addr, void *priv)
+ {
+-    uint32_t ret;
++    const mystique_t *mystique = (mystique_t *) priv;
++    uint32_t          ret;
+ 
+     if ((addr & 0x3fff) < 0x1c00)
+         return mystique_iload_read_l(addr, priv);
++    if (mystique->type >= MGA_G400) {   /* MGA-Glide local patch: WMISC, WIMEMDATA (WARP0's word at WIMEMADDR) */
++        const uint32_t a = addr & 0x3fff;
++        if (a == 0x1e70)
++            return mystique->warp.wmisc;
++        if (a == 0x2000 || a == 0x2004) {
++            memcpy(&ret, &mystique->warp.imem[0][(mystique->warp.imem_addr & 0xff) * 8 + (a & 4)], 4);
++            return ret;
++        }
++        if (a >= 0x2100 && a < 0x2180)
++            return 0;               /* (WARP1's words are read through WIMEMADDR1, as on the G400) */
++    }
+ 
+     ret = mystique_ctrl_read_b(addr, priv);
+     ret |= mystique_ctrl_read_b(addr + 1, priv) << 8;
+@@ -2601,7 +2634,7 @@
+     mystique_t *mystique   = (mystique_t *) priv;
+     int         start_blit = 0;
+ 
+-    if ((addr & 0x300) == 0x100) {
++    if MGA_EXEC_ADDR(mystique, addr) {
+         addr &= ~0x100;
+         start_blit = 1;
+     }
+@@ -2935,7 +2968,34 @@
+             mystique->tdualstage[((addr & 0x3ffc) - REG_TDUALSTAGE0) >> 2] = val;
+             break;
+ 
++        /* MGA-Glide local patch: the WARP's queued registers (G400). */
++        case 0x1dc0:    /* WIADDR */
++        case 0x1dd8:    /* WIADDR2 */
++            if (mystique->type >= MGA_G400)
++                warp_start(mystique, val);
++            break;
++        case 0x1dc4:
++            mystique->warp.wflag = val;
++            break;
++        case 0x1dc8:
++            mystique->warp.wgetmsb = val;
++            break;
++        case 0x1dcc:
++            mystique->warp.wvrtxsz = val;
++            mystique->warp.vdw = mystique->warp.vn = 0;
++            break;
++        case 0x1dd4:
++            mystique->warp.wacceptseq = val;
++            break;
++        case 0x1de0:
++            mystique->warp.wflag1 = val;
++            break;
++
+         default:
++            if (mystique->type >= MGA_G400 && (addr & 0x3ffc) >= 0x2d00 && (addr & 0x3ffc) <= 0x2dfc) {
++                mystique->warp.wr[((addr & 0x3ffc) - 0x2d00) >> 2] = val;   /* WR0-WR63 */
++                break;
++            }
+             mystique_accel_ctrl_write_b_raw(addr, val & 0xff, priv);
+             mystique_accel_ctrl_write_b_raw(addr + 1, (val >> 8) & 0xff, priv);
+             mystique_accel_ctrl_write_b_raw(addr + 2, (val >> 16) & 0xff, priv);
+@@ -2981,7 +3041,7 @@
+ static void
+ g400_texreg_write(mystique_t *mystique, uint32_t addr, uint32_t val, int bytes, void *priv)
+ {
+-    const int      exec = (addr & 0x300) == 0x100;
++    const int      exec = MGA_EXEC_ADDR(mystique, addr);
+     const uint32_t a    = exec ? (addr & ~0x100) : addr;
+     const uint32_t reg  = a & 0x3ffc;
+     const uint32_t mask = bytes == 4 ? 0xffffffffu : (0xffu << (8 * (a & 3)));
+@@ -3017,7 +3077,7 @@
+ static int
+ g400_routes(mystique_t *mystique, uint32_t addr)
+ {
+-    const uint32_t a = ((addr & 0x300) == 0x100) ? (addr & ~0x100) : addr;
++    const uint32_t a = MGA_EXEC_ADDR(mystique, addr) ? (addr & ~0x100) : addr;
+     return mystique->type >= MGA_G400 && g400_map_reg(mystique, a & 0x3ffc, 0) != NULL;
+ }
+ 
+@@ -3043,19 +3103,129 @@
+         mystique_accel_ctrl_write_l_raw(addr, val, priv);
+ }
+ 
++/* MGA-Glide local patch: the WARP setup engine (G400). Started (or
++ * jumped to) at an address, it runs the pipe whose microcode is there: in
++ * its instruction memory (WMISC.wucodecache = 0) or in memory, fetched by
++ * bus mastering. Vertices reach it through the DMA window or a DMA channel
++ * in vertex mode; every three make a triangle, set up by vid_mga_warp.c
++ * and drawn by the engine as the trapezoids it writes. */
++static void
++warp_start(mystique_t *mystique, uint32_t wiaddr)
++{
++    static uint8_t code[2048];
++    const uint32_t a = wiaddr & ~7u;
++    int            i;
++
++    switch (wiaddr & 3) {
++        case 0:         /* suspend */
++            mystique->warp.running = 0;
++            return;
++        case 1:         /* resume */
++            mystique->warp.running = mystique->warp.pipe >= 0;
++            return;
++        default:        /* jump, start */
++            if (!(mystique->warp.wmisc & 1)) {
++                const int off = (int) (a & 0x7ff);
++                mystique->warp.pipe = mgawarp_pipe_of(mystique->warp.imem[0] + off, 2048 - off);
++            } else {
++                for (i = 0; i < 2048; i++)
++                    code[i] = mem_readb_phys(a + (uint32_t) i);
++                mystique->warp.pipe = mgawarp_pipe_of(code, 2048);
++            }
++            if (mystique->warp.pipe < 0)
++                pclog("MGA-Glide: WARP started on microcode it does not know (%08x)\n", a);
++            mystique->warp.running = mystique->warp.pipe >= 0;
++            mystique->warp.vdw = mystique->warp.vn = 0;
++            break;
++    }
++}
++
++static void
++warp_wr(void *p, uint32_t reg, uint32_t val)
++{
++    mystique_accel_ctrl_write_l(reg, val, p);
++}
++
++static void
++warp_input(mystique_t *mystique, uint32_t val)
++{
++    const int    size = (int) (mystique->warp.wvrtxsz & 0x3f) + 1;
++    mgawarp_regs r;
++
++    if (!mystique->warp.running)
++        return;
++    mystique->warp.v[mystique->warp.vn][mystique->warp.vdw++] = val;
++    if (mystique->warp.vdw < size)
++        return;
++    mystique->warp.vdw = 0;
++    if (++mystique->warp.vn < 3)
++        return;
++    mystique->warp.vn = 0;
++    r.pipe       = mystique->warp.pipe;
++    r.dwgctl     = mystique->dwgreg.dwgctrl;
++    r.maccess    = mystique->maccess;
++    r.wflag      = mystique->warp.wflag;
++    r.texctl     = mystique->dwgreg.texctl;
++    r.texwidth   = mystique->dwgreg.texwidth;
++    r.texheight  = mystique->dwgreg.texheight;
++    r.texctl1    = mystique->map1.texctl;
++    r.texwidth1  = mystique->map1.texwidth;
++    r.texheight1 = mystique->map1.texheight;
++    r.texctl2_1  = mystique->map1.texctl2;
++    mgawarp_triangle(mystique->warp.v[0], mystique->warp.v[1], mystique->warp.v[2], &r, warp_wr, mystique);
++}
++
++/* The WARP's host registers (not queued): 1 when addr was one. */
++static int
++warp_host_write(mystique_t *mystique, uint32_t a, uint32_t val)
++{
++    if ((a >= 0x2000 && a < 0x2080) || (a >= 0x2100 && a < 0x2180)) {     /* WIMEMDATA, WIMEMDATA1 */
++        const int k = mystique->warp.imem_addr & 0xff;
++        memcpy(&mystique->warp.imem[a >= 0x2100][k * 8 + mystique->warp.imem_half * 4], &val, 4);
++        if (mystique->warp.imem_half)
++            mystique->warp.imem_addr = (k + 1) & 0xff;
++        mystique->warp.imem_half ^= 1;
++        return 1;
++    }
++    switch (a) {
++        case 0x1e68:    /* WIMEMADDR */
++            mystique->warp.imem_addr = (int) (val & 0xff);
++            mystique->warp.imem_half = 0;
++            return 1;
++        case 0x1e70:    /* WMISC (wcacheflush reads 0) */
++            mystique->warp.wmisc = val & 3;
++            return 1;
++        case 0x1e00:    /* WIADDRNB2 */
++        case 0x1e60:    /* WIADDRNB */
++            warp_start(mystique, val);
++            return 1;
++        case 0x1e64:    /* WFLAGNB */
++            mystique->warp.wflag = val;
++            return 1;
++        case 0x1e08:    /* WFLAGNB1 */
++            mystique->warp.wflag1 = val;
++            return 1;
++        default:
++            return 0;
++    }
++}
++
+ static void
+ mystique_ctrl_write_l(uint32_t addr, uint32_t val, void *priv)
+ {
+     mystique_t *mystique = (mystique_t *) priv;
+     uint32_t    reg_addr;
+ 
++    if (mystique->type >= MGA_G400 && warp_host_write(mystique, addr & 0x3fff, val))
++        return;
++
+     if ((addr & 0x3fff) < 0x1c00) {
+         mystique_iload_write_l(addr, val, priv);
+         return;
+     }
+ 
+     if ((addr & 0x3e00) == 0x1c00 || (addr & 0x3e00) == 0x2c00) {
+-        if ((addr & 0x300) == 0x100)
++        if MGA_EXEC_ADDR(mystique, addr)
+             mystique->blitter_submit_refcount++;
+         mystique_queue(mystique, addr & 0x3fff, val, FIFO_WRITE_CTRL_LONG);
+         return;
+@@ -3109,7 +3279,7 @@
+             else
+                 reg_addr += 0x1c00;
+ 
+-            if ((reg_addr & 0x300) == 0x100)
++            if MGA_EXEC_ADDR(mystique, reg_addr)
+                 mystique->blitter_submit_refcount++;
+ 
+             mystique_queue(mystique, reg_addr, val, FIFO_WRITE_CTRL_LONG);
+@@ -3182,7 +3352,7 @@
+                 else
+                     reg_addr += 0x1c00;
+ 
+-                if ((reg_addr & 0x300) == 0x100)
++                if MGA_EXEC_ADDR(mystique, reg_addr)
+                     mystique->blitter_submit_dma_refcount++;
+                 mystique_accel_ctrl_write_l(reg_addr, val, mystique);
+ 
+@@ -3196,6 +3366,11 @@
+                 blit_iload_write(mystique, val, 32);
+             break;
+ 
++        case 3:     /* MGA-Glide local patch: DMA vertex write, to the WARP */
++            if (mystique->type >= MGA_G400)
++                warp_input(mystique, val);
++            break;
++
+         default:
+ #if 0
+             pclog("ILOAD write DMAMOD %i\n", mystique->dwgreg.dmamod); */
+@@ -3365,7 +3540,7 @@
+                             else
+                                 reg_addr += 0x1c00;
+ 
+-                            if ((reg_addr & 0x300) == 0x100)
++                            if MGA_EXEC_ADDR(mystique, reg_addr)
+                                 mystique->blitter_submit_dma_refcount++;
+ 
+                             //pclog("DMA value: 0x%08X to reg 0x%04X\n", val, reg_addr);
+@@ -3444,7 +3619,7 @@
+                         else
+                             reg_addr += 0x1c00;
+ 
+-                        if ((reg_addr & 0x300) == 0x100)
++                        if MGA_EXEC_ADDR(mystique, reg_addr)
+                             mystique->blitter_submit_dma_refcount++;
+ 
+                         mystique_accel_ctrl_write_l(reg_addr, val, mystique);
+--- /dev/null
++++ b/src/video/vid_mga_warp.c
+@@ -0,0 +1,227 @@
++/*
++ * MGA-Glide local patch: the Matrox G400's WARP setup engine, at a high
++ * level. The real WARP runs Matrox's microcode (Linux's linux-firmware
++ * matrox/g400_warp.fw, MIT, Copyright 1999 Matrox Graphics Inc.), whose
++ * instruction set is not public. This recognises a pipe by its microcode
++ * and does the pipe's setup with MGA-Glide's own triangle setup
++ * (mgahal/trap.c, MIT, Copyright 2026 The Nulph; see mgahal/LICENSE): on
++ * a real G400 the WARP's Gouraud triangles matched that setup's but for
++ * 60 of 20,045 pixels, all on edges (MGA-Glide's WARPTRI, 2026-10-26).
++ *
++ * The vertices are Mesa's mga driver's: x and y in pixels with its
++ * subpixel offset (-0.5, -0.375) already added, z from 0 to 1, 1/w, the
++ * colour as BGRA bytes, the specular colour as BGR bytes with the fog
++ * factor in the fourth, and u, v (and u1, v1) not divided by w.
++ */
++#include <stdint.h>
++#include <string.h>
++#include <math.h>
++
++#define MGA_HOST 1
++#define mga                 mgawarp_chip
++#define mga_fifo_free       mgawarp_fifo_free
++#define fifo_reserve        mgawarp_fifo_reserve
++#define setup_valid         mgawarp_setup_valid
++#define mga_host_wr32       mgawarp_host_wr32
++#define mga_host_rd32       mgawarp_host_rd32
++#define setup_triangle      mgawarp_setup_triangle
++#define setup_stats         mgawarp_setup_stats
++#define setup_edge          mgawarp_setup_edge
++#define setup_edge_voodoo   mgawarp_setup_edge_voodoo
++#include "mgahal/trap.c"
++
++#include <86box/vid_mga_warp.h>
++
++mga_chip mgawarp_chip;
++int      mgawarp_fifo_free;
++unsigned mgawarp_setup_valid;
++
++void
++mgawarp_fifo_reserve(int n)
++{
++    (void) n;
++    mgawarp_fifo_free = 1 << 20;
++}
++
++static void (*warp_wr)(void *p, uint32_t reg, uint32_t val);
++static void *warp_p;
++
++void
++mgawarp_host_wr32(uint32_t off, uint32_t v)
++{
++    warp_wr(warp_p, off, v);
++}
++
++uint32_t
++mgawarp_host_rd32(uint32_t off)
++{
++    (void) off;
++    return 0;
++}
++
++/* The G400's sixteen pipes: their length and CRC-32 in g400_warp.fw. */
++static const struct {
++    int      len;
++    uint32_t crc;
++    int      pipe;
++} g400_pipes[] = {
++    { 824, 0x562d7749u, 0x0 },  /* TGZ */
++    { 864, 0x70a8d576u, 0x1 },  /* TGZF */
++    { 856, 0xf17b4107u, 0x2 },  /* TGZA */
++    { 896, 0xee7c6df6u, 0x3 },  /* TGZAF */
++    { 928, 0x98b4051eu, 0x4 },  /* TGZS */
++    { 968, 0xc4970b8bu, 0x5 },  /* TGZSF */
++    { 968, 0x689c288eu, 0x6 },  /* TGZSA */
++    { 1000, 0x1c5f711cu, 0x7 }, /* TGZSAF */
++    { 1080, 0x990594fcu, 0x8 }, /* T2GZ */
++    { 1120, 0xe899d2eeu, 0x9 }, /* T2GZF */
++    { 1112, 0xf27b36d9u, 0xa }, /* T2GZA */
++    { 1152, 0xb9058c51u, 0xb }, /* T2GZAF */
++    { 1184, 0x2196c683u, 0xc }, /* T2GZS */
++    { 1224, 0x47c49bb6u, 0xd }, /* T2GZSF */
++    { 1224, 0x386f0027u, 0xe }, /* T2GZSA */
++    { 1256, 0x68534fffu, 0xf }, /* T2GZSAF */
++};
++
++static uint32_t
++crc32_of(const uint8_t *p, int n)
++{
++    uint32_t c = 0xffffffffu;
++    int      i, k;
++    for (i = 0; i < n; i++) {
++        c ^= p[i];
++        for (k = 0; k < 8; k++)
++            c = (c >> 1) ^ (0xedb88320u & (0u - (c & 1)));
++    }
++    return ~c;
++}
++
++int
++mgawarp_pipe_of(const uint8_t *code, int len)
++{
++    int i;
++    for (i = 0; i < (int) (sizeof g400_pipes / sizeof g400_pipes[0]); i++)
++        if (g400_pipes[i].len <= len && crc32_of(code, g400_pipes[i].len) == g400_pipes[i].crc)
++            return g400_pipes[i].pipe;
++    return -1;
++}
++
++static float
++f32(uint32_t u)
++{
++    float f;
++    memcpy(&f, &u, sizeof f);
++    return f;
++}
++
++static void
++vertex(const uint32_t *d, int t2, double zmax, mga_svtx *v)
++{
++    const float rhw = f32(d[3]);
++    memset(v, 0, sizeof *v);
++    v->X16 = (int32_t) lrint((f32(d[0]) + 0.5) * 16.0);
++    v->Y16 = (int32_t) lrint((f32(d[1]) + 0.375) * 16.0);
++    v->z   = (double) f32(d[2]) * zmax;
++    v->b   = (float) (d[4] & 0xff);
++    v->g   = (float) ((d[4] >> 8) & 0xff);
++    v->r   = (float) ((d[4] >> 16) & 0xff);
++    v->a   = (float) (d[4] >> 24);
++    v->sb  = (float) (d[5] & 0xff);
++    v->sg  = (float) ((d[5] >> 8) & 0xff);
++    v->sr  = (float) ((d[5] >> 16) & 0xff);
++    v->fog = (float) (d[5] >> 24);
++    v->q   = rhw;
++    v->s   = f32(d[6]) * rhw;
++    v->t   = f32(d[7]) * rhw;
++    if (t2) {
++        v->s1 = f32(d[8]) * rhw;
++        v->t1 = f32(d[9]) * rhw;
++    }
++}
++
++/* In wrap mode, whole texture periods off each axis so the smallest
++ * coordinate lies in [0, 1), as the HAL's tex_adjust_coords does (the G400
++ * samples at texel centres: no half-texel shift). */
++static void
++wrap_shift(mga_svtx *v, int map1, int clamp_u, int clamp_v)
++{
++    int axis, i;
++    for (axis = 0; axis < 2; axis++) {
++        double mn = 1e30, shift;
++        if (axis ? clamp_v : clamp_u)
++            continue;
++        for (i = 0; i < 3; i++) {
++            double q = v[i].q > 0 ? v[i].q : 1e-9;
++            double u = (axis ? (map1 ? v[i].t1 : v[i].t) : (map1 ? v[i].s1 : v[i].s)) / q;
++            if (u < mn)
++                mn = u;
++        }
++        shift = -floor(mn);
++        for (i = 0; i < 3; i++) {
++            float *p = axis ? (map1 ? &v[i].t1 : &v[i].t) : (map1 ? &v[i].s1 : &v[i].s);
++            *p += (float) (shift * v[i].q);
++        }
++    }
++}
++
++void
++mgawarp_triangle(const uint32_t *d0, const uint32_t *d1, const uint32_t *d2, const mgawarp_regs *r,
++                 void (*wr)(void *p, uint32_t reg, uint32_t val), void *p)
++{
++    const int    t2       = !!(r->pipe & MGAWARP_T2);
++    const int    textured = (r->dwgctl & 0xf) == DWG_OPCOD_TEXTURE_TRAP;
++    const int    atype    = (int) ((r->dwgctl >> 4) & 7);
++    const int    zmode    = (int) ((r->dwgctl >> 8) & 7);
++    const double zmax     = (r->maccess & MACCESS_ZW32) ? 4294967295.0 : 65535.0;
++    mga_svtx     v[3];
++    mga_tri_ctx  ctx;
++
++    vertex(d0, t2, zmax, &v[0]);
++    vertex(d1, t2, zmax, &v[1]);
++    vertex(d2, t2, zmax, &v[2]);
++
++    memset(&mgawarp_chip, 0, sizeof mgawarp_chip);
++    mgawarp_chip.family       = MGA_FAMILY_G400;
++    mgawarp_chip.fifo_depth   = 16;
++    mgawarp_chip.fifo_mask    = 0x1f;
++    mgawarp_chip.ar_bits      = 22;
++    mgawarp_chip.has_dwgsync  = 1;
++    mgawarp_chip.has_dstorg   = 1;
++    mgawarp_chip.has_texctl2  = 1;
++    mgawarp_chip.has_alpha_blend = 1;
++    mgawarp_chip.has_alpha_test  = 1;
++    mgawarp_chip.has_specular = 1;
++    mgawarp_chip.has_dual_tex = 1;
++    mgawarp_chip.texel_centre = 1;
++    mgawarp_setup_valid       = 0;      /* the host may have written any register since: write them all */
++
++    memset(&ctx, 0, sizeof ctx);
++    ctx.dwgctl  = r->dwgctl;
++    ctx.flags   = MGA_S_COLOR;
++    if (atype == 3 || zmode != 0)       /* ZI, or a depth test */
++        ctx.flags |= MGA_S_Z | ((r->maccess & MACCESS_ZW32) ? MGA_S_Z32 : 0);
++    if (r->pipe & MGAWARP_A)
++        ctx.flags |= MGA_S_ALPHA;
++    if (r->pipe & MGAWARP_F)
++        ctx.flags |= MGA_S_FOG;
++    if (r->pipe & MGAWARP_S)
++        ctx.flags |= MGA_S_SPEC;
++    ctx.clip_y0 = 0;
++    ctx.clip_y1 = 4096;
++    if (textured) {
++        ctx.flags |= MGA_S_TEX;
++        ctx.tex_tw = (int) (r->texwidth & 0x3f);
++        ctx.tex_th = (int) (r->texheight & 0x3f);
++        wrap_shift(v, 0, !!(r->texctl & TEXCTL_CLAMPU), !!(r->texctl & TEXCTL_CLAMPV));
++        if (t2) {
++            ctx.flags |= MGA_S_TEX2;
++            ctx.tex_tw1   = (int) (r->texwidth1 & 0x3f);
++            ctx.tex_th1   = (int) (r->texheight1 & 0x3f);
++            ctx.texctl2_1 = r->texctl2_1 | TEXCTL2_DUALTEX;
++            wrap_shift(v, 1, !!(r->texctl1 & TEXCTL_CLAMPU), !!(r->texctl1 & TEXCTL_CLAMPV));
++        }
++    }
++    warp_wr = wr;
++    warp_p  = p;
++    mgawarp_setup_triangle(&v[0], &v[1], &v[2], &ctx);
++}

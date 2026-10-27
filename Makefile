@@ -152,11 +152,13 @@ DJ_SRC_JOYTEST := tests/shim/joytest.c
 DJ_SRC_SBBEEP := tests/shim/sbbeep.c
 DJ_SRC_FPCHECK := tests/hal/fpcheck.c
 DJ_SRC_TWODTEST := tests/hal/twodtest.c tests/hal/sw2d.c
+DJ_SRC_WARPTRI := tests/hal/warptri.c
 build/djgpp/HOOKS.EXE: tests/hal/hooks.c
 build/djgpp/SCALE.EXE: tests/hal/scale.c
 build/djgpp/HELLO.EXE: tests/shim/hello.c
 build/djgpp/PROBE.EXE: tests/hal/probe.c
 build/djgpp/TWODTEST.EXE: tests/hal/twodtest.c tests/hal/sw2d.c tests/hal/sw2d.h
+build/djgpp/WARPTRI.EXE: tests/hal/warptri.c
 build/djgpp/STACKPG.EXE: tests/shim/stackpg.c
 build/djgpp/MOUSETST.EXE: tests/shim/mousetst.c
 build/djgpp/JOYTEST.EXE: tests/shim/joytest.c

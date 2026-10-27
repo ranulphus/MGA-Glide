@@ -34,3 +34,4 @@ local/0118-piix4-rtc-alias-index.patch
 local/0119-mga-fifostatus-status-byte.patch
 local/0120-mga-g400-texel-centres.patch
 local/0121-mga-g400-texture-cache.patch
+local/0122-mga-g400-warp.patch

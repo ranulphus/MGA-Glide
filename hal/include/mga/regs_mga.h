@@ -71,6 +71,8 @@
 #define MGAREG_RST          0x1E40
 #define MGAREG_OPMODE       0x1E54
 #define OPMODE_DMAMOD_BLIT  (1u << 2)   /* DMA window writes are ILOAD data */
+#define OPMODE_DMAMOD_VERTEX (3u << 2)  /* DMA window writes are vertices for the WARP (G200/G400) */
+#define OPMODE_DMAMOD_MASK  (3u << 2)
 #define MGAREG_PRIMADDRESS  0x1E58
 #define MGAREG_PRIMEND      0x1E5C
 
@@ -177,6 +179,32 @@
 #define DWG_PATTERN             (1u << 29)
 #define DWG_TRANSC              (1u << 30)
 #define DWG_CLIPDIS             (1u << 31)
+
+/* ---- WARP setup engine (G200/G400; G400 specification 3-260..3-278) ------- */
+#define MGAREG_WIADDR       0x1DC0      /* WARP0's instruction address and mode (FIFO) */
+#define MGAREG_WFLAG        0x1DC4
+#define MGAREG_WGETMSB      0x1DC8
+#define MGAREG_WVRTXSZ      0x1DCC      /* registers a vertex, minus one; primsz <13:8> */
+#define MGAREG_WACCEPTSEQ   0x1DD4
+#define MGAREG_WIADDR2      0x1DD8      /* G400: both WARPs */
+#define MGAREG_WFLAG1       0x1DE0      /* G400: WARP1's flags */
+#define MGAREG_WIADDRNB2    0x1E00      /* WIADDR2 bypassing the FIFO */
+#define MGAREG_WIADDRNB     0x1E60
+#define MGAREG_WIMEMADDR    0x1E68      /* instruction memory word (0-255) for WIMEMDATA */
+#define MGAREG_WCODEADDR    0x1E6C
+#define MGAREG_WMISC        0x1E70
+#define MGAREG_WIMEMDATA    0x2000      /* WARP0's instruction memory: two dwords a 64-bit word */
+#define MGAREG_WIMEMDATA1   0x2100      /* G400: WARP1's */
+#define MGAREG_WR(n)        (0x2D00 + 4u * (n))   /* WR0-WR63 */
+#define WMODE_SUSPEND       0u
+#define WMODE_RESUME        1u
+#define WMODE_JUMP          2u
+#define WMODE_START         3u
+#define WMISC_UCODECACHE    (1u << 0)   /* fetch the microcode from memory (with WMISC_MASTER) */
+#define WMISC_MASTER        (1u << 1)
+#define WMISC_CACHEFLUSH    (1u << 3)
+#define STATUS_WBUSY        (1u << 18)  /* also while the WARP waits for vertices */
+#define STATUS_WBUSY1       (1u << 19)
 
 /* ---- MACCESS ------------------------------------------------------------- */
 #define MACCESS_PW8             0x0u
