@@ -155,8 +155,10 @@ static int warp_tri(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, con
     mga_wvtx w[3];
     const double zs = mg.zbits == 32 ? 1.0 / 4294967295.0 : 1.0 / 65535.0;
     int i;
+    int po;
     if (warp_ok <= 0 || (ctx->flags & MGA_S_TEX2))
         return -1;
+    po = PROF_SWITCH(PROF_G_WARP);
     setup_dwgctl(ctx->dwgctl);
     if (!(ctx->flags & MGA_S_TEX)) {
         if (warp_tw != 0) {
@@ -182,10 +184,12 @@ static int warp_tri(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, con
         w[i].u1 = w[i].v1 = 0;
     }
     if (warp_vertices(w, 3) != 0) {
+        PROF_BACK(po);
         warp_ok = 0;
         mg_log(MG_LOG_WARN, "the WARP stopped taking vertices: triangles are set up by the CPU");
         return -1;
     }
+    PROF_BACK(po);
     warp_since_cpu = 1;
     return 0;
 }
@@ -255,6 +259,21 @@ static void lod_setup(lod_planes *L, const GrVertex *a, const GrVertex *b, const
     L->x0 = x[0]; L->y0 = y[0];
 }
 
+/* floor(2 * log2 g) for g > 0, exactly, from the double's bits: with
+ * g = m * 2^e (1 <= m < 2) it is 2e, plus 1 when m >= sqrt 2 (no double
+ * lies between sqrt 2 and its nearest, which is above it). log2d's series
+ * for subnormals. */
+static int log2x2_floor(double g)
+{
+    union { double d; uint64_t u; } c;
+    int e;
+    c.d = g;
+    e = (int)((c.u >> 52) & 0x7FF);
+    if (e == 0)
+        return floor_i(2.0 * log2d(g));
+    return 2 * (e - 1023) + ((c.u & 0xFFFFFFFFFFFFFull) >= 0x6A09E667F3BCDull);
+}
+
 static int lod_at(const lod_planes *L, double px, double py)
 {
     double dx = px - L->x0, dy = py - L->y0;
@@ -270,7 +289,7 @@ static int lod_at(const lod_planes *L, double px, double py)
     if (g <= 0)
         return -64 * 4;
     /* quarter levels: floor(4 * log2(sqrt g)) = floor(2 * log2 g) */
-    lam = floor_i(2.0 * log2d(g));
+    lam = log2x2_floor(g);
     if (mg.scaled)
         lam -= floor_i(2.0 * log2d(mg.sx * mg.sy) + 0.5);   /* more pixels per texel: finer levels */
     return lam + (int)(tmu0.lod_bias * 4.0f + (tmu0.lod_bias >= 0 ? 0.5f : -0.5f));
@@ -476,6 +495,7 @@ static void draw_textured(const GrVertex *a, const GrVertex *b, const GrVertex *
     int row, r0, r1, run_start, need_lod;
     double cx;
     GrLOD_t run_lod;
+    int lpo;
     need_lod = !(tmu0.mipmap == GR_MIPMAP_DISABLE || tmu0.small == tmu0.large || plan->tex_white);
     if (sb->Y16 < ymin) ymin = sb->Y16;
     if (sc->Y16 < ymin) ymin = sc->Y16;
@@ -485,6 +505,7 @@ static void draw_textured(const GrVertex *a, const GrVertex *b, const GrVertex *
     r1 = (ymax + 7) >> 4;
     if (r1 <= r0)
         return;
+    lpo = PROF_SWITCH(PROF_G_LOD);
     F.on = 0;
     if (mg.fog_on && mg_fog_source() == GR_FOG_WITH_TABLE && r1 - r0 > BAND_ROWS) {
         double fmin = sa->fog, fmax = sa->fog;
@@ -500,6 +521,7 @@ static void draw_textured(const GrVertex *a, const GrVertex *b, const GrVertex *
         }
     }
     if (!need_lod && !F.on) {
+        PROF_BACK(lpo);
         draw_band(sa, sb, sc, ctx, plan, o, tmu0.large, 0, mg.rh, NULL);
         return;
     }
@@ -519,6 +541,7 @@ static void draw_textured(const GrVertex *a, const GrVertex *b, const GrVertex *
         l = level_for(lod_at(&L, c->x, c->y)); if (l < l0) l0 = l;
         l = level_for(lod_at(&L, cxm, cym)); if (l < l0) l0 = l;
         mo.mip_n = mga.max_mip_levels > 5 ? 5 : mga.max_mip_levels;
+        PROF_BACK(lpo);
         draw_band(sa, sb, sc, ctx, plan, &mo, l0, 0, mg.rh, NULL);
         return;
     }
@@ -535,17 +558,22 @@ static void draw_textured(const GrVertex *a, const GrVertex *b, const GrVertex *
             l = level_for(lod_at(&L, cx, gy));
         if (F.on) {
             /* Every band gets its own fog fit (and its own level). */
+            PROF_BACK(lpo);
             draw_band(sa, sb, sc, ctx, plan, o, l, row, end, &F);
+            lpo = PROF_SWITCH(PROF_G_LOD);
             continue;
         }
         if (run_lod == (GrLOD_t)-1)
             run_lod = l;
         else if (l != run_lod) {
+            PROF_BACK(lpo);
             draw_band(sa, sb, sc, ctx, plan, o, run_lod, run_start, row, NULL);
+            lpo = PROF_SWITCH(PROF_G_LOD);
             run_start = row;
             run_lod = l;
         }
     }
+    PROF_BACK(lpo);
     if (!F.on) {
         if (run_start == r0)            /* one level for the whole triangle: its rows need no clip */
             draw_band(sa, sb, sc, ctx, plan, o, run_lod, 0, mg.rh, NULL);
@@ -752,6 +780,7 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
     mg_plan plan;
     mg_aplan ap;
     draw_opts opts;
+    int vpo;
     int wmode = mg.st.depth_mode == GR_DEPTHBUFFER_WBUFFER || mg.st.depth_mode == GR_DEPTHBUFFER_WBUFFER_COMPARE_TO_BIAS;
     int depth = mg.st.depth_mode != GR_DEPTHBUFFER_DISABLE && mg.has_aux;
     int64_t area;
@@ -833,6 +862,7 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
             plan.modulate = 1;
         }
     }
+    vpo = PROF_SWITCH(PROF_G_VERT);
     vtx(&sa, a, wmode, plan.color_src, ap.alpha_src, plan.spec);
     vtx(&sb, b, wmode, plan.color_src, ap.alpha_src, plan.spec);
     vtx(&sc, c, wmode, plan.color_src, ap.alpha_src, plan.spec);
@@ -840,8 +870,10 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
     opts.alphactrl = mga.has_alpha_blend ? ALPHACTRL_SRC(BLEND_ONE) | ALPHACTRL_DST(BLEND_ZERO) |
                                            ALPHACTRL_ALPHASEL(ALPHASEL_DIFFUSE)
                                          : ALPHACTRL_G100_FIXED | ALPHACTRL_ALPHASEL(ALPHASEL_DIFFUSE);
-    if (!alpha_setup(&plan, &ap, &opts, &sa, &sb, &sc))
+    if (!alpha_setup(&plan, &ap, &opts, &sa, &sb, &sc)) {
+        PROF_BACK(vpo);
         return;
+    }
     mg_validate();
     ctx.flags = MGA_S_VOODOO_EDGES;
     if (mg.fog_on) {
@@ -864,6 +896,7 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
         ctx.flags |= MGA_S_SPEC;
         opts.texctl2 |= TEXCTL2_SPECEN;
     }
+    PROF_BACK(vpo);
     if (!plan.textured) {
         ctx.dwgctl |= DWG_OPCOD_TRAP;
         if (plan.color_src == CS_ITERATED || plan.color_src == CS_ITER_ALPHA || plan.color_src == CS_SOFT)

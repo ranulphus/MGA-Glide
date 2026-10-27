@@ -137,7 +137,11 @@ enum {
     PROF_G_TEXDL,               /* converting and writing a level into VRAM */
     PROF_G_DRAIN,               /* grBufferSwap waiting for the engine */
     PROF_G_VSYNC,               /* grBufferSwap waiting for retrace */
-    PROF_G_SWAP                 /* the rest of grBufferSwap (present, flip, statistics) */
+    PROF_G_SWAP,                /* the rest of grBufferSwap (present, flip, statistics) */
+    PROF_G_PLAN,                /* within a triangle: culling, DELTA0, the combine plans, subdivision */
+    PROF_G_VERT,                /* within a triangle: setup vertices, alpha, fog and validation */
+    PROF_G_LOD,                 /* within a triangle: the level planes and the bands */
+    PROF_G_WARP                 /* within a triangle: the WARP's vertices */
 };
 
 /* FPU control for entry points that do float maths (see fp.h). */
