@@ -31,6 +31,11 @@ int  warp_select(int pipe);
 /* WR54/WR62 (map 0) and WR52/WR60 (map 1): TEXWIDTH/TEXHEIGHT values for
  * the pipe's texture scaling, 0 for none. */
 void warp_tex_sizes(uint32_t w0, uint32_t h0, uint32_t w1, uint32_t h1);
+/* A map's size for the WARP: TEXWIDTH and TEXHEIGHT as Mesa's mga driver
+ * writes them for a G400 (tw = log2 + 11, rfw = 2 - log2: the microcode
+ * scales the TMRs it writes by them) and the pipe's WR registers. Map 1 is
+ * written through TEXCTL2.map1; texctl2 is TEXCTL2's value without it. */
+void warp_tex(int map, int log2w, int log2h, uint32_t texctl2);
 /* n vertices, three a triangle, through the DMA window in vertex mode.
  * 0, or -1 when the FIFO stopped draining (the rest is not sent; the WARP
  * is suspended and the engine reset). */

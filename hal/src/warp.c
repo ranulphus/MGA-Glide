@@ -10,6 +10,7 @@
 #include "mga/hal.h"
 #include "mga/mmio.h"
 #include "mga/regs_mga.h"
+#include "mga/setup.h"
 #include "warp_g400.h"
 
 uint32_t warp_tris, warp_failures;
@@ -158,6 +159,32 @@ void warp_tex_sizes(uint32_t w0, uint32_t h0, uint32_t w1, uint32_t h1)
     MGA_WR32(MGAREG_WR(62), h0 | 0x40);
     MGA_WR32(MGAREG_WR(52), w1 | 0x40);
     MGA_WR32(MGAREG_WR(60), h1 | 0x40);
+}
+
+static uint32_t mesa_wh(int lg)
+{
+    return ((uint32_t)((1 << lg) - 1) << 18) | ((uint32_t)((2 - lg) & 63) << 9) | ((uint32_t)(lg + 11) & 63);
+}
+
+void warp_tex(int map, int log2w, int log2h, uint32_t texctl2)
+{
+    const uint32_t w = mesa_wh(log2w), h = mesa_wh(log2h);
+    if (!map) {
+        fifo_reserve(4);
+        MGA_WR32(MGAREG_TEXWIDTH, w);
+        MGA_WR32(MGAREG_TEXHEIGHT, h);
+        MGA_WR32(MGAREG_WR(54), w | 0x40);
+        MGA_WR32(MGAREG_WR(62), h | 0x40);
+    } else {
+        fifo_reserve(6);
+        MGA_WR32(MGAREG_TEXCTL2, texctl2 | TEXCTL2_MAP1);
+        MGA_WR32(MGAREG_TEXWIDTH, w);
+        MGA_WR32(MGAREG_TEXHEIGHT, h);
+        MGA_WR32(MGAREG_TEXCTL2, texctl2);
+        MGA_WR32(MGAREG_WR(52), w | 0x40);
+        MGA_WR32(MGAREG_WR(60), h | 0x40);
+    }
+    setup_invalidate();                 /* (setup_triangle's TEXWIDTH/TEXHEIGHT shadows) */
 }
 
 int warp_vertices(const mga_wvtx *v, int n)

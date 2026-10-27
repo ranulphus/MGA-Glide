@@ -2169,7 +2169,7 @@
                          mystique_accel_ctrl_write_l(reg_addr, val, mystique);
 --- /dev/null
 +++ b/src/video/vid_mga_warp.c
-@@ -0,0 +1,227 @@
+@@ -0,0 +1,240 @@
 +/*
 + * MGA-Glide local patch: the Matrox G400's WARP setup engine, at a high
 + * level. The real WARP runs Matrox's microcode (Linux's linux-firmware
@@ -2336,6 +2336,19 @@
 +    }
 +}
 +
++/* A map's size from TEXWIDTH/TEXHEIGHT's mask field (<28:18>): the tw
++ * field holds log2 + 11 under the WARP (Mesa's values) but log2 under
++ * MGA-Glide's own setup, and the mask is the same under both. */
++static int
++log2_of_mask(uint32_t wh)
++{
++    uint32_t n = ((wh >> 18) & 0x7ff) + 1;
++    int      lg = 0;
++    while ((1u << lg) < n && lg < 11)
++        lg++;
++    return lg;
++}
++
 +void
 +mgawarp_triangle(const uint32_t *d0, const uint32_t *d1, const uint32_t *d2, const mgawarp_regs *r,
 +                 void (*wr)(void *p, uint32_t reg, uint32_t val), void *p)
@@ -2382,13 +2395,13 @@
 +    ctx.clip_y1 = 4096;
 +    if (textured) {
 +        ctx.flags |= MGA_S_TEX;
-+        ctx.tex_tw = (int) (r->texwidth & 0x3f);
-+        ctx.tex_th = (int) (r->texheight & 0x3f);
++        ctx.tex_tw = log2_of_mask(r->texwidth);
++        ctx.tex_th = log2_of_mask(r->texheight);
 +        wrap_shift(v, 0, !!(r->texctl & TEXCTL_CLAMPU), !!(r->texctl & TEXCTL_CLAMPV));
 +        if (t2) {
 +            ctx.flags |= MGA_S_TEX2;
-+            ctx.tex_tw1   = (int) (r->texwidth1 & 0x3f);
-+            ctx.tex_th1   = (int) (r->texheight1 & 0x3f);
++            ctx.tex_tw1   = log2_of_mask(r->texwidth1);
++            ctx.tex_th1   = log2_of_mask(r->texheight1);
 +            ctx.texctl2_1 = r->texctl2_1 | TEXCTL2_DUALTEX;
 +            wrap_shift(v, 1, !!(r->texctl1 & TEXCTL_CLAMPU), !!(r->texctl1 & TEXCTL_CLAMPV));
 +        }
