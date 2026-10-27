@@ -11,9 +11,24 @@
 #include "mga/mmio.h"
 #include "mga/regs_mga.h"
 #include "mga/setup.h"
+#include "mga/sys.h"
 #include "warp_g400.h"
 
-uint32_t warp_tris, warp_failures;
+uint32_t warp_tris, warp_failures, warp_dma_kicks;
+int warp_use_dma = 1;
+
+/* Bus-master DMA (the primary channel in vertex mode: PRIMADDRESS's low
+ * bits select it; G400 specification 4.1.9): two buffers in conventional
+ * memory, whose physical address is the linear one (under DOS and under
+ * GLOS alike). One is filled while the chip fetches the other. */
+#define DMA_BYTES 16384u
+static struct { uint32_t *p; uint32_t phys; } dbuf[2];
+static int dma_state;               /* 0 not tried, 1 in use, -1 not available */
+static int dcur;                    /* the buffer being filled */
+static uint32_t dused;              /* its bytes */
+static int inflight;                /* a kick the chip may still be fetching */
+
+static void dma_flush(void);
 
 static int cur_pipe = -1;           /* in the instruction memories */
 static int sel_pipe = -1;           /* the one warp_select asked for */
@@ -94,12 +109,79 @@ static void suspend(void)
 
 void warp_stop(void)
 {
+    if (mga_dma_pending)
+        dma_flush();
     dma_mode(0);
     suspend();
 }
 
+static void fail(void);
+
+/* Wait until the chip has fetched the last kick (STATUS.endprdmasts). */
+static int dma_wait(void)
+{
+    long spin;
+    if (!inflight)
+        return 0;
+    for (spin = 0; spin < 2000000L; spin++)
+        if (MGA_RD32(MGAREG_STATUS) & (1u << 17))
+            break;
+    inflight = 0;
+    return spin < 2000000L ? 0 : -1;
+}
+
+static void dma_kick(void)
+{
+    if (!dused)
+        return;
+    if (dma_wait() != 0) {
+        fail();
+        return;
+    }
+    MGA_WR32(MGAREG_PRIMADDRESS, dbuf[dcur].phys | 3u);     /* vertex write */
+    MGA_WR32(MGAREG_PRIMEND, dbuf[dcur].phys + dused);      /* PCI memory; starts the channel */
+    inflight = 1;
+    warp_dma_kicks++;
+    dcur ^= 1;
+    dused = 0;
+}
+
+/* mga_dma_flush: everything buffered sent, and fetched. */
+static void dma_flush(void)
+{
+    mga_dma_pending = 0;
+    dma_kick();
+    if (dma_wait() != 0)
+        fail();
+    mga_fifo_free = 0;
+}
+
+static void dma_setup(void)
+{
+    uint16_t seg;
+    int i;
+    uint32_t cmd;
+    dma_state = -1;
+    if (!warp_use_dma)
+        return;
+    for (i = 0; i < 2; i++) {
+        dbuf[i].p = (uint32_t *)sys_dos_alloc(DMA_BYTES, &seg);
+        if (!dbuf[i].p)
+            return;
+        dbuf[i].phys = (uint32_t)seg << 4;
+    }
+    cmd = mga_pci_read32(mga.bus, mga.dev, mga.fn, 0x04);
+    if (!(cmd & 4u))
+        mga_pci_write32(mga.bus, mga.dev, mga.fn, 0x04, cmd | 4u);   /* bus master */
+    mga_dma_flush = dma_flush;
+    dma_state = 1;
+}
+
 static void fail(void)
 {
+    mga_dma_pending = 0;
+    inflight = 0;
+    dused = 0;
     warp_failures++;
     MGA_WR32(MGAREG_WIADDRNB2, WMODE_SUSPEND);      /* (bypassing the FIFO) */
     running = 0;
@@ -115,6 +197,10 @@ int warp_select(int pipe)
     uint32_t st = 0;
     if (!warp_available() || pipe_code(pipe, &code, &len) != 0)
         return -1;
+    if (!dma_state)
+        dma_setup();
+    if (mga_dma_pending)
+        dma_flush();
     check_lost();
     sel_pipe = pipe;
     if (running && pipe == cur_pipe)
@@ -207,6 +293,34 @@ int warp_vertices(const mga_wvtx *v, int n)
     if (!running && (sel_pipe < 0 || warp_select(sel_pipe) != 0))
         return -1;
     dw = (cur_pipe & WARP_T2) ? 10 : 8;
+    if (dma_state > 0) {
+        for (i = 0; i < n; i++) {
+            uint32_t *d;
+            union { float f; uint32_t u; } c;
+            if (dused + (uint32_t)dw * 4u > DMA_BYTES)
+                dma_kick();
+            if (!running)
+                return -1;              /* (a failed kick) */
+            d = dbuf[dcur].p + dused / 4u;
+            c.f = v[i].x; d[0] = c.u;
+            c.f = v[i].y; d[1] = c.u;
+            c.f = v[i].z; d[2] = c.u;
+            c.f = v[i].rhw; d[3] = c.u;
+            d[4] = v[i].bgra;
+            d[5] = v[i].spec;
+            c.f = v[i].u0; d[6] = c.u;
+            c.f = v[i].v0; d[7] = c.u;
+            if (dw == 10) {
+                c.f = v[i].u1; d[8] = c.u;
+                c.f = v[i].v1; d[9] = c.u;
+            }
+            dused += (uint32_t)dw * 4u;
+        }
+        mga_dma_pending = 1;            /* register writes wait for these */
+        mga_fifo_free = 0;
+        warp_tris += (uint32_t)(n / 3);
+        return 0;
+    }
     dma_mode(1);
     for (i = 0; i < n; i++) {
         union { float f; uint32_t u; } c;

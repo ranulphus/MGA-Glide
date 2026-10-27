@@ -87,6 +87,8 @@ void engine_init(int pitch_px, int bpp)
 
 int engine_sync(uint32_t timeout_us)
 {
+    if (mga_dma_pending && mga_dma_flush)
+        mga_dma_flush();
     if (timeout_us < 120000u)
         timeout_us = 120000u;          /* at least two BIOS ticks */
     uint32_t start = sys_time_us(), polls = 0;
@@ -112,6 +114,8 @@ int engine_sync(uint32_t timeout_us)
  * they wait (DOS-GL's swap, which lets a program's audio thread run). */
 int engine_idle(void)
 {
+    if (mga_dma_pending && mga_dma_flush)
+        mga_dma_flush();
     return (MGA_RD32(MGAREG_FIFOSTATUS) & (1u << 9)) && !(MGA_RD32(MGAREG_STATUS) & STATUS_DWGENGSTS);
 }
 

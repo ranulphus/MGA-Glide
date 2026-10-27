@@ -2160,7 +2160,34 @@
                                  mystique->blitter_submit_dma_refcount++;
  
                              //pclog("DMA value: 0x%08X to reg 0x%04X\n", val, reg_addr);
-@@ -3444,7 +3624,7 @@
+@@ -3392,6 +3572,26 @@
+                         }
+                         break;
+ 
++                    case 3:     /* MGA-Glide local patch: DMA vertex write, to the WARP (G400) */
++                        if ((mystique->dma.primaddress & DMA_ADDR_MASK) == (mystique->dma.primend & DMA_ADDR_MASK)) {
++                            mystique->endprdmasts_pending = 1;
++                            mystique->dma.state           = MGA_DMA_STATE_IDLE;
++                            break;
++                        }
++                        {
++                            uint32_t val;
++                            dma_bm_read(mystique->dma.primaddress & DMA_ADDR_MASK, (uint8_t *) &val, 4, 4);
++                            mystique->dma.primaddress += 4;
++                            words_transferred++;
++                            if (mystique->type >= MGA_G400)
++                                warp_input(mystique, val);
++                        }
++                        if ((mystique->dma.primaddress & DMA_ADDR_MASK) == (mystique->dma.primend & DMA_ADDR_MASK)) {
++                            mystique->endprdmasts_pending = 1;
++                            mystique->dma.state           = MGA_DMA_STATE_IDLE;
++                        }
++                        break;
++
+                     default:
+                         fatal("MGA_DMA_STATE_PRI: mode %i\n", mystique->dma.primaddress & DMA_MODE_MASK);
+                 }
+@@ -3444,7 +3644,7 @@
                          else
                              reg_addr += 0x1c00;
  
@@ -2169,6 +2196,36 @@
                              mystique->blitter_submit_dma_refcount++;
  
                          mystique_accel_ctrl_write_l(reg_addr, val, mystique);
+@@ -3504,6 +3704,29 @@
+                             }
+                         }
+                         break;
++
++                    case 3:     /* MGA-Glide local patch: DMA vertex write, to the WARP (G400) */
++                        if ((mystique->dma.secaddress & DMA_ADDR_MASK) < (mystique->dma.secend & DMA_ADDR_MASK)) {
++                            uint32_t val;
++                            dma_bm_read(mystique->dma.secaddress & DMA_ADDR_MASK, (uint8_t *) &val, 4, 4);
++                            mystique->dma.secaddress += 4;
++                            words_transferred++;
++                            if (mystique->type >= MGA_G400)
++                                warp_input(mystique, val);
++                        }
++                        if ((mystique->dma.secaddress & DMA_ADDR_MASK) >= (mystique->dma.secend & DMA_ADDR_MASK)) {
++                            if ((mystique->dma.primaddress & DMA_ADDR_MASK) == (mystique->dma.primend & DMA_ADDR_MASK)) {
++                                mystique->endprdmasts_pending = 1;
++                                mystique->dma.state           = MGA_DMA_STATE_IDLE;
++                                mystique->dma.words_expected  = 0;
++                                mystique->dma.pri_state       = 0;
++                            } else {
++                                mystique->dma.state          = MGA_DMA_STATE_PRI;
++                                mystique->dma.words_expected = 0;
++                                mystique->dma.pri_state      = 0;
++                            }
++                        }
++                        break;
+ 
+                     default:
+                         fatal("MGA_DMA_STATE_SEC: mode %i\n", mystique->dma.secaddress & DMA_MODE_MASK);
 --- /dev/null
 +++ b/src/video/vid_mga_warp.c
 @@ -0,0 +1,240 @@

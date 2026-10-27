@@ -255,6 +255,14 @@ void fifo_reset(void);
 /* fifo_reserve's fast path, inline: most reservations fit the slots the
  * last FIFOSTATUS read found free, and cost no call. */
 extern int mga_fifo_free;
+/* Vertices that warp.c has buffered for, or is sending by, bus-master DMA:
+ * fifo_reserve (and so every register write's reservation) and engine_sync
+ * call mga_dma_flush first, which sends them and waits until the chip has
+ * fetched them, so register writes never overtake them. warp.c keeps
+ * mga_fifo_free at 0 while they are pending, which sends fifo_need to
+ * fifo_reserve. */
+extern int mga_dma_pending;
+extern void (*mga_dma_flush)(void);
 MGA_INLINE void fifo_need(int n)
 {
     if (mga_fifo_free >= n)

@@ -1,7 +1,10 @@
 /* warptri.c - WARPTRI: the G400's WARP setup engine driven by PIO through
  * the HAL's warp.c, with no bus mastering (speed plan W0; docs/g400-warp.md).
  *
- *   WARPTRI [pipe=N] [n=COUNT]
+ *   WARPTRI [pipe=N] [n=COUNT] [pio]
+ *
+ * The vertices go by bus-master DMA (warp.c's default) or, with pio,
+ * through the DMA window by the CPU.
  *
  * a) the pipe (default 0, TGZ) loaded and started (warp_select), and WARP0's
  *    instruction memory read back against the microcode;
@@ -157,6 +160,7 @@ int main(int argc, char **argv)
     for (i = 1; i < argc; i++) {
         if (!strncmp(argv[i], "pipe=", 5)) pipe = atoi(argv[i] + 5);
         else if (!strncmp(argv[i], "n=", 2)) count = atoi(argv[i] + 2);
+        else if (!strcmp(argv[i], "pio")) warp_use_dma = 0;
     }
     hx_init(1, argv, "warptri");
     ok = mga_find(&mga) == 0 && mga_map(&mga) == 0;
@@ -282,8 +286,9 @@ out:
     warp_stop();
     MGA_WR32(MGAREG_OPMODE, opmode_saved);
     engine_reset();                             /* the next program finds the engine and the WARPs reset */
-    hx_log("HX-STAT warptri warp tris=%lu failures=%lu engine resets=%lu timeouts=%lu", (unsigned long)warp_tris,
-           (unsigned long)warp_failures, (unsigned long)engine_resets, (unsigned long)engine_timeouts);
+    hx_log("HX-STAT warptri warp tris=%lu failures=%lu dma_kicks=%lu engine resets=%lu timeouts=%lu",
+           (unsigned long)warp_tris, (unsigned long)warp_failures, (unsigned long)warp_dma_kicks,
+           (unsigned long)engine_resets, (unsigned long)engine_timeouts);
     vbe_set_text_mode();
     hx_done(hx_failures() ? HX_FAIL : HX_PASS);
     return 0;

@@ -43,7 +43,12 @@ int  warp_vertices(const mga_wvtx *v, int n);
 /* The DMA window back in general-purpose mode, the WARP suspended (before
  * the engine is used without it, or by another program). */
 void warp_stop(void);
-/* Triangles and failures since start-up. */
-extern uint32_t warp_tris, warp_failures;
+/* Triangles and failures since start-up; DMA kicks (warp_dma_kicks) when the
+ * vertices go by bus mastering. */
+extern uint32_t warp_tris, warp_failures, warp_dma_kicks;
+/* 1 (the default): vertices by bus-master DMA from conventional memory when
+ * the port can provide it (primary DMA in vertex mode); 0: through the DMA
+ * window by the CPU. Read at the first warp_select. */
+extern int warp_use_dma;
 
 #endif
