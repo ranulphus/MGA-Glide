@@ -170,6 +170,68 @@ static double fpc_ref(double v, int mode)
     }
 }
 
+/* mga_cbyte and mga_trunc_x16 (integer instructions on a float's bits)
+ * against the code they replace, verbatim: float bit patterns by a prime
+ * stride over all of them, every one in the exponents where colours and
+ * coordinates round, and the edges. */
+static uint32_t fpc_cbyte_old(float f)
+{
+    return f <= 0 ? 0 : f >= 255.0f ? 255 : (uint32_t)mga_ifloor((double)f + 0.5);
+}
+static int32_t fpc_snap16_old(float v)
+{
+    double x = (double)(v * 16.0f);
+    if (x > -2147483647.0 && x < 2147483647.0)
+        return mga_itrunc(x);
+    return (int32_t)(v * 16.0f);
+}
+static int fpc_bits_one(uint32_t u)
+{
+    union { uint32_t u; float f; } c;
+    int32_t t;
+    int ok;
+    c.u = u;
+    if (mga_cbyte(c.f) != fpc_cbyte_old(c.f)) {
+        fpc_fail("cbyte", (double)c.f, mga_cbyte(c.f), fpc_cbyte_old(c.f));
+        return 1;
+    }
+    t = mga_trunc_x16(c.f, &ok);
+    if (ok && t != fpc_snap16_old(c.f)) {
+        fpc_fail("trunc_x16", (double)c.f, t, fpc_snap16_old(c.f));
+        return 1;
+    }
+    if (!ok && (((u >> 23) & 0xFF) < 154u)) {
+        fpc_fail("trunc_x16 range", (double)c.f, 0, 1);
+        return 1;
+    }
+    return 0;
+}
+#if defined(__DJGPP__) || defined(__WATCOMC__)
+#define FPC_BITS_STEP 1021u             /* (in 86Box: the host's sweep is denser) */
+#else
+#define FPC_BITS_STEP 7u
+#endif
+static long fpc_bits_run(void)
+{
+    static const uint32_t edge[] = { 0x00000000u, 0x80000000u, 0x00000001u, 0x80000001u, 0x3F000000u, 0x3EFFFFFFu,
+        0x437F0000u, 0x437EFFFFu, 0x437F0001u, 0x7F800000u, 0xFF800000u, 0x7FC00000u, 0xFFC00000u, 0x7F800001u,
+        0xFF800001u, 0x4EFFFFFFu, 0x4F000000u, 0xCEFFFFFFu, 0xCF000000u, 0x3D800000u, 0x3D7FFFFFu, 0xBD800000u,
+        0x42FF0000u, 0x42FE0000u };
+    long n = 0;
+    uint32_t u, e, m;
+    for (u = 0; u < sizeof edge / sizeof edge[0]; u++, n++)
+        if (fpc_bits_one(edge[u]))
+            return n;
+    for (u = 0; u < 0xFFFFFFFFu - 99991u; u += 99991u, n++)
+        if (fpc_bits_one(u))
+            return n;
+    for (e = 120; e <= 158; e++)        /* every FPC_BITS_STEP-th mantissa, both signs */
+        for (m = 0; m < 0x800000u; m += FPC_BITS_STEP, n += 2)
+            if (fpc_bits_one(e << 23 | m) || fpc_bits_one(0x80000000u | e << 23 | m))
+                return n;
+    return n;
+}
+
 static long fpcheck_run(void)
 {
     static double want_rint[4][FPC_N], want_floor[FPC_N], want_trunc[FPC_N];
@@ -284,5 +346,6 @@ static long fpcheck_run(void)
             cases++;
         }
     }
+    cases += fpc_bits_run();
     return cases;
 }

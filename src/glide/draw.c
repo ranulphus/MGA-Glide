@@ -16,7 +16,12 @@
  * value without its control-word changes. */
 static int32_t snap16(float v)
 {
-    double x = (double)(v * 16.0f);
+    int ok;
+    int32_t r = mga_trunc_x16(v, &ok);  /* (the same, from the float's bits) */
+    double x;
+    if (ok)
+        return r;
+    x = (double)(v * 16.0f);
     if (x > -2147483647.0 && x < 2147483647.0)
         return mga_itrunc(x);
     return (int32_t)(v * 16.0f);
@@ -53,11 +58,12 @@ uint32_t mg_depth_clear_value(FxU16 depth)
 
 static uint32_t argb_const(void) { return mg_color_to_argb(mg.st.constant_color); }
 
-static void vtx(mga_svtx *o, const GrVertex *v, int wmode, int csrc, int asrc, int spec)
+/* sx, sy: snap16 of v->x and v->y (the caller has them for culling). */
+static void vtx(mga_svtx *o, const GrVertex *v, int32_t sx, int32_t sy, int wmode, int csrc, int asrc, int spec)
 {
     uint32_t c;
-    o->X16 = snap16(v->x);
-    o->Y16 = snap16(v->y);
+    o->X16 = sx;
+    o->Y16 = sy;
     if (mg.st.origin == GR_ORIGIN_LOWER_LEFT)
         o->Y16 = mg.height * 16 - o->Y16;
     if (mg.scaled) {
@@ -153,7 +159,7 @@ static void warp_prepare(void)
 
 static uint32_t cbyte(float f)
 {
-    return f <= 0 ? 0 : f >= 255.0f ? 255 : (uint32_t)mga_ifloor((double)f + 0.5);
+    return mga_cbyte(f);                /* f <= 0 ? 0 : f >= 255 ? 255 : floor(f + 0.5), from the float's bits */
 }
 
 /* 0 when the WARP took the triangle. */
@@ -291,9 +297,18 @@ static int lod_at(const lod_planes *L, double px, double py)
     if (!L->valid || Q <= 1e-12)
         return 0;
     u = S / Q; v = T / Q;
-    gx = ((L->sx - u * L->qx) * (L->sx - u * L->qx) + (L->tx - v * L->qx) * (L->tx - v * L->qx)) / (Q * Q);
-    gy = ((L->sy - u * L->qy) * (L->sy - u * L->qy) + (L->ty - v * L->qy) * (L->ty - v * L->qy)) / (Q * Q);
-    g = gx > gy ? gx : gy;
+    /* max(gx, gy) with gx, gy over the same positive Q * Q: the larger
+     * numerator over it, one divide (division keeps the order, and a NaN
+     * numerator compares false either way). */
+    gx = (L->sx - u * L->qx) * (L->sx - u * L->qx) + (L->tx - v * L->qx) * (L->tx - v * L->qx);
+    gy = (L->sy - u * L->qy) * (L->sy - u * L->qy) + (L->ty - v * L->qy) * (L->ty - v * L->qy);
+    if (Q * Q < 1e300)
+        g = (gx > gy ? gx : gy) / (Q * Q);
+    else {                              /* (Q * Q infinite: inf / inf as the two divides had it) */
+        gx /= Q * Q;
+        gy /= Q * Q;
+        g = gx > gy ? gx : gy;
+    }
     if (g <= 0)
         return -64 * 4;
     /* quarter levels: floor(4 * log2(sqrt g)) = floor(2 * log2 g) */
@@ -874,16 +889,18 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
     int wmode = mg.st.depth_mode == GR_DEPTHBUFFER_WBUFFER || mg.st.depth_mode == GR_DEPTHBUFFER_WBUFFER_COMPARE_TO_BIAS;
     int depth = mg.st.depth_mode != GR_DEPTHBUFFER_DISABLE && mg.has_aux;
     int64_t area;
+    int32_t ax, ay, bx, by, cx, cy;
     if (!mg.open)
         return;
     mg_stats.tri_processed++;
     if (depth && mg.st.depth_func == GR_CMP_NEVER)
         return;
+    ax = snap16(a->x); ay = snap16(a->y);
+    bx = snap16(b->x); by = snap16(b->y);
+    cx = snap16(c->x); cy = snap16(c->y);
     /* Culling uses the game's orientation (before any origin flip). */
     if (mg.st.cull != GR_CULL_DISABLE) {
-        int64_t ax = snap16(a->x), ay = snap16(a->y), bx = snap16(b->x), by = snap16(b->y);
-        int64_t cx = snap16(c->x), cy = snap16(c->y);
-        area = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay);
+        area = ((int64_t)bx - ax) * ((int64_t)cy - ay) - ((int64_t)cx - ax) * ((int64_t)by - ay);
         if (area == 0)
             return;
         if (mg.st.cull == GR_CULL_NEGATIVE && area < 0)
@@ -953,9 +970,9 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
         }
     }
     vpo = PROF_SWITCH(PROF_G_VERT);
-    vtx(&sa, a, wmode, plan.color_src, ap.alpha_src, plan.spec);
-    vtx(&sb, b, wmode, plan.color_src, ap.alpha_src, plan.spec);
-    vtx(&sc, c, wmode, plan.color_src, ap.alpha_src, plan.spec);
+    vtx(&sa, a, ax, ay, wmode, plan.color_src, ap.alpha_src, plan.spec);
+    vtx(&sb, b, bx, by, wmode, plan.color_src, ap.alpha_src, plan.spec);
+    vtx(&sc, c, cx, cy, wmode, plan.color_src, ap.alpha_src, plan.spec);
     memset(&opts, 0, sizeof opts);
     opts.alphactrl = mga.has_alpha_blend ? ALPHACTRL_SRC(BLEND_ONE) | ALPHACTRL_DST(BLEND_ZERO) |
                                            ALPHACTRL_ALPHASEL(ALPHASEL_DIFFUSE)

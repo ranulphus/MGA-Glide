@@ -92,13 +92,33 @@ static void adjust(mga_svtx *a, mga_svtx *b, mga_svtx *c, const mga_texstate *t,
             shift -= half;
         }
         if (wrap) {
-            /* The smallest coordinate (three divides) only matters here. */
+            /* The smallest coordinate only matters here. With every q
+             * positive it is found by cross-multiplying (exact: a product
+             * of two floats fits a double), then one divide: the same value
+             * as dividing all three. */
             double mn = 1e30;
-            for (i = 0; i < 3; i++) {
-                double q = v[i]->q > 0 ? v[i]->q : 1e-9;
-                double u = (axis ? (map1 ? v[i]->t1 : v[i]->t) : (map1 ? v[i]->s1 : v[i]->s)) / q;
-                if (u < mn) mn = u;
-            }
+            if (v[0]->q > 0 && v[1]->q > 0 && v[2]->q > 0) {
+                int best = -1;
+                for (i = 0; i < 3; i++) {
+                    double si = axis ? (map1 ? v[i]->t1 : v[i]->t) : (map1 ? v[i]->s1 : v[i]->s);
+                    if (si != si)
+                        continue;       /* (a NaN never compares smaller) */
+                    if (best < 0 || si * (double)v[best]->q <
+                        (double)(axis ? (map1 ? v[best]->t1 : v[best]->t) : (map1 ? v[best]->s1 : v[best]->s)) *
+                        (double)v[i]->q)
+                        best = i;
+                }
+                if (best >= 0) {
+                    double u = (double)(axis ? (map1 ? v[best]->t1 : v[best]->t) : (map1 ? v[best]->s1 : v[best]->s)) /
+                               (double)v[best]->q;
+                    if (u < mn) mn = u;
+                }
+            } else
+                for (i = 0; i < 3; i++) {
+                    double q = v[i]->q > 0 ? v[i]->q : 1e-9;
+                    double u = (axis ? (map1 ? v[i]->t1 : v[i]->t) : (map1 ? v[i]->s1 : v[i]->s)) / q;
+                    if (u < mn) mn = u;
+                }
             if (t->bilinear)
                 mn -= half;
             shift -= mga_floor(mn);         /* minimum into [0, 1): whole periods only */

@@ -146,4 +146,46 @@ MGA_INLINE double mga_floor(double v)
     return t > v ? t - 1.0 : t;
 }
 
+/* From a float's bits, with integer instructions only: on a P6 every FPU
+ * comparison reads the status word (FNSTSW), and these run several times a
+ * vertex. Each gives exactly what the expression it names gives
+ * (tests/unit/fpcheck.inc compares them over sweeps of every class of
+ * float). */
+
+/* A colour component as a byte: f <= 0 ? 0 : f >= 255 ? 255 :
+ * mga_ifloor((double)f + 0.5), a NaN included (FISTP's integer indefinite,
+ * 80000000h). */
+MGA_INLINE uint32_t mga_cbyte(float f)
+{
+    union { float f; uint32_t u; } c;
+    uint32_t e, sh;
+    c.f = f;
+    if (c.u >= 0x80000000u)             /* negative, -0, -NaN */
+        return c.u > 0xFF800000u ? 0x80000000u : 0u;
+    if (c.u >= 0x437F0000u)             /* 255 and up, +NaN */
+        return c.u > 0x7F800000u ? 0x80000000u : 255u;
+    e = c.u >> 23;
+    if (e < 126u)                       /* below 0.5 */
+        return 0;
+    sh = 150u - e;                      /* f = m * 2^-sh, sh 16..24 */
+    return (((c.u & 0x7FFFFFu) | 0x800000u) + (1u << (sh - 1u))) >> sh;
+}
+
+/* v * 16 truncated toward zero (exact: v * 16 is), for |v * 16| < 2^31
+ * (*ok 1); *ok 0 for larger magnitudes, infinities and NaNs, which the
+ * caller takes its slow way. */
+MGA_INLINE int32_t mga_trunc_x16(float v, int *ok)
+{
+    union { float f; uint32_t u; } c;
+    uint32_t e, m, a;
+    c.f = v;
+    e = (c.u >> 23) & 0xFFu;
+    *ok = e < 154u;
+    if (e < 123u || !*ok)               /* |v * 16| < 1, or the slow way */
+        return 0;
+    m = (c.u & 0x7FFFFFu) | 0x800000u;  /* v * 16 = m * 2^(e - 146) */
+    a = e >= 146u ? m << (e - 146u) : m >> (146u - e);
+    return (c.u & 0x80000000u) ? -(int32_t)a : (int32_t)a;
+}
+
 #endif
