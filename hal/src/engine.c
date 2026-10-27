@@ -458,14 +458,21 @@ static void dma_blit_mode(void)
  * the AR registers while the last DWGCTL's arzero is set (a fill's is). */
 static void iload_go(uint32_t dwgctl, int xl, int xr, int y, int h, uint32_t ar0, int row_dw)
 {
+    /* The load starts by direct writes, never from the WARP's DMA list
+     * (warp.c): the list carries DMAPAD packets after it, and a real G400
+     * takes a DMAPAD written during an ILOAD as the load's data, as 86Box
+     * does (DOS-GL's t29 on bench-g400: the texels landed shifted). The
+     * list is sent first, and the data would have waited for that anyway. */
+    if (mga_dma_pending && mga_dma_flush)
+        mga_dma_flush();
     fifo_reserve(6);
     setup_forget_dwgctl();
-    MGA_WR32(MGAREG_DWGCTL, dwgctl);
-    MGA_WR32(MGAREG_AR0, ar0);
-    MGA_WR32(MGAREG_AR3, 0);
-    MGA_WR32(MGAREG_AR5, 0);
-    MGA_WR32(MGAREG_FXBNDRY, ((uint32_t)xr << 16) | ((uint32_t)xl & 0xFFFFu));
-    MGA_WR32(MGAREG_YDSTLEN + MGAREG_EXEC, ((uint32_t)y << 16) | (uint32_t)h);
+    MGA_WR32_DIRECT(MGAREG_DWGCTL, dwgctl);
+    MGA_WR32_DIRECT(MGAREG_AR0, ar0);
+    MGA_WR32_DIRECT(MGAREG_AR3, 0);
+    MGA_WR32_DIRECT(MGAREG_AR5, 0);
+    MGA_WR32_DIRECT(MGAREG_FXBNDRY, ((uint32_t)xr << 16) | ((uint32_t)xl & 0xFFFFu));
+    MGA_WR32_DIRECT(MGAREG_YDSTLEN + MGAREG_EXEC, ((uint32_t)y << 16) | (uint32_t)h);
     iload_row_dw = row_dw;
     iload_rows = h;
 }
