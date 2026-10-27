@@ -51,8 +51,8 @@ void warp_commit(int n);
 /* A strip (fan 0) or fan (fan 1) of n vertices by the WARPs' sequencer, as
  * GL_TRIANGLE_STRIP and GL_TRIANGLE_FAN make triangles of them (any
  * winding: the WARPs cull nothing): room for them in the DMA stream, 8
- * dwords each, then warp_commit_seq(n). NULL for the T2 pipes (or as
- * warp_reserve): the caller sends triangles. */
+ * dwords each (10 for the T2 pipes), then warp_commit_seq(n). NULL as
+ * warp_reserve: the caller sends triangles. */
 uint32_t *warp_reserve_seq(int fan, int n, int *dwords);
 void warp_commit_seq(int n);
 /* Diagnostic: a list of DMAPAD packets (up to the list's size) fetched by
@@ -75,8 +75,9 @@ void warp_stop(void);
  * for the chip (the caller resets the engine next). */
 void warp_abort(void);
 /* Triangles and failures since start-up; DMA kicks (warp_dma_kicks) when the
- * vertices go by bus mastering. */
-extern uint32_t warp_tris, warp_failures, warp_dma_kicks;
+ * vertices go by bus mastering; strips and fans sent whole (warp_seqs, of
+ * them warp_seqs_t2 by the T2 pipes). */
+extern uint32_t warp_tris, warp_failures, warp_dma_kicks, warp_seqs, warp_seqs_t2;
 /* 1 (the default): vertices by bus-master DMA from conventional memory when
  * the port can provide it (primary DMA in vertex mode); 0: through the DMA
  * window by the CPU. Read at the first warp_select. */

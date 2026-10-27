@@ -17,7 +17,7 @@
 #include "warp_g400.h"
 #include <string.h>
 
-uint32_t warp_tris, warp_failures, warp_dma_kicks;
+uint32_t warp_tris, warp_failures, warp_dma_kicks, warp_seqs, warp_seqs_t2;
 int warp_use_dma = 1;
 uint32_t warp_ring_bytes = 262144;     /* the rings' size at most: halved until DOS has it */
 uint32_t warp_kick_bytes = 6144;       /* vertex bytes between kicks */
@@ -826,36 +826,47 @@ void warp_commit(int n)
  * and GL_TRIANGLE_STRIP have it (in their windings: nothing is culled here).
  * A real G400 draws them pixel for pixel as the same triangles in a list
  * (WARPTRI seq, 2026-10-27). One run of vertices between two WACCEPTSEQ
- * writes, the second back to lists (warp_select's value). */
+ * writes, the second back to lists (warp_select's value). The T2 pipes'
+ * 10-dword vertices sit in banks 16 registers apart (Mesa's T0T1 strip,
+ * 0x02010400, is wrong: the second bank is 8); WARPTRI seq pipe=8 and
+ * pipe=9 on a real G400, 2026-10-27. */
 #define SEQ_FAN   0x01000408u           /* seqdst 8, 16: the first vertex stays */
 #define SEQ_STRIP 0x02010200u           /* seqdst 0, 8, 16: the oldest goes */
 #define SEQ_LIST  0x18000000u           /* seqoff (and wsametag): three a triangle */
+#define SEQ_FAN2   0x01000810u          /* T2: seqdst 16, 32 */
+#define SEQ_STRIP2 0x02020400u          /* T2: seqdst 0, 16, 32 */
+#define SEQ_LIST2  0x1E000000u
 
 uint32_t *warp_reserve_seq(int fan, int n, int *dwords)
 {
+    int t2;
     check_lost();
-    if (!running || !mga_cmd_open || (cur_pipe & WARP_T2) || n < 3)
-        return NULL;                    /* (T2 pipes: 10-dword vertices, not tried on silicon) */
+    if (!running || !mga_cmd_open || n < 3)
+        return NULL;
+    t2 = (cur_pipe & WARP_T2) != 0;
     if (setup_wrote_texsize)
         wtex_again();
-    if (list_room(32) != 0 || vert_room((uint32_t)n * 32u) != 0 || !running || !mga_cmd_open)
+    if (list_room(32) != 0 || vert_room((uint32_t)n * (t2 ? 40u : 32u)) != 0 || !running || !mga_cmd_open)
         return NULL;
-    cmd_write(MGAREG_WACCEPTSEQ, fan ? SEQ_FAN : SEQ_STRIP);   /* (ends the open run; room kept above) */
-    vrun = vused;
-    *dwords = 8;
+    cmd_write(MGAREG_WACCEPTSEQ, t2 ? (fan ? SEQ_FAN2 : SEQ_STRIP2) : (fan ? SEQ_FAN : SEQ_STRIP));
+    vrun = vused;                       /* (the write ended the open run; room kept above) */
+    *dwords = t2 ? 10 : 8;
     return vring + vused / 4u;
 }
 
 void warp_commit_seq(int n)
 {
-    uint32_t b = (uint32_t)n * 32u;
+    const int t2 = (cur_pipe & WARP_T2) != 0;
+    uint32_t b = (uint32_t)n * (t2 ? 40u : 32u);
     vused += b;
     vsince += b;
     setup_stale = 1;
     mga_dma_pending = 1;
     mga_warp_pending = 1;
     warp_tris += (uint32_t)(n - 2);
-    cmd_write(MGAREG_WACCEPTSEQ, SEQ_LIST);    /* lists again (ends the run) */
+    warp_seqs++;
+    warp_seqs_t2 += (uint32_t)t2;
+    cmd_write(MGAREG_WACCEPTSEQ, t2 ? SEQ_LIST2 : SEQ_LIST);  /* lists again (ends the run) */
     if (vsince >= warp_kick_bytes)
         dma_kick();
 }

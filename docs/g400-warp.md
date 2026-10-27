@@ -94,9 +94,13 @@ without a second map, `MGA_WA_TRIFAN_T0` (01000408h: banks 8 and 16 in turn, the
 WACCEPTSEQ is written back to 18000000h. The WARPs cull nothing here (WFLAG 0), so the alternating winding of
 the sequencer's triangles doesn't matter.
 
+The T2 pipes' vertices are 10 dwords, in banks 16 registers apart: fan 01000810h (banks 16 and 32), strip
+02020400h (0, 16, 32), lists 1E000000h. Both draw the same triangles as a list on bench-g400 (WARPTRI `seq` at
+`pipe=8` and `pipe=9`). Mesa's `MGA_WA_TRISTRIP_T0T1`, 02010400h, puts the second bank at 8 and is wrong.
+
 `warp_reserve_seq` and `warp_commit_seq` send one strip or fan as a run of vertices between the two WACCEPTSEQ
-writes: each vertex once, not three times a triangle. Pipes without a second map only (the T2 pipes' values are
-untried). 86Box patch 0123 models the sequencer.
+writes: each vertex once, not three times a triangle, for every pipe. 86Box patch 0123 models the sequencer
+(banks of 16 for vertices of more than 8 dwords).
 
 ## Waiting for the WARPs
 

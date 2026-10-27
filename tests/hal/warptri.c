@@ -176,6 +176,7 @@ int main(int argc, char **argv)
     static const vtx z2[3] = { { 40, 450, 60000, 0, 255, 255 }, { 290, 300, 1000, 0, 255, 255 }, { 200, 470, 30000, 0, 255, 255 } };
     int pipe = 0, count = 4000, i, ok, pitch, cover, colour, drawn, starts = 0, reload = 0, keep = 0, dmabw = 0;
     int agpinfo = 0, agp_rate = 0, agp_draw = 0, agp_noflush = 0, seqtest = 0;
+    uint32_t seq_fan = 0, seq_strip = 0;
     mga_vbe_mode mode;
     mga_target tg;
     uint64_t t0, t1;
@@ -197,6 +198,8 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "agpdraw")) agp_draw = 1;     /* with agp=N: the drawing tests, not dmabw */
         else if (!strcmp(argv[i], "noflush")) agp_noflush = 1;  /* EXPERIMENT: does the bridge snoop AGP reads? */
         else if (!strcmp(argv[i], "seq")) seqtest = 1;          /* EXPERIMENT: strips and fans by the ACCEPT sequencer */
+        else if (!strncmp(argv[i], "seqf=", 5)) seq_fan = (uint32_t)strtoul(argv[i] + 5, NULL, 16);
+        else if (!strncmp(argv[i], "seqs=", 5)) seq_strip = (uint32_t)strtoul(argv[i] + 5, NULL, 16);
     }
     hx_init(1, argv, "warptri");
     ok = mga_find(&mga) == 0 && mga_map(&mga) == 0;
@@ -349,7 +352,12 @@ int main(int argc, char **argv)
         mga_wvtx w[6];
         vtx t[3];
         int k, cf = 0, kf = 0, df = 0, cs = 0, ks = 0, ds = 0, tl = 0, x, y;
-        uint32_t fanseq = 0x01000408u, stripseq = 0x02010200u;
+        /* T2 pipes: 10-dword vertices, banks 16 apart (seqf=, seqs= override) */
+        uint32_t fanseq = (pipe & WARP_T2) ? 0x01000810u : 0x01000408u,
+                 stripseq = (pipe & WARP_T2) ? 0x02020400u : 0x02010200u,
+                 listseq = (pipe & WARP_T2) ? 0x1E000000u : 0x18000000u;
+        if (seq_fan) fanseq = seq_fan;
+        if (seq_strip) stripseq = seq_strip;
         if (warp_select(pipe) != 0) {
             hx_test("seq", 0, "the WARP did not start");
             goto out;
@@ -367,7 +375,7 @@ int main(int argc, char **argv)
         MGA_WR32(MGAREG_WACCEPTSEQ, stripseq);
         if (!aborted && warp_vertices(w, 6) != 0)
             aborted = 1;
-        MGA_WR32(MGAREG_WACCEPTSEQ, 0x18000000u);     /* lists again */
+        MGA_WR32(MGAREG_WACCEPTSEQ, listseq);         /* lists again */
         warp_tri(tail);
         warp_stop();
         engine_sync(200000);
