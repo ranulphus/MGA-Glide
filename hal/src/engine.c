@@ -350,29 +350,8 @@ void engine_tlut_load(uint32_t off, int first, int count)
 static int iload_row_dw, iload_rows;
 static uint32_t dmawin_pos;
 
-/* An ILOAD's command and its data, which the CPU writes through the DMA
- * window, go direct: the G400's DMA command stream (warp.c) is sent and
- * paused for the load, and resumed after it (loads are rare; 86Box ran a
- * listed ILOAD command apart from its data). */
-int mga_cmd_paused;                     /* the stream paused for an ILOAD (warp.c's close clears it) */
-
-static void iload_resume(void)
-{
-    if (mga_cmd_paused) {
-        mga_cmd_paused = 0;
-        mga_cmd_open = 1;
-    }
-}
-
 static void dma_blit_mode(void)
 {
-    if (mga_cmd_open) {
-        if (mga_dma_pending && mga_dma_flush)
-            mga_dma_flush();
-        mga_cmd_open = 0;
-        mga_cmd_paused = 1;
-        fifo_reset();
-    }
     if (mga_opmode != OPMODE_DMAMOD_BLIT) {
         engine_sync(200000);                         /* OPMODE is not queued behind drawing */
         MGA_WR32(MGAREG_OPMODE, OPMODE_DMAMOD_BLIT);
@@ -466,7 +445,6 @@ void engine_mono(int x, int y, int w, int h, const uint8_t *bits, int stride, ui
         }
     }
     emit_clip();
-    iload_resume();
 }
 
 void engine_iload_row(const uint32_t *d)
@@ -494,5 +472,4 @@ void engine_iload_end(void)
     pitch_reg = cur.pitch_px;
     engine_set_target(&cur);                        /* DSTORG, ZORG, MACCESS */
     emit_clip();
-    iload_resume();
 }

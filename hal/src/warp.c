@@ -97,13 +97,15 @@ static uint32_t le32(const unsigned char *p)
  * fifo_reserve this never writes into a full FIFO. */
 static int fifo_room(int n)
 {
-    long spin;
-    for (spin = 0; spin < 400000L; spin++)
+    uint32_t polls = 0, start = sys_time_us();
+    for (;;) {
         if ((int)(MGA_RD8(MGAREG_FIFOSTATUS) & mga.fifo_mask) >= n) {
             mga_fifo_free = 0;          /* (fifo_reserve reads it again) */
             return 0;
         }
-    return -1;
+        if ((++polls & 1023) == 0 && (uint32_t)(sys_time_us() - start) > 500000u)
+            return -1;                  /* (a time limit: see dma_wait) */
+    }
 }
 
 static void dma_mode(int vertex)
@@ -139,17 +141,25 @@ static void fail(void);
  * primary and secondary channels both done). */
 static int dma_wait(void)
 {
-    long spin;
-    int o;
+    uint32_t polls = 0, start;
+    int o, done = 0;
     if (!inflight)
         return 0;
     o = PROF_SWITCH(PROF_FIFO);         /* (a wait for the chip, as fifo_reserve's) */
-    for (spin = 0; spin < 2000000L; spin++)
-        if (MGA_RD32(MGAREG_STATUS) & (1u << 17))
+    start = sys_time_us();
+    for (;;) {
+        if (MGA_RD32(MGAREG_STATUS) & (1u << 17)) {
+            done = 1;
             break;
+        }
+        /* A time limit, not a count of reads: in 86Box the CPU can read
+         * far faster than the engine works through a heavy batch. */
+        if ((++polls & 1023) == 0 && (uint32_t)(sys_time_us() - start) > 1000000u)
+            break;
+    }
     PROF_BACK(o);
     inflight = 0;
-    return spin < 2000000L ? 0 : -1;
+    return done ? 0 : -1;
 }
 
 static void list_put(uint32_t idx, uint32_t v)
@@ -252,7 +262,6 @@ static void stream_close(void)
     if (mga_cmd_open && mga_dma_pending)
         dma_flush();
     mga_cmd_open = 0;
-    mga_cmd_paused = 0;
     fifo_reset();
 }
 
@@ -295,7 +304,6 @@ static void fail(void)
 void warp_abort(void)
 {
     mga_cmd_open = 0;
-    mga_cmd_paused = 0;
     mga_dma_pending = 0;
     inflight = 0;
     lused = vused = 0;
@@ -312,7 +320,7 @@ int warp_select(int pipe)
     const unsigned char *code;
     int len, words, i;
     long spin;
-    uint32_t st = 0;
+    uint32_t st = 0, t0;
     if (!warp_available() || pipe_code(pipe, &code, &len) != 0)
         return -1;
     if (!dma_state)
@@ -372,7 +380,9 @@ int warp_select(int pipe)
     fifo_reserve(1);
     MGA_WR32(MGAREG_WIADDR2, 0 | WMODE_START);
     engine_sync(200000);
-    for (spin = 0; spin < 200000L && !((st = MGA_RD32(MGAREG_STATUS)) & (STATUS_WBUSY | STATUS_WBUSY1)); spin++)
+    for (spin = 0, t0 = sys_time_us();
+         !((st = MGA_RD32(MGAREG_STATUS)) & (STATUS_WBUSY | STATUS_WBUSY1)) &&
+         ((++spin & 1023) || (uint32_t)(sys_time_us() - t0) < 200000u);)
         ;
     warp_diag[2] = st;
     warp_diag[3] = MGA_RD32(MGAREG_WIADDRNB);
