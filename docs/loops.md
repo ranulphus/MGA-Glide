@@ -190,6 +190,13 @@ It found six places where 86Box differed, and GLOS's tests found more. Local pat
 - **0121:** the G400's texture cache: texels survive writes to texture memory (by the engine or the CPU) until
   TEXORG is written, as on a real G400 (DOS-GL's G4EXP E6 and t18). It holds 32 KB, more than the silicon's, so
   that a missing flush always shows.
+- **0122:** the G400's WARP setup engine, at a high level (`docs/g400-warp.md`): the WARP registers and
+  instruction memories, a pipe recognised by its microcode's length and CRC-32, and each triangle set up by a
+  copy of the HAL's `trap.c` (`src/video/mgahal/`) from vertices arriving through the DMA window or the primary
+  or secondary channel in vertex mode. 1DC0h-1DFFh and 2D00h-2DFFh are WARP registers on the G400, not the
+  start-the-engine aliases. Like the silicon, a start after the third load of the instruction memories since a
+  soft reset leaves the WARPs dead. Unlike the silicon, the model's WARP finishes each triangle at once, so
+  Loop A can't show work still in the WARPs when STATUS reads idle (`engine_sync`'s DWGSYNC fence).
 - **0003 dropped:** it indexed the 16-bit DAC palette by each component's top bits. A real G400 indexes it by the
   component's own value, the layout its BIOS loads, so the runtimes' ramps, written for 0003, put every frame on
   the card's monitor at an eighth of its brightness. `dac_set_ramp` now writes the BIOS's layout.

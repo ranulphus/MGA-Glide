@@ -71,12 +71,40 @@ hangs the PC. `WARPTRI` checks wbusy after starting and waits for FIFO room with
 On bench-g400 the stream cut DOSBench's DMA transfers from 257,655 to 80,121 for 20 million triangles, and its
 OpenGL score from 1,176 to 1,446.
 
+## Waiting for the WARPs
+
+STATUS can read idle while the WARPs still have triangles to set up: on bench-g400 a batch of 256 WARP triangles read
+idle 12.6 us after its kick. While WARP triangles are pending (`mga_warp_pending`), `engine_sync` and `engine_idle`
+write a tag to DWGSYNC, which takes it only once the drawing engine has finished what was sent before it, and wait
+for that too.
+
+GLOS's own HAL takes the engine back from a windowed program without that fence, and the program's last WARP
+triangles were then set up onto GLOS's target (DOS-GL's t27 in a window copied an empty frame). DOS-GL therefore
+uses the CPU's setup in GLOS windows until GLOS fences the WARPs at a hand-over.
+
 ## Glide (W5)
 
-MGA-Glide sets a triangle up through the WARP (`src/glide/draw.c`, `warp_tri`) when it is drawn as one band:
-untextured, or textured with one level for all its rows. Bands of rows, a fog fit per band and two maps stay on the
-CPU, as do lines and points. `warp=0` (MGAGLIDE) keeps everything on the CPU, with the Voodoo's exact edge rule; the
-WARP's edges differ slightly, which conformance t04 sees (its `warp` block masks edges on the G400 family).
+MGA-Glide sets every triangle up through the WARP (`src/glide/draw.c`, `warp_tri`), a band of levels as the whole
+triangle under the clip narrowed to its rows. A surface's passes must never mix the WARP's setup and the CPU's: their
+depths and edges differ slightly, so on bench-g400 the Arena's lightmap pass flickered and triangle edges showed
+through where they mixed. Bands with their own fog fit stay on the CPU (their vertices' factors leave 0..255, which a
+WARP vertex's fog byte can't carry), as do two maps, lines and points. `warp=0` (MGAGLIDE) keeps everything on the
+CPU, with the Voodoo's exact edge rule; the WARP's edges differ slightly, which conformance t04 sees (its `warp` block
+masks edges on the G400 family). The texture registers and ALPHACTRL are written only when they change (each write
+also ends a vertex run in the DMA stream).
+
+## AGP (experiments, 2026-10-27)
+
+The BIOS leaves bench-g400's 440BX with AGP off (its AGPCMD, A8h, reads 0) and the G400's AGP_CMD (F8h) at 1x with
+sideband addressing. With both set to 2x and sideband addressing (WARPTRI `agp=2`), PRIMEND's and SECEND's bit 1 make
+the channels fetch by AGP cycles:
+- **Bandwidth:** lists of DMAPAD packets go at 150 MB/s, against 46 by PCI (145 at 1x). By PCI the WARP takes at
+  most about 430,000 triangles a second (96 bytes each), which is where the CPU waits in DOSBench's scenes.
+- **Coherency:** AGP reads don't snoop the CPU's caches. With the caches flushed before each kick (2 MB read) the
+  WARP draws exactly as by PCI (`agpdraw`); without, nothing (`noflush`).
+
+For real use the buffers must be write-combining (an MTRR: ring 0), which the HAL can't do in a ring-3 DOS program.
+The plan is a GLOS service that gives a program write-combining DMA memory.
 
 ## On silicon (bench-g400, `WARPTRI`, 2026-10-26 and 27)
 
