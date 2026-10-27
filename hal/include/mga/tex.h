@@ -27,6 +27,11 @@ typedef struct {
  * and TEXTRANS. ALPHACTRL stays with the caller. */
 void tex_emit(const mga_texstate *t);
 
+/* tex_emit when the registers hold prev's state (a tex_emit of it): only
+ * the registers whose values differ (TEXORG and TEXCTL between two levels
+ * of a texture; all of them for a window or another filter or TEXCTL2). */
+void tex_emit_change(const mga_texstate *t, const mga_texstate *prev);
+
 /* G400 dual texturing (docs/g400-dual-texture.md): program t0 into both
  * maps (TEXCTL2 gets TEXCTL2_DUALTEX), then map 1's sampler from t1 alone;
  * TEXWIDTH/TEXHEIGHT and the TMRs come per triangle from setup_triangle with

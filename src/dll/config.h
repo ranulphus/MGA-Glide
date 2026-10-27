@@ -32,6 +32,7 @@ typedef struct {
     int  scale_filter;         /* 0 nearest (default), 1 bilinear */
     int  zoom;                 /* 1: half-size modes by the chip's line and pixel doubling */
     int  warp;                 /* 1 (default): the G400 family's WARP sets triangles up (docs/g400-warp.md); 0 the CPU */
+    int  fast;                 /* with warp: 1 (default) whole-triangle draws by the fast path (draw.c); 0 the general path */
     int  agp;                  /* 1 (default): under GLOS, write-combining DMA rings fetched by AGP cycles; 0 PCI */
     int  dma_ring_kb;          /* with warp: the DMA rings' size in KB at most (128; 0: the HAL's, 256) */
     int  dma_list_div;         /* with warp: the list's share of the rings, 1/N (2; 0: the HAL's, 8) */

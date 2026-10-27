@@ -133,6 +133,31 @@ CPU, with the Voodoo's exact edge rule; the WARP's edges differ slightly, which 
 masks edges on the G400 family). The texture registers and ALPHACTRL are written only when they change (each write
 also ends a vertex run in the DMA stream).
 
+### The fast path
+
+Most of what `mg_draw_tri` works out for a triangle depends only on the state: the combine and alpha plans,
+alpha_setup's ALPHACTRL, validation, DWGCTL, the level bound and its texture registers. The fast path (`fp_prepare`,
+`fp_tri`) works these out once a state generation (`mg_state_gen`, which every Glide call but the drawing ones moves)
+and then sends a triangle the WARP sets up whole at one level for the cost of its vertices:
+- **Vertices** come from a cache by address. A slot keeps the GrVertex it was made from (compared word by word, so a
+  vertex changed in place misses) and its setup vertex: `vtx()` and alpha_setup's rules, then `wvtx_base`. Soft
+  combines whose per-vertex value is the clamped iterated colour or alpha (a modulate by the iterated colour, as
+  DOSBench's) use the iterated rule: the same values without the combine evaluator.
+- **Levels** are bound once a generation each (`fp.lv[]`). Between two levels of one texture only TEXORG and TEXCTL
+  are written (`tex_emit_change`).
+- **The map coordinates** are scaled and moved by whole periods as `draw_band` does, then converted by `wvtx_uv`
+  (which `warp_tri` uses too) and written with the cached part straight into the DMA stream.
+
+Bands of levels or of fog, subdivided combines, specular, keyed textures, the hardware mip window and chips without
+the WARP go the general way, as does a triangle whose bands would take different levels (`MGL-STAT fastbands=`). The
+frames are the same with and without it (`fast=0`): GTA, Screamer Rally and DOSBench's Glide scenes in 86Box. On
+bench-g400 (DOSBench Glide, fps, general path / fast path): Arena 5.6 / 8.9, Race 11.4 / 15.7, Space 7.4 / 12.2,
+City 6.4 / 8.4.
+
+Watcom does 64-bit arithmetic by calls: the W code for table fog (`mg_wcode_from_oow`), the level's
+`log2x2_floor` and the cull's area work in 32 bits where the values allow, with the same results (checked against the
+64-bit forms on the host).
+
 ## AGP
 
 The BIOS leaves bench-g400's 440BX with AGP off (its AGPCMD, A8h, reads 0) and the G400's AGP_CMD (F8h) at 1x with

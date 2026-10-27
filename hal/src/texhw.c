@@ -25,6 +25,32 @@ void tex_emit_combiner(uint32_t stage0, uint32_t stage1)
     MGA_WR32(MGAREG_TDUALSTAGE1, stage1);
 }
 
+static uint32_t texctl_for(const mga_texstate *t)
+{
+    uint32_t texctl = t->hwfmt | TEXCTL_TPITCHLIN | TEXCTL_TPITCHEXT((uint32_t)t->pitch & 0x7FF);
+    /* takey=1, tamask=0: texel alpha never keys; tamask=1, takey=0: alpha 0
+     * is transparent. */
+    texctl |= t->key_alpha0 ? (TEXCTL_STRANS | TEXCTL_TAMASK) : TEXCTL_TAKEY;
+    if (t->clamp_u) texctl |= TEXCTL_CLAMPU;
+    if (t->clamp_v) texctl |= TEXCTL_CLAMPV;
+    if (t->modulate) texctl |= TEXCTL_TMODULATE;
+    return texctl;
+}
+
+void tex_emit_change(const mga_texstate *t, const mga_texstate *prev)
+{
+    const uint32_t texctl = texctl_for(t);
+    if (t->mip_n > 1 || prev->mip_n > 1 || t->bilinear != prev->bilinear || t->texctl2 != prev->texctl2) {
+        tex_emit(t);
+        return;
+    }
+    fifo_reserve(2);
+    if (t->org != prev->org)
+        MGA_WR32(MGAREG_TEXORG, t->org);
+    if (texctl != texctl_for(prev))
+        MGA_WR32(MGAREG_TEXCTL, texctl);
+}
+
 /* One map's sampler. For map 1 the first TEXCTL2 write carries the map1 bit,
  * which takes effect from the next write (the specification's tmap0dis), so
  * that write reaches both maps: both get dualtex, as they must. The last
@@ -32,15 +58,9 @@ void tex_emit_combiner(uint32_t stage0, uint32_t stage1)
 static void emit_sampler(const mga_texstate *t, uint32_t texctl2_extra, int map1_only)
 {
     static const uint32_t orgreg[4] = { MGAREG_TEXORG1, MGAREG_TEXORG2, MGAREG_TEXORG3, MGAREG_TEXORG4 };
-    uint32_t texctl = t->hwfmt | TEXCTL_TPITCHLIN | TEXCTL_TPITCHEXT((uint32_t)t->pitch & 0x7FF);
+    const uint32_t texctl = texctl_for(t);
     uint32_t filt = t->bilinear ? TEXFILTER_BILIN : TEXFILTER_NRST;
     int k;
-    /* takey=1, tamask=0: texel alpha never keys; tamask=1, takey=0: alpha 0
-     * is transparent. */
-    texctl |= t->key_alpha0 ? (TEXCTL_STRANS | TEXCTL_TAMASK) : TEXCTL_TAKEY;
-    if (t->clamp_u) texctl |= TEXCTL_CLAMPU;
-    if (t->clamp_v) texctl |= TEXCTL_CLAMPV;
-    if (t->modulate) texctl |= TEXCTL_TMODULATE;
     fifo_reserve(9);
     if (map1_only)
         MGA_WR32(MGAREG_TEXCTL2, t->texctl2 | texctl2_extra | TEXCTL2_MAP1);

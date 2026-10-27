@@ -46,6 +46,7 @@ static void set_opt(const char *key, const char *val)
     else if (!strcmp(key, "scale_filter")) mg_config.scale_filter = !strcmp(val, "bilinear") || !strcmp(val, "1");
     else if (!strcmp(key, "zoom")) mg_config.zoom = to_int(val);
     else if (!strcmp(key, "warp")) mg_config.warp = to_int(val);
+    else if (!strcmp(key, "fast")) mg_config.fast = to_int(val);
     else if (!strcmp(key, "agp")) mg_config.agp = to_int(val);
     else if (!strcmp(key, "dma_ring")) mg_config.dma_ring_kb = to_int(val);
     else if (!strcmp(key, "dma_list")) mg_config.dma_list_div = to_int(val);
@@ -107,6 +108,7 @@ void mg_config_load(void)
     mg_config.bpp = 16;
     mg_config.scale = 1;
     mg_config.warp = 1;
+    mg_config.fast = 1;
     mg_config.agp = 1;
     mg_config.dma_ring_kb = 128;        /* (Glide writes many registers a triangle: half of it list) */
     mg_config.dma_list_div = 2;

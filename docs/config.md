@@ -20,6 +20,7 @@ draw what a Voodoo Graphics board would.
 | `hwmip` | `0`, `1` | G200 and later: let the chip pick the mip level per pixel (it rounds where the Voodoo floors, so textures are a little softer; no 8-row bands) |
 | `trilinear` | `0`, `1` | G200 and later: blend between mip levels (implies `hwmip`) |
 | `warp` | `1` (default), `0` | G400 and G450: the chip's WARP engine sets triangles up from vertices sent by DMA; `0` keeps the CPU's setup, with the Voodoo's exact edge rule (docs/g400-warp.md) |
+| `fast` | `1` (default), `0` | With `warp`: a triangle drawn whole at one level goes by the fast path, its state's work done once a state change and its vertices written straight into the DMA stream; `0` sends every triangle the general way (the same pixels) |
 | `agp` | `1` (default), `0` | With `warp`, under GLOS: the DMA rings write-combining and fetched by AGP cycles, about three times PCI's bandwidth; `0` keeps PCI. (Not yet for Glide games under DOS/4GW, whose DPMI 0A00h doesn't reach GLOS) |
 | `dma_ring`, `dma_list`, `dma_kick` | KB (`128`), N (`2`), KB (`6`) | With `warp`, tuning: the DMA rings' size, the list's share of it (1/N; Glide writes many registers a triangle), and the vertices between kicks (docs/g400-warp.md) |
 | `bilinear` | `0`, `1` | Filter every texture bilinearly |
@@ -73,7 +74,7 @@ the display mode and how the picture is shown (`display=`, `fit=`).
 | Option | Effect |
 |---|---|
 | `log` | Log level 0 (errors) to 4 (trace); lines go to COM1 |
-| `stats=N` | `MGL-STAT` line every N frames (`vfallback`, `splits`: totals of Voodoo edges too flat for the chip's AR fields, drawn with the centre rule, and of triangles over 8191 pixels, drawn as four; `docs/loop-c-results.md`); with the profiling runtime (`make runtime-prof`, `build/ow-prof/GLIDE2X.OVL`) also `MGL-PROF`, the cycles of each stage (`docs/setup-perf.md`) |
+| `stats=N` | `MGL-STAT` line every N frames (`fast`, `fastbands`: triangles by the fast path, and those it left to the general path for their bands of levels; `vfallback`, `splits`: totals of Voodoo edges too flat for the chip's AR fields, drawn with the centre rule, and of triangles over 8191 pixels, drawn as four; `docs/loop-c-results.md`); with the profiling runtime (`make runtime-prof`, `build/ow-prof/GLIDE2X.OVL`) also `MGL-PROF`, the cycles of each stage (`docs/setup-perf.md`) |
 | `census=1` | Log each distinct draw state once (`MGL-CENSUS`) |
 | `exit_after=N` | End the run after N frames (the harness uses it) |
 | `snap=a,b,...` | Mark frames for the harness to capture (`MGL-SNAP`) |

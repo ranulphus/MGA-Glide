@@ -162,6 +162,50 @@ static uint32_t cbyte(float f)
     return mga_cbyte(f);                /* f <= 0 ? 0 : f >= 255 ? 255 : floor(f + 0.5), from the float's bits */
 }
 
+/* A setup vertex as the WARP takes it, in two parts: what the vertex alone
+ * gives (wvtx_base), and its map coordinates (wvtx_uv: after the level's
+ * scale and the triangle's whole periods). warp_tri and the fast path both
+ * convert with these, so their triangles are the same. zs: depth units to
+ * 0..1. */
+static void wvtx_base(const mga_svtx *v, mga_wvtx *w, double zs)
+{
+    w->x = (float)v->X16 * (1.0f / 16.0f) + WARP_SUBPIXEL_X;
+    w->y = (float)v->Y16 * (1.0f / 16.0f) + WARP_SUBPIXEL_Y;
+    w->z = (float)(v->z * zs);
+    w->rhw = v->q;
+    w->bgra = cbyte(v->b) | (cbyte(v->g) << 8) | (cbyte(v->r) << 16) | (cbyte(v->a) << 24);
+    w->spec = cbyte(v->sb) | (cbyte(v->sg) << 8) | (cbyte(v->sr) << 16) | (cbyte(v->fog) << 24);
+}
+
+static void wvtx_uv(const mga_svtx *v, mga_wvtx *w)
+{
+    const float rq = 1.0f / (v->q > 0 ? v->q : 1e-9f);
+    w->u0 = v->s * rq;
+    w->v0 = v->t * rq;
+    w->u1 = w->v1 = 0;
+}
+
+static void to_wvtx(const mga_svtx *v, mga_wvtx *w, double zs)
+{
+    wvtx_base(v, w, zs);
+    wvtx_uv(v, w);
+}
+
+/* The map size the WARP's registers are to hold (0: untextured). */
+static void warp_sizes(int textured, int tw, int th)
+{
+    if (!textured) {
+        if (warp_tw != 0) {
+            warp_tex_sizes(0, 0, 0, 0);
+            warp_tw = warp_th = 0;
+        }
+    } else if (warp_tw != tw || warp_th != th) {
+        warp_tex(0, tw, th, 0);
+        warp_tw = tw;
+        warp_th = th;
+    }
+}
+
 /* 0 when the WARP took the triangle. */
 static int warp_tri(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri_ctx *ctx)
 {
@@ -174,29 +218,10 @@ static int warp_tri(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, con
         return -1;
     po = PROF_SWITCH(PROF_G_WARP);
     setup_dwgctl(ctx->dwgctl);
-    if (!(ctx->flags & MGA_S_TEX)) {
-        if (warp_tw != 0) {
-            warp_tex_sizes(0, 0, 0, 0);
-            warp_tw = warp_th = 0;
-        }
-    } else if (warp_tw != ctx->tex_tw || warp_th != ctx->tex_th) {
-        warp_tex(0, ctx->tex_tw, ctx->tex_th, 0);
-        warp_tw = ctx->tex_tw;
-        warp_th = ctx->tex_th;
-    }
+    warp_sizes((ctx->flags & MGA_S_TEX) != 0, ctx->tex_tw, ctx->tex_th);
     v[0] = a; v[1] = b; v[2] = c;
-    for (i = 0; i < 3; i++) {
-        const float rq = 1.0f / (v[i]->q > 0 ? v[i]->q : 1e-9f);
-        w[i].x = (float)v[i]->X16 * (1.0f / 16.0f) + WARP_SUBPIXEL_X;
-        w[i].y = (float)v[i]->Y16 * (1.0f / 16.0f) + WARP_SUBPIXEL_Y;
-        w[i].z = (float)(v[i]->z * zs);
-        w[i].rhw = v[i]->q;
-        w[i].bgra = cbyte(v[i]->b) | (cbyte(v[i]->g) << 8) | (cbyte(v[i]->r) << 16) | (cbyte(v[i]->a) << 24);
-        w[i].spec = cbyte(v[i]->sb) | (cbyte(v[i]->sg) << 8) | (cbyte(v[i]->sr) << 16) | (cbyte(v[i]->fog) << 24);
-        w[i].u0 = v[i]->s * rq;
-        w[i].v0 = v[i]->t * rq;
-        w[i].u1 = w[i].v1 = 0;
-    }
+    for (i = 0; i < 3; i++)
+        to_wvtx(v[i], &w[i], zs);
     if (warp_vertices(w, 3) != 0) {
         PROF_BACK(po);
         warp_ok = 0;
@@ -279,13 +304,15 @@ static void lod_setup(lod_planes *L, const GrVertex *a, const GrVertex *b, const
  * for subnormals. */
 static int log2x2_floor(double g)
 {
-    union { double d; uint64_t u; } c;
+    union { double d; uint32_t w[2]; } c;   /* (32-bit halves: Watcom's 64-bit shifts are calls) */
+    uint32_t m;
     int e;
     c.d = g;
-    e = (int)((c.u >> 52) & 0x7FF);
+    e = (int)((c.w[1] >> 20) & 0x7FF);
     if (e == 0)
         return floor_i(2.0 * log2d(g));
-    return 2 * (e - 1023) + ((c.u & 0xFFFFFFFFFFFFFull) >= 0x6A09E667F3BCDull);
+    m = c.w[1] & 0xFFFFF;               /* mantissa >= 6A09E667F3BCDh */
+    return 2 * (e - 1023) + (m > 0x6A09Eu || (m == 0x6A09Eu && c.w[0] >= 0x667F3BCDu));
 }
 
 static int lod_at(const lod_planes *L, double px, double py)
@@ -366,12 +393,14 @@ typedef struct {
  * VRAM (the G400's texture cache empties on TEXORG), an engine reset, a new
  * frame (the scaled present samples its own texture). */
 static struct { int valid, tex; uint32_t frame, resets, vram_gen, alphactrl; mga_texstate t; } scache;
+static uint32_t scache_epoch;           /* moves whenever scache does (the fast path's check) */
 
 /* Forgotten by the present (buffer.c), which writes ALPHACTRL and the
  * texture registers for its own scaling. */
 void mg_state_forget(void)
 {
     scache.valid = 0;
+    scache_epoch++;
 }
 
 static int scache_fresh(void)
@@ -382,6 +411,7 @@ static int scache_fresh(void)
 
 static void scache_keep(const mga_texstate *t, uint32_t alphactrl)
 {
+    scache_epoch++;
     scache.valid = 1;
     scache.frame = mg.frame;
     scache.resets = engine_resets;
@@ -409,27 +439,35 @@ static int alphactrl_cached(uint32_t alphactrl)
         return 1;
     if (scache_fresh() && scache.tex) {
         scache.alphactrl = alphactrl;
+        scache_epoch++;
         return 0;
     }
     scache_keep(NULL, alphactrl);
     return 0;
 }
 
+/* The texture registers' state for a bound level (emit_texture_state's). */
+static void texstate_for(mga_texstate *t, const tex_level_hw *hw, int modulate, const draw_opts *o,
+                         const uint32_t *mip_org, int mip_n)
+{
+    int k;
+    tex_state(t, hw);
+    t->modulate = modulate;
+    t->trilinear = mg_config.trilinear;
+    t->texctl2 = o->texctl2;
+    /* A keyed variant, or alpha-0 texels keyed for an alpha test: alpha 0
+     * is transparent. Otherwise texel alpha never keys (G100 spec: opaque). */
+    t->key_alpha0 = o->var.kind || (o->akey0 && (hw->hwfmt == HW_TW12 || hw->hwfmt == HW_TW15));
+    t->mip_n = mip_n;
+    for (k = 0; k < mip_n && k < 5; k++)
+        t->mip_org[k] = mip_org[k];
+}
+
 static void emit_texture_state(const tex_level_hw *hw, int modulate, const draw_opts *o,
                                const uint32_t *mip_org, int mip_n)
 {
     mga_texstate t;
-    int k;
-    tex_state(&t, hw);
-    t.modulate = modulate;
-    t.trilinear = mg_config.trilinear;
-    t.texctl2 = o->texctl2;
-    /* A keyed variant, or alpha-0 texels keyed for an alpha test: alpha 0
-     * is transparent. Otherwise texel alpha never keys (G100 spec: opaque). */
-    t.key_alpha0 = o->var.kind || (o->akey0 && (hw->hwfmt == HW_TW12 || hw->hwfmt == HW_TW15));
-    t.mip_n = mip_n;
-    for (k = 0; k < mip_n && k < 5; k++)
-        t.mip_org[k] = mip_org[k];
+    texstate_for(&t, hw, modulate, o, mip_org, mip_n);
     if (state_cached(&t, o->alphactrl))
         return;
     tex_emit(&t);
@@ -881,6 +919,309 @@ static void subdivide(const GrVertex *a, const GrVertex *b, const GrVertex *c)
 #undef PT
 }
 
+/* ---- The fast path (G400 family) ------------------------------------------
+ * What mg_draw_tri works out from the state alone - the plans, alpha_setup's
+ * ALPHACTRL, validation, DWGCTL, the level bound and its texture registers -
+ * is worked out once a state generation (mg_state_gen moves with every call
+ * but the drawing ones). A triangle the WARP sets up whole at one level then
+ * costs its vertices: made by vtx() and alpha_setup's rules, scaled and
+ * adjusted as draw_band does, converted by to_wvtx and written straight into
+ * the DMA stream: the triangle the general path would send. Bands (of levels
+ * or of fog), subdivided or soft combines, specular, keyed textures, the
+ * hardware mip window and chips without the WARP go the general way, as do
+ * triangles whose state the fast path can't take. fast=0 turns it off. */
+static struct {
+    FxU32 gen;                  /* the generation it was made for */
+    int made;                   /* (gen is valid) */
+    int ok;                     /* the state takes the fast path */
+    int wmode, csrc, asrc, textured, tex_white, modulate, need_lod, table_fog;
+    int a_set, a_invert;        /* alpha_setup: the vertices' alpha set to a_k, then 255 - it */
+    float a_k;
+    draw_opts opts;
+    uint32_t dwgctl;
+    struct fp_level {           /* each level as bound in this generation */
+        int valid;
+        tex_level_hw hw;
+        float sig_s, sig_t;
+        mga_texstate ts;        /* (tex_adjust_coords') */
+        mga_texstate regs;      /* the texture registers' (emit_texture_state's) */
+    } lv[GR_LOD_1 + 1];
+    int emitted_lod;            /* the level whose registers were last written, */
+    uint32_t emitted;           /* ... at this scache_epoch (0: not yet) */
+} fp;
+
+/* The fast path's vertices by address, as the state of one generation made
+ * them (fp_epoch moves with each): vtx() and alpha_setup's rules, then
+ * wvtx_base. A game's triangles share vertices; one changed in place since
+ * misses (its contents are compared). */
+#define FP_SLOTS_LOG2 6
+typedef struct { const GrVertex *key; uint32_t epoch; GrVertex in; mga_svtx sv; mga_wvtx w; } fp_vtx;
+static fp_vtx fpv[1 << FP_SLOTS_LOG2];
+static uint32_t fp_epoch = 1;
+
+static void fp_fill(fp_vtx *e, const GrVertex *v, int32_t sx, int32_t sy, double zs)
+{
+    e->key = v;
+    vtx(&e->sv, v, sx, sy, fp.wmode, fp.csrc, fp.asrc, 0);
+    if (fp.a_set)
+        e->sv.a = fp.a_k;
+    if (fp.a_invert)
+        e->sv.a = 255 - e->sv.a;
+    wvtx_base(&e->sv, &e->w, zs);
+}
+
+/* *a == *b, bit for bit: its 15 words (include/glide/layout.h; memcmp is a
+ * call and a byte loop) */
+static int same_vtx(const GrVertex *a, const GrVertex *b)
+{
+    const uint32_t *p = (const uint32_t *)a, *q = (const uint32_t *)b;
+    return !((p[0] ^ q[0]) | (p[1] ^ q[1]) | (p[2] ^ q[2]) | (p[3] ^ q[3]) | (p[4] ^ q[4]) | (p[5] ^ q[5]) |
+             (p[6] ^ q[6]) | (p[7] ^ q[7]) | (p[8] ^ q[8]) | (p[9] ^ q[9]) | (p[10] ^ q[10]) | (p[11] ^ q[11]) |
+             (p[12] ^ q[12]) | (p[13] ^ q[13]) | (p[14] ^ q[14]));
+}
+
+static const fp_vtx *fp_vert(const GrVertex *v, int32_t sx, int32_t sy, double zs)
+{
+    fp_vtx *e = &fpv[((uint32_t)(size_t)v * 2654435761u) >> (32 - FP_SLOTS_LOG2)];
+    if (e->key == v && e->epoch == fp_epoch && same_vtx(&e->in, v))
+        return e;
+    e->epoch = fp_epoch;
+    e->in = *v;
+    fp_fill(e, v, sx, sy, zs);
+    return e;
+}
+
+static void fp_prepare(const mg_plan *plan_in, const mg_aplan *ap, int depth, int wmode)
+{
+    mg_plan plan = *plan_in;
+    mga_svtx d[3];
+    fp.gen = mg_state_gen;
+    fp.made = 1;
+    fp.ok = 0;
+    memset(fp.lv, 0, sizeof fp.lv);
+    fp.emitted_lod = -1;
+    fp.emitted = 0;
+    if (++fp_epoch == 0) {              /* (every slot stale) */
+        memset(fpv, 0, sizeof fpv);
+        fp_epoch = 1;
+    }
+    if (!mg_config.fast || warp_ok <= 0 || !mga.has_alpha_blend || mg.st.delta0 || plan.quadratic ||
+        ap->quadratic || plan.approx || ap->approx || mg_config.census || ap->skip || (ap->color_off && !depth) ||
+        plan.spec || (ap->atest != GR_CMP_ALWAYS && !mga.has_alpha_test) ||
+        mg.st.chroma_mode == GR_CHROMAKEY_ENABLE || mg_config.hwmip || mg_config.trilinear ||
+        mg_log_level() >= MG_LOG_TRACE)
+        return;
+    /* mg_draw_tri's fog rules */
+    mg.fog_on = mg_fog_source() != GR_FOG_DISABLE;
+    if (mg.fog_on) {
+        if (mg.st.fog_mode & GR_FOG_MULT2) {
+            plan.color_src = CS_ZERO;
+            plan.modulate = 1;
+        }
+        if (!plan.textured) {
+            plan.textured = 1;
+            plan.tex_white = 1;
+            plan.modulate = 1;
+        }
+    }
+    memset(&fp.opts, 0, sizeof fp.opts);
+    fp.opts.alphactrl = ALPHACTRL_SRC(BLEND_ONE) | ALPHACTRL_DST(BLEND_ZERO) | ALPHACTRL_ALPHASEL(ALPHASEL_DIFFUSE);
+    memset(d, 0, sizeof d);
+    if (!alpha_setup(&plan, ap, &fp.opts, &d[0], &d[1], &d[2]) || fp.opts.var.kind || fp.opts.akey0)
+        return;                         /* (the state's ALPHACTRL; with these states it draws every triangle) */                         /* (the state's ALPHACTRL; with these states it draws every triangle) */
+    fp.a_set = ap->alpha_src == AS_CONSTANT || ap->alpha_src == AS_MODULATED_CONST || ap->alpha_src == AS_ONE ||
+               ap->alpha_src == AS_TEXTURE || ap->fixed_alpha >= 0;
+    fp.a_k = ap->fixed_alpha >= 0 ? (float)ap->fixed_alpha
+           : ap->alpha_src == AS_CONSTANT || ap->alpha_src == AS_MODULATED_CONST
+           ? (float)(int)(mg_color_to_argb(mg.st.constant_color) >> 24) : 255.0f;
+    fp.a_invert = ap->invert;
+    fp.wmode = wmode;
+    fp.csrc = plan.color_src;
+    fp.asrc = ap->alpha_src;
+    /* Soft combines whose per-vertex value is the clamped iterated colour or
+     * alpha (mg_combine_vertex: a LOCAL factor or function of an iterated
+     * local, uninverted) are vtx()'s iterated rule: the same values. */
+    if (mg.st.cc_local == GR_COMBINE_LOCAL_ITERATED &&
+        ((fp.csrc == CS_SOFT_FACTOR && mg.st.cc_factor == GR_COMBINE_FACTOR_LOCAL) ||
+         (fp.csrc == CS_SOFT && mg.st.cc_func == GR_COMBINE_FUNCTION_LOCAL && !mg.st.cc_invert)))
+        fp.csrc = CS_ITERATED;
+    if (mg.st.ac_local == GR_COMBINE_LOCAL_ITERATED &&
+        ((fp.asrc == AS_MODULATED_SOFT &&
+          (mg.st.ac_factor == GR_COMBINE_FACTOR_LOCAL || mg.st.ac_factor == GR_COMBINE_FACTOR_LOCAL_ALPHA)) ||
+         (fp.asrc == AS_SOFT && !mg.st.ac_invert &&
+          (mg.st.ac_func == GR_COMBINE_FUNCTION_LOCAL || mg.st.ac_func == GR_COMBINE_FUNCTION_LOCAL_ALPHA))))
+        fp.asrc = AS_ITERATED;
+    fp.textured = plan.textured;
+    fp.tex_white = plan.tex_white;
+    fp.modulate = plan.modulate;
+    fp.need_lod = !(tmu0.mipmap == GR_MIPMAP_DISABLE || tmu0.small == tmu0.large || plan.tex_white);
+    fp.table_fog = mg.fog_on && mg_fog_source() == GR_FOG_WITH_TABLE;
+    fp.dwgctl = DWG_BOP_COPY | (plan.textured ? DWG_OPCOD_TEXTURE_TRAP : DWG_OPCOD_TRAP) |
+                (depth ? (mg.st.depth_mask ? DWG_ATYPE_ZI : DWG_ATYPE_I) | zmode_for(mg.st.depth_func, wmode)
+                       : DWG_ATYPE_I | DWG_ZMODE_NOZCMP);
+    mg_validate();
+    if (mg.fog_on)
+        mg_fog_emit_color();
+    fp.ok = 1;
+}
+
+/* 1 when the triangle was drawn (or has nothing to draw), 0: the general path. */
+static int fp_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c, int32_t ax, int32_t ay, int32_t bx,
+                  int32_t by, int32_t cx, int32_t cy)
+{
+    const double zs = mg.zbits == 32 ? 1.0 / 4294967295.0 : 1.0 / 65535.0;
+    const fp_vtx *P[3];
+    fp_vtx spare[3];
+    mga_svtx tq[3];                     /* the map coordinates: s, t, q */
+    mga_wvtx uv;
+    uint32_t *d;
+    int i, dw, tw = 0, th = 0, po;
+    if (mg.dirty)
+        mg_validate();
+    po = PROF_SWITCH(PROF_G_VERT);
+    P[0] = fp_vert(a, ax, ay, zs);
+    P[1] = fp_vert(b, bx, by, zs);
+    P[2] = fp_vert(c, cx, cy, zs);
+    if (P[0]->key != a) {               /* (b or c took a's slot; b's c's: made again, uncached) */
+        fp_fill(&spare[0], a, ax, ay, zs);
+        P[0] = &spare[0];
+    }
+    if (P[1]->key != b) {
+        fp_fill(&spare[1], b, bx, by, zs);
+        P[1] = &spare[1];
+    }
+    for (i = 0; i < 3; i++) {           /* (what tex_adjust_coords and wvtx_uv read) */
+        tq[i].s = P[i]->sv.s;
+        tq[i].t = P[i]->sv.t;
+        tq[i].q = P[i]->sv.q;
+    }
+    PROF_BACK(po);
+    if (!fp.textured) {
+        if (!alphactrl_cached(fp.opts.alphactrl)) {
+            fifo_reserve(1);
+            MGA_WR32(MGAREG_ALPHACTRL, fp.opts.alphactrl);
+        }
+    } else {
+        int32_t ymin = P[0]->sv.Y16, ymax = P[0]->sv.Y16;
+        int r0, r1;
+        GrLOD_t lod = tmu0.large;
+        struct fp_level *lv;
+        if (P[1]->sv.Y16 < ymin) ymin = P[1]->sv.Y16;
+        if (P[2]->sv.Y16 < ymin) ymin = P[2]->sv.Y16;
+        if (P[1]->sv.Y16 > ymax) ymax = P[1]->sv.Y16;
+        if (P[2]->sv.Y16 > ymax) ymax = P[2]->sv.Y16;
+        r0 = (ymin + 7) >> 4;
+        r1 = (ymax + 7) >> 4;
+        if (r1 <= r0)
+            return 1;                   /* (no rows: draw_textured draws nothing) */
+        if (fp.table_fog && r1 - r0 > BAND_ROWS) {
+            float fmin = P[0]->sv.fog, fmax = P[0]->sv.fog;
+            for (i = 1; i < 3; i++) {
+                if (P[i]->sv.fog < fmin) fmin = P[i]->sv.fog;
+                if (P[i]->sv.fog > fmax) fmax = P[i]->sv.fog;
+            }
+            if ((double)fmax - (double)fmin > FOG_SPREAD)
+                return 0;               /* (bands with their own fog fits) */
+        }
+        if (fp.need_lod) {
+            /* draw_textured's bands, each at the level for its centre: the
+             * fast path when they all have the same one */
+            lod_planes L;
+            double cxm;
+            int row, lpo = PROF_SWITCH(PROF_G_LOD);
+            lod_setup(&L, a, b, c);
+            cxm = (a->x + b->x + c->x) / 3.0;
+            for (row = r0; row < r1; row += BAND_ROWS) {
+                int mid = row + BAND_ROWS / 2;
+                double gy;
+                GrLOD_t l;
+                if (mid >= r1) mid = (row + r1) / 2;
+                gy = mg.st.origin == GR_ORIGIN_LOWER_LEFT ? mg.height - (mid + 0.5) : mid + 0.5;
+                l = level_for(lod_at(&L, cxm, gy));
+                if (row == r0)
+                    lod = l;
+                else if (l != lod) {
+                    PROF_BACK(lpo);
+                    mg_stats.fast_bands++;
+                    return 0;
+                }
+            }
+            PROF_BACK(lpo);
+        }
+        po = PROF_SWITCH(PROF_G_TEXBIND);
+        if ((unsigned)lod > GR_LOD_1) {
+            PROF_BACK(po);
+            return 0;
+        }
+        lv = &fp.lv[lod];
+        if (!lv->valid) {               /* draw_band's binding */
+            double sig_s, sig_t;
+            if (fp.tex_white || tex_bind_level(lod, NULL, &lv->hw) < 0) {
+                tex_white(&lv->hw);
+                sig_s = sig_t = 0;
+            } else {
+                sig_s = (double)lv->hw.logical_maxdim / (256.0 * (1 << lv->hw.w_log2));
+                sig_t = (double)lv->hw.logical_maxdim / (256.0 * (1 << lv->hw.h_log2));
+            }
+            if (!tmu0.combine_set)
+                sig_s = sig_t = 0;
+            lv->sig_s = (float)sig_s;
+            lv->sig_t = (float)sig_t;
+            tex_state(&lv->ts, &lv->hw);
+            texstate_for(&lv->regs, &lv->hw, fp.modulate, &fp.opts, NULL, 0);
+            lv->valid = 1;
+        }
+        mg_stats.bands++;
+        for (i = 0; i < 3; i++) {
+            tq[i].s *= lv->sig_s;
+            tq[i].t *= lv->sig_t;
+        }
+        tex_adjust_coords(&tq[0], &tq[1], &tq[2], &lv->ts);
+        if (lod != fp.emitted_lod || fp.emitted == 0 || fp.emitted != scache_epoch || !scache_fresh()) {
+            if (fp.emitted && fp.emitted == scache_epoch && scache_fresh() && scache.tex &&
+                scache.alphactrl == fp.opts.alphactrl) {
+                /* another level of this generation's: the registers that differ */
+                tex_emit_change(&lv->regs, &scache.t);
+                scache_keep(&lv->regs, fp.opts.alphactrl);
+            } else
+                emit_texture_state(&lv->hw, fp.modulate, &fp.opts, NULL, 0);
+            fp.emitted_lod = lod;
+            fp.emitted = scache_epoch;
+        }
+        tw = lv->hw.w_log2;
+        th = lv->hw.h_log2;
+        PROF_BACK(po);
+    }
+    po = PROF_SWITCH(PROF_G_WARP);
+    setup_dwgctl(fp.dwgctl);
+    warp_sizes(fp.textured, tw, th);
+    d = warp_reserve(3, &dw);
+    if (d) {                            /* straight into the DMA stream */
+        for (i = 0; i < 3; i++, d += dw) {
+            memcpy(d, &P[i]->w, 24);    /* x, y, z, rhw, bgra, spec */
+            wvtx_uv(&tq[i], &uv);
+            memcpy(d + 6, &uv.u0, (size_t)(dw - 6) * 4u);
+        }
+        warp_commit(3);
+    } else {
+        mga_wvtx w[3];
+        for (i = 0; i < 3; i++) {
+            w[i] = P[i]->w;
+            wvtx_uv(&tq[i], &w[i]);
+        }
+        if (warp_vertices(w, 3) != 0) {
+            PROF_BACK(po);
+            warp_ok = 0;
+            mg_log(MG_LOG_WARN, "the WARP stopped taking vertices: triangles are set up by the CPU");
+            return 0;
+        }
+    }
+    PROF_BACK(po);
+    warp_since_cpu = 1;
+    mg_stats.fast++;
+    return 1;
+}
+
 void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
 {
     mga_svtx sa, sb, sc;
@@ -903,12 +1244,22 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
     cx = snap16(c->x); cy = snap16(c->y);
     /* Culling uses the game's orientation (before any origin flip). */
     if (mg.st.cull != GR_CULL_DISABLE) {
-        area = ((int64_t)bx - ax) * ((int64_t)cy - ay) - ((int64_t)cx - ax) * ((int64_t)by - ay);
-        if (area == 0)
+        int sgn;
+        if ((((uint32_t)ax + 16384u) | ((uint32_t)ay + 16384u) | ((uint32_t)bx + 16384u) | ((uint32_t)by + 16384u) |
+             ((uint32_t)cx + 16384u) | ((uint32_t)cy + 16384u)) < 32768u) {
+            /* every position within 1024 pixels of the origin: the
+             * products fit 32 bits (Watcom's 64-bit multiplies are calls) */
+            int32_t a32 = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay);
+            sgn = (a32 > 0) - (a32 < 0);
+        } else {
+            area = ((int64_t)bx - ax) * ((int64_t)cy - ay) - ((int64_t)cx - ax) * ((int64_t)by - ay);
+            sgn = (area > 0) - (area < 0);
+        }
+        if (sgn == 0)
             return;
-        if (mg.st.cull == GR_CULL_NEGATIVE && area < 0)
+        if (mg.st.cull == GR_CULL_NEGATIVE && sgn < 0)
             return;
-        if (mg.st.cull == GR_CULL_POSITIVE && area > 0)
+        if (mg.st.cull == GR_CULL_POSITIVE && sgn > 0)
             return;
     }
     if (!mg.st.color_mask_rgb && !(depth && mg.st.depth_mask))
@@ -930,10 +1281,21 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
         static mg_plan c_plan;
         static mg_aplan c_ap;
         static uint32_t c_gen;
-        if (c_gen != mg_state_gen) {
+        if (c_gen != mg_state_gen || !fp.made) {
             mg_combine_plan(&c_plan);
             mg_alpha_plan(&c_ap);
             c_gen = mg_state_gen;
+            fp_prepare(&c_plan, &c_ap, depth, wmode);
+        }
+        if (fp.ok && warp_ok > 0) {
+            int r, fpo = PROF_SWITCH(PROF_G_FAST);
+            r = fp_tri(a, b, c, ax, ay, bx, by, cx, cy);
+            PROF_BACK(fpo);
+            if (r) {
+                mg_stats.tris++;
+                mg_stats.tri_drawn++;
+                return;
+            }
         }
         plan = c_plan;
         ap = c_ap;

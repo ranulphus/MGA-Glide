@@ -47,9 +47,9 @@ static void prof_line(void)
         sw += prof_n[i];
 #define K(s) ((uint32_t)(prof_cyc[s] >> 10))
     mg_line("MGL-PROF app=%u fifo=%u splane=%u sinc=%u strap=%u vtx=%u texbind=%u texdl=%u drain=%u vsync=%u "
-            "swap=%u plan=%u vert=%u lod=%u warp=%u wr=%u fiford=%u sw=%u ovh=%u", K(PROF_APP), K(PROF_FIFO),
+            "swap=%u fast=%u vert=%u lod=%u warp=%u wr=%u fiford=%u sw=%u ovh=%u", K(PROF_APP), K(PROF_FIFO),
             K(PROF_SPLANE), K(PROF_SINC), K(PROF_STRAP), K(PROF_G_VTX), K(PROF_G_TEXBIND), K(PROF_G_TEXDL),
-            K(PROF_G_DRAIN), K(PROF_G_VSYNC), K(PROF_G_SWAP), K(PROF_G_PLAN), K(PROF_G_VERT), K(PROF_G_LOD),
+            K(PROF_G_DRAIN), K(PROF_G_VSYNC), K(PROF_G_SWAP), K(PROF_G_FAST), K(PROF_G_VERT), K(PROF_G_LOD),
             K(PROF_G_WARP), prof_wr, prof_fifo_rd, sw, ovh);
 #undef K
     prof_reset(prof_cur);
@@ -63,9 +63,10 @@ void mg_frame_end(void)
         if ((int)mg.frame == mg_config.snap[i])
             mg_line("MGL-SNAP %u", mg.frame);
     if (mg_config.stats_every && mg.frame % (unsigned)mg_config.stats_every == 0) {
-        mg_line("MGL-STAT frame=%u tris=%u bands=%u banded=%u vfallback=%u splits=%u", mg.frame, mg_stats.tris,
-                mg_stats.bands, mg_stats.banded, setup_stats.vfallback, setup_stats.splits);
-        mg_stats.tris = mg_stats.bands = mg_stats.banded = 0;   /* (vfallback, splits: totals: edges too flat, triangles too big) */
+        mg_line("MGL-STAT frame=%u tris=%u bands=%u banded=%u fast=%u fastbands=%u vfallback=%u splits=%u", mg.frame,
+                mg_stats.tris, mg_stats.bands, mg_stats.banded, mg_stats.fast, mg_stats.fast_bands,
+                setup_stats.vfallback, setup_stats.splits);
+        mg_stats.tris = mg_stats.bands = mg_stats.banded = mg_stats.fast = mg_stats.fast_bands = 0;   /* (vfallback, splits: totals: edges too flat, triangles too big) */
 #ifdef MGA_PROF
         prof_line();
 #endif

@@ -36,6 +36,25 @@ unsigned mg_wcode_from_oow(double oow)
     if (oow >= 1.0)
         return 0;
     x = oow * 4294967296.0;
+    if (x >= 0.0 && x < 4294967295.0) {
+        /* The usual case (table fog, every vertex), in 32 bits (Watcom's
+         * 64-bit arithmetic is calls): the same code. */
+        uint32_t w32 = x < 2147483647.0 ? (uint32_t)mga_itrunc(x)
+                                        : (uint32_t)mga_ifloor(x - 2147483648.0) + 0x80000000u;
+        uint32_t h = w32 >> 16;
+        if (!h)
+            return 0xF001;
+        e = 0;                          /* leading zeros of h's 16 bits */
+        if (!(h & 0xFF00u)) { e += 8; h <<= 8; }
+        if (!(h & 0xF000u)) { e += 4; h <<= 4; }
+        if (!(h & 0xC000u)) { e += 2; h <<= 2; }
+        if (!(h & 0x8000u)) e += 1;
+        {
+            unsigned mant = (unsigned)((~w32) >> (19 - e)) & 0xFFF;
+            unsigned d = ((unsigned)e << 12) + mant + 1;
+            return d > 0xFFFF ? 0xFFFF : d;
+        }
+    }
     /* Truncation without the cast's control-word changes (mga/fp.h). */
     w = x >= 0.0 && x < 4611686018427387904.0 ? (uint64_t)mga_itrunc64(x) : (uint64_t)(oow * 4294967296.0);
     if (!(w & 0xFFFF0000u))

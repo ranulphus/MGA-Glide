@@ -124,7 +124,12 @@ uint32_t mg_depth_clear_value(FxU16 depth);
 void mg_note_approx(void);
 void mg_census(void);
 /* frame.c */
-typedef struct { uint32_t tris; uint32_t tri_processed, tri_drawn; uint32_t bands, banded; } mg_stats_t;
+typedef struct {
+    uint32_t tris;
+    uint32_t tri_processed, tri_drawn;
+    uint32_t bands, banded;
+    uint32_t fast, fast_bands;  /* by the fast path; sent the general way for bands of levels */
+} mg_stats_t;
 extern mg_stats_t mg_stats;
 void mg_frame_end(void);
 
@@ -139,7 +144,7 @@ enum {
     PROF_G_DRAIN,               /* grBufferSwap waiting for the engine */
     PROF_G_VSYNC,               /* grBufferSwap waiting for retrace */
     PROF_G_SWAP,                /* the rest of grBufferSwap (present, flip, statistics) */
-    PROF_G_PLAN,                /* within a triangle: culling, DELTA0, the combine plans, subdivision */
+    PROF_G_FAST,                /* within a triangle: the fast path (draw.c), all of it */
     PROF_G_VERT,                /* within a triangle: setup vertices, alpha, fog and validation */
     PROF_G_LOD,                 /* within a triangle: the level planes and the bands */
     PROF_G_WARP                 /* within a triangle: the WARP's vertices */
