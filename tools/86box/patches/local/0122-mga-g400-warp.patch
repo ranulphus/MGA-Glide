@@ -1985,7 +1985,7 @@
      return mystique->type >= MGA_G400 && g400_map_reg(mystique, a & 0x3ffc, 0) != NULL;
  }
  
-@@ -3043,19 +3103,129 @@
+@@ -3043,19 +3103,132 @@
          mystique_accel_ctrl_write_l_raw(addr, val, priv);
  }
  
@@ -2029,6 +2029,9 @@
 +static void
 +warp_wr(void *p, uint32_t reg, uint32_t val)
 +{
++    mystique_t *mystique = (mystique_t *) p;
++    if (MGA_EXEC_ADDR(mystique, reg))
++        mystique->blitter_submit_dma_refcount++;    /* (counted as DMA's are, or the engine reads busy) */
 +    mystique_accel_ctrl_write_l(reg, val, p);
 +}
 +
@@ -2116,7 +2119,7 @@
              mystique->blitter_submit_refcount++;
          mystique_queue(mystique, addr & 0x3fff, val, FIFO_WRITE_CTRL_LONG);
          return;
-@@ -3109,7 +3279,7 @@
+@@ -3109,7 +3282,7 @@
              else
                  reg_addr += 0x1c00;
  
@@ -2125,7 +2128,7 @@
                  mystique->blitter_submit_refcount++;
  
              mystique_queue(mystique, reg_addr, val, FIFO_WRITE_CTRL_LONG);
-@@ -3182,7 +3352,7 @@
+@@ -3182,7 +3355,7 @@
                  else
                      reg_addr += 0x1c00;
  
@@ -2134,7 +2137,7 @@
                      mystique->blitter_submit_dma_refcount++;
                  mystique_accel_ctrl_write_l(reg_addr, val, mystique);
  
-@@ -3196,6 +3366,11 @@
+@@ -3196,6 +3369,11 @@
                  blit_iload_write(mystique, val, 32);
              break;
  
@@ -2146,7 +2149,7 @@
          default:
  #if 0
              pclog("ILOAD write DMAMOD %i\n", mystique->dwgreg.dmamod); */
-@@ -3365,7 +3540,7 @@
+@@ -3365,7 +3543,7 @@
                              else
                                  reg_addr += 0x1c00;
  
@@ -2155,7 +2158,7 @@
                                  mystique->blitter_submit_dma_refcount++;
  
                              //pclog("DMA value: 0x%08X to reg 0x%04X\n", val, reg_addr);
-@@ -3444,7 +3619,7 @@
+@@ -3444,7 +3622,7 @@
                          else
                              reg_addr += 0x1c00;
  

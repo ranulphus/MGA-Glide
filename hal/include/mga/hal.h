@@ -126,6 +126,10 @@ void     engine_resync(void);
 int      engine_sync(uint32_t timeout_us);     /* 0 ok, -1 timeout (engine reset) */
 int      engine_idle(void);                    /* 1 when the FIFO is empty and the engine idle (no wait) */
 void     engine_reset(void);
+/* What OPMODE holds, for the modules that write it (engine.c's ILOAD,
+ * warp.c's vertices); MGA_OPMODE_UNKNOWN after a reset or a change of hands. */
+#define MGA_OPMODE_UNKNOWN 0xFFFFFFFFu
+extern uint32_t mga_opmode;
 void     engine_set_target(const mga_target *t);
 void     engine_set_maccess_flags(uint32_t flags);     /* MACCESS_NODITHER / MACCESS_FOGEN */
 void     engine_set_clip(int x0, int y0, int x1, int y1);   /* inclusive-exclusive */

@@ -16,7 +16,7 @@ const mga_target *engine_target = &cur;
 static uint32_t cur_maccess;
 static int cur_ydstorg_px;
 static int clip_x0, clip_y0, clip_x1 = 0x7FFF, clip_y1 = 0x7FFF;
-static int opmode_blit;            /* OPMODE set for ILOAD through the DMA window */
+uint32_t mga_opmode = MGA_OPMODE_UNKNOWN;   /* what OPMODE holds (ILOAD here, vertices in warp.c) */
 static int pitch_reg = -1;         /* the value in PITCH: targets may differ in pitch */
 
 static void emit_clip(void)
@@ -82,7 +82,7 @@ void engine_init(int pitch_px, int bpp)
     cur.zbits = 16;
     cur.color_off = cur.z_off = 0;
     cur_ydstorg_px = 0;
-    opmode_blit = 0;
+    mga_opmode = MGA_OPMODE_UNKNOWN;
 }
 
 int engine_sync(uint32_t timeout_us)
@@ -124,7 +124,7 @@ void engine_resync(void)
 {
     fifo_reset();
     setup_invalidate();
-    opmode_blit = 0;
+    mga_opmode = MGA_OPMODE_UNKNOWN;
     pitch_reg = -1;
     fifo_reserve(1);
     MGA_WR32(MGAREG_PLNWT, 0xFFFFFFFFu);    /* (every HAL path writes all planes) */
@@ -324,10 +324,10 @@ static uint32_t dmawin_pos;
 
 static void dma_blit_mode(void)
 {
-    if (!opmode_blit) {
+    if (mga_opmode != OPMODE_DMAMOD_BLIT) {
         engine_sync(200000);                         /* OPMODE is not queued behind drawing */
         MGA_WR32(MGAREG_OPMODE, OPMODE_DMAMOD_BLIT);
-        opmode_blit = 1;
+        mga_opmode = OPMODE_DMAMOD_BLIT;
     }
 }
 
