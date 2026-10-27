@@ -43,6 +43,18 @@ static struct {
 
 typedef char sh_dwg_is_bit_0[SH_DWG == SETUP_VALID_DWG ? 1 : -1];   /* (setup_forget_dwgctl, in engine.c) */
 
+/* DWGCTL for a draw that doesn't come through setup_triangle (the WARP's),
+ * under the same shadow and the same rule for bits that act when written. */
+void setup_dwgctl(uint32_t dwgctl)
+{
+    if ((setup_valid & SH_DWG) && sh.dwgctl == dwgctl && !(dwgctl & DWG_WRITE_TIME))
+        return;
+    fifo_reserve(1);
+    MGA_WR32(MGAREG_DWGCTL, dwgctl);
+    sh.dwgctl = dwgctl;
+    setup_valid |= SH_DWG;
+}
+
 static int same(const uint32_t *a, const uint32_t *b, int n)
 {
     int i;
@@ -325,6 +337,10 @@ static void split4(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, cons
 
 SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri_ctx *ctx)
 {
+    if (setup_stale) {                 /* the WARP wrote the registers since */
+        setup_valid = 0;
+        setup_stale = 0;
+    }
     const mga_svtx *v[3], *t;
     int64_t area2, cross;
     int mid_right;
@@ -566,6 +582,7 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
             setup_valid |= SH_SPEC;
         }
         if (w_wh) {                     /* tmap0dis is clear here: both maps */
+            setup_wrote_texsize = 1;
             WR(MGAREG_TEXWIDTH, wh[0]);
             WR(MGAREG_TEXHEIGHT, wh[1]);
             keep(sh.wh[0], wh, 2);
@@ -701,6 +718,7 @@ SETUP_TRI(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri
                 w_wh1 = !(setup_valid & SH_WH1) || !same(sh.wh[1], wh1, 2);
                 w_tm1 = !(setup_valid & SH_TM1) || !same(sh.tm[1], tm1, 6);
                 if (w_wh1) {            /* map 1 only */
+                    setup_wrote_texsize = 1;
                     WR(MGAREG_TEXWIDTH, wh1[0]);
                     WR(MGAREG_TEXHEIGHT, wh1[1]);
                     keep(sh.wh[1], wh1, 2);

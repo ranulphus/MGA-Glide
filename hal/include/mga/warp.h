@@ -45,6 +45,9 @@ int  warp_vertices(const mga_wvtx *v, int n);
 /* The DMA window back in general-purpose mode, the WARP suspended (before
  * the engine is used without it, or by another program). */
 void warp_stop(void);
+/* After a fault: the command stream and the WARP forgotten without waiting
+ * for the chip (the caller resets the engine next). */
+void warp_abort(void);
 /* Triangles and failures since start-up; DMA kicks (warp_dma_kicks) when the
  * vertices go by bus mastering. */
 extern uint32_t warp_tris, warp_failures, warp_dma_kicks;

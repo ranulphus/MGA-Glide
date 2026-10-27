@@ -9,6 +9,7 @@
 static mga_target cur;
 uint32_t engine_resets, engine_timeouts;
 unsigned setup_valid;                   /* (setup.h) */
+int setup_stale, setup_wrote_texsize;   /* (setup.h) */
 
 void setup_invalidate(void) { setup_valid = 0; }
 void setup_forget_dwgctl(void) { setup_valid &= ~SETUP_VALID_DWG; }
@@ -20,8 +21,7 @@ int mga_dma_pending;                    /* vertices buffered or in flight by DMA
 int mga_warp_pending;                   /* WARP triangles since the engine was last idle (hal.h) */
 void (*mga_dma_flush)(void);            /* sends and waits for them: register writes come after */
 int mga_cmd_open;                       /* the DMA command stream is taking register writes (mmio.h) */
-void (*mga_cmd_write)(uint32_t off, uint32_t v);
-void (*mga_cmd_other)(void);
+int (*mga_cmd_route)(uint32_t off, uint32_t v);
 uint32_t mga_opmode = MGA_OPMODE_UNKNOWN;   /* what OPMODE holds (ILOAD here, vertices in warp.c) */
 static int pitch_reg = -1;         /* the value in PITCH: targets may differ in pitch */
 

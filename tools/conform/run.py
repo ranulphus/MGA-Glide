@@ -80,6 +80,8 @@ def cmd_check(tests):
         r = run_one(t, MGA_OVL, out)
         cfg = dict(MANIFEST["_default"])
         cfg.update(MANIFEST.get(t, {}))
+        if CARD.startswith(("g400", "g450")):
+            cfg.update(cfg.get("warp", {}))     # the WARP's own edges (docs/g400-warp.md)
         frames = {}
         refd = os.path.join(REFDIR, t)
         ok = r["status"] == "PASS"

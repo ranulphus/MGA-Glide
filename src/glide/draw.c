@@ -7,6 +7,7 @@
 #include "combine/combine.h"
 #include "tex/texmgr.h"
 #include "mga/fp.h"
+#include "mga/warp.h"
 #include <string.h>
 
 /* The Voodoo converts float vertices to 12.4 fixed point by truncation
@@ -116,6 +117,97 @@ static void vtx(mga_svtx *o, const GrVertex *v, int wmode, int csrc, int asrc, i
     o->q = (mg.st.stw_hint & GR_STWHINT_W_DIFF_TMU0) ? v->tmuvtx[0].oow : v->oow;
     o->s = v->tmuvtx[0].sow;          /* scaled to the bound level below */
     o->t = v->tmuvtx[0].tow;
+}
+
+/* ---- The G400 family's WARP (docs/g400-warp.md) --------------------------
+ * A triangle the CPU would set up, set up by the WARP from the same setup
+ * vertices: the position from the snapped X16/Y16 with Mesa's subpixel
+ * offset, depth over the buffer's range, the colours as bytes, s and t
+ * divided by q. Its edges are the WARP's, not exactly the Voodoo's (the
+ * replays' tolerances). Bands (a level or a fog fit per run of rows) and two
+ * maps stay on the CPU, as do lines and points. warp=0 turns it off. */
+static int warp_ok = -1;            /* -1 not tried yet, 0 off, 1 on */
+static int warp_since_cpu;          /* WARP triangles since the CPU's: setup_triangle's shadows are stale */
+static int warp_tw = -1, warp_th = -1;  /* the map size the WARP's registers hold (-1 unknown) */
+
+/* Before any state of a triangle is written: the WARP started now, as its
+ * first start loads the microcode behind a soft reset, which clears
+ * registers (the engine keeps the target, clip and MACCESS flags). */
+static void warp_prepare(void)
+{
+    if (warp_ok < 0)
+        warp_ok = mg_config.warp && warp_available();
+    if (warp_ok && warp_select(WARP_S | WARP_A | WARP_F) != 0) {
+        warp_ok = 0;
+        mg_log(MG_LOG_WARN, "the WARP did not start: triangles are set up by the CPU");
+    }
+}
+
+static uint32_t cbyte(float f)
+{
+    return f <= 0 ? 0 : f >= 255.0f ? 255 : (uint32_t)mga_ifloor((double)f + 0.5);
+}
+
+/* 0 when the WARP took the triangle. */
+static int warp_tri(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri_ctx *ctx)
+{
+    const mga_svtx *v[3];
+    mga_wvtx w[3];
+    const double zs = mg.zbits == 32 ? 1.0 / 4294967295.0 : 1.0 / 65535.0;
+    int i;
+    if (warp_ok <= 0 || (ctx->flags & MGA_S_TEX2))
+        return -1;
+    setup_dwgctl(ctx->dwgctl);
+    if (!(ctx->flags & MGA_S_TEX)) {
+        if (warp_tw != 0) {
+            warp_tex_sizes(0, 0, 0, 0);
+            warp_tw = warp_th = 0;
+        }
+    } else if (warp_tw != ctx->tex_tw || warp_th != ctx->tex_th) {
+        warp_tex(0, ctx->tex_tw, ctx->tex_th, 0);
+        warp_tw = ctx->tex_tw;
+        warp_th = ctx->tex_th;
+    }
+    v[0] = a; v[1] = b; v[2] = c;
+    for (i = 0; i < 3; i++) {
+        const float rq = 1.0f / (v[i]->q > 0 ? v[i]->q : 1e-9f);
+        w[i].x = (float)v[i]->X16 * (1.0f / 16.0f) + WARP_SUBPIXEL_X;
+        w[i].y = (float)v[i]->Y16 * (1.0f / 16.0f) + WARP_SUBPIXEL_Y;
+        w[i].z = (float)(v[i]->z * zs);
+        w[i].rhw = v[i]->q;
+        w[i].bgra = cbyte(v[i]->b) | (cbyte(v[i]->g) << 8) | (cbyte(v[i]->r) << 16) | (cbyte(v[i]->a) << 24);
+        w[i].spec = cbyte(v[i]->sb) | (cbyte(v[i]->sg) << 8) | (cbyte(v[i]->sr) << 16) | (cbyte(v[i]->fog) << 24);
+        w[i].u0 = v[i]->s * rq;
+        w[i].v0 = v[i]->t * rq;
+        w[i].u1 = w[i].v1 = 0;
+    }
+    if (warp_vertices(w, 3) != 0) {
+        warp_ok = 0;
+        mg_log(MG_LOG_WARN, "the WARP stopped taking vertices: triangles are set up by the CPU");
+        return -1;
+    }
+    warp_since_cpu = 1;
+    return 0;
+}
+
+static void cpu_tri(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, const mga_tri_ctx *ctx)
+{
+    if (warp_since_cpu) {
+        setup_invalidate();             /* the WARP wrote the registers setup_triangle shadows */
+        warp_since_cpu = 0;
+        warp_tw = warp_th = -1;         /* (and the setup writes TEXWIDTH/TEXHEIGHT its own way) */
+    }
+    setup_triangle(a, b, c, ctx);
+}
+
+/* At the window's close, or before the engine goes to another program. */
+void mg_warp_stop(void)
+{
+    if (warp_tris || warp_failures)
+        warp_stop();
+    warp_ok = -1;
+    warp_tw = warp_th = -1;
+    warp_since_cpu = 0;
 }
 
 /* log2 without libm: exponent by scaling, mantissa by the atanh series. */
@@ -369,7 +461,9 @@ static void draw_band(const mga_svtx *a0, const mga_svtx *b0, const mga_svtx *c0
     if (mg_log_level() >= MG_LOG_TRACE)
         mg_log(MG_LOG_TRACE, "band lod=%d rows=%d..%d org=%x tw=%d th=%d fmt=%d mod=%d", lod, ctx->clip_y0,
                ctx->clip_y1, hw.org, hw.w_log2, hw.h_log2, hw.hwfmt, plan->modulate);
-    setup_triangle(&sa, &sb, &sc, ctx);
+    if (row0 <= 0 && row1 >= mg.rh && !F && warp_tri(&sa, &sb, &sc, ctx) == 0)
+        return;                         /* (a band of rows needs the CPU's row clip) */
+    cpu_tri(&sa, &sb, &sc, ctx);
 }
 
 static void draw_textured(const GrVertex *a, const GrVertex *b, const GrVertex *c,
@@ -676,6 +770,7 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
     }
     if (!mg.st.color_mask_rgb && !(depth && mg.st.depth_mask))
         return;
+    warp_prepare();
     if (mg.st.delta0) {
         /* DELTA0: every vertex carries the grConstantColorValue4 colour. */
         static GrVertex d[3];
@@ -774,7 +869,8 @@ void mg_draw_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c)
             fifo_reserve(1);
             MGA_WR32(MGAREG_ALPHACTRL, opts.alphactrl);
         }
-        setup_triangle(&sa, &sb, &sc, &ctx);
+        if (warp_tri(&sa, &sb, &sc, &ctx) != 0)
+            cpu_tri(&sa, &sb, &sc, &ctx);
     } else {
         ctx.dwgctl |= DWG_OPCOD_TEXTURE_TRAP;
         ctx.flags |= MGA_S_TEX;

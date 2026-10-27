@@ -58,8 +58,16 @@ void setup_triangle(const mga_svtx *a, const mga_svtx *b, const mga_svtx *c, con
  * without the set-up (GLOS's kernel, which has no FPU code). */
 extern unsigned setup_valid;
 #define SETUP_VALID_DWG 1u
+/* The G400's WARP (warp.c) writes the registers the shadows cover:
+ * setup_stale, set by warp_vertices, makes the next setup_triangle drop
+ * them. setup_wrote_texsize, set when setup_triangle writes TEXWIDTH or
+ * TEXHEIGHT (its own way), makes warp_vertices write the WARP's again. */
+extern int setup_stale, setup_wrote_texsize;
 void setup_invalidate(void);
 void setup_forget_dwgctl(void);
+/* DWGCTL for draws set up elsewhere (the WARP's), written only when the
+ * shadow differs. */
+void setup_dwgctl(uint32_t dwgctl);
 
 /* Exposed for unit tests: one edge at its first row. */
 typedef struct { int32_t x; int32_t ar_step, ar_err, ar_dec; int neg; } mga_edge;

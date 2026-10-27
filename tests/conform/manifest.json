@@ -11,7 +11,9 @@
  "t04": {
   "edge": false,
   "tol": 24,
-  "frac": 0.0005
+  "frac": 0.0005,
+  "warp": {"edge": true},
+  "why_warp": "the G400 family's WARP sets triangles up with its own edge rule, not exactly the Voodoo's: coverage differs on edges (warp=0 keeps the exact rule)"
  },
  "t05": {},
  "t06": {},

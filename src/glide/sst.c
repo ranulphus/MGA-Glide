@@ -1,5 +1,6 @@
 /* sst.c - initialisation, hardware query and window open/close. */
 #include "glide/mg.h"
+#include "mga/warp.h"
 #include "trace/trace.h"
 #include "mga/sys.h"
 #include "mga/mmio.h"
@@ -295,6 +296,7 @@ static void on_fault(int exc, uint32_t err, uint32_t eip)
     mg_line("MGL-EXC %02x err=%x eip=%x", exc, err, eip);
     trace_flush();
     if (mg.open) {
+        warp_abort();                   /* (no waiting for a chip that may be stuck) */
         engine_reset();
         vbe_set_text_mode();
         mg.open = 0;
@@ -310,6 +312,7 @@ static void on_exit(void)
     if (mg.open) {
         mg_line("MGL-EXIT-HOOK video restored");
         engine_sync(200000);
+        mg_warp_stop();
         vbe_set_text_mode();
         mg.open = 0;
     }
@@ -330,11 +333,14 @@ GR_ENTRY(void, grSstWinClose, (void))
     if (!mg.open)
         return;
     engine_sync(200000);
+    mg_warp_stop();
     vbe_set_text_mode();
     mg.open = 0;
     sys_unhook_faults();
     sys_unhook_exit();
-    mg_line("MGL-WINCLOSE frames=%u engine_resets=%u timeouts=%u", mg.frame, engine_resets, engine_timeouts);
+    mg_line("MGL-WINCLOSE frames=%u engine_resets=%u timeouts=%u warp_tris=%lu warp_failures=%lu kicks=%lu", mg.frame,
+            engine_resets, engine_timeouts, (unsigned long)warp_tris, (unsigned long)warp_failures,
+            (unsigned long)warp_dma_kicks);
 }
 
 GR_ENTRY(FxU32, grSstScreenWidth, (void)) { return (FxU32)(mg.open ? mg.width : 640); }

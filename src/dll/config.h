@@ -31,6 +31,7 @@ typedef struct {
     int  scale;                /* sizes the BIOS lacks: 1 scale into a BIOS mode (default), 0 top-left, 2 force */
     int  scale_filter;         /* 0 nearest (default), 1 bilinear */
     int  zoom;                 /* 1: half-size modes by the chip's line and pixel doubling */
+    int  warp;                 /* 1 (default): the G400 family's WARP sets triangles up (docs/g400-warp.md); 0 the CPU */
 } mg_config_t;
 
 extern mg_config_t mg_config;

@@ -226,18 +226,22 @@ static void cmd_write(uint32_t off, uint32_t v)
     mga_dma_pending = 1;
 }
 
-/* mga_cmd_other: a write the list can't carry follows. */
-static void cmd_other(void)
+/* mga_cmd_route: into the list, or the list sent first (mmio.h). */
+static int cmd_route(uint32_t off, uint32_t v)
 {
+    if (MGA_CMD_REG(off)) {
+        cmd_write(off, v);
+        return 1;
+    }
     if (mga_dma_pending)
         dma_flush();
+    return 0;
 }
 
 static void stream_open(void)
 {
     if (dma_state > 0) {
-        mga_cmd_write = cmd_write;
-        mga_cmd_other = cmd_other;
+        mga_cmd_route = cmd_route;
         mga_cmd_open = 1;
     }
 }
@@ -285,6 +289,20 @@ static void fail(void)
     running = 0;
     cur_pipe = -1;
     engine_reset();                     /* (OPMODE unknown after it) */
+}
+
+void warp_abort(void)
+{
+    mga_cmd_open = 0;
+    mga_dma_pending = 0;
+    inflight = 0;
+    lused = vused = 0;
+    lslots = 0;
+    vrun = NO_RUN;
+    if (running)
+        MGA_WR32_DIRECT(MGAREG_WIADDRNB2, WMODE_SUSPEND);   /* (bypassing the FIFO) */
+    running = 0;
+    cur_pipe = -1;
 }
 
 int warp_select(int pipe)
@@ -363,12 +381,37 @@ int warp_select(int pipe)
     }
     running = 1;
     stream_open();
-    warp_tex_sizes(0, 0, 0, 0);
+    warp_tex_sizes(0, 0, 0, 0);         /* (and wtex: nothing else known after a start) */
     return 0;
+}
+
+/* What warp_tex and warp_tex_sizes last wrote, written again when
+ * setup_triangle has written the sizes its own way since. */
+static struct { int set, map1; uint32_t w0, h0, w1, h1, texctl2; } wtex;
+
+static void wtex_again(void)
+{
+    setup_wrote_texsize = 0;
+    if (!wtex.set)
+        return;
+    fifo_reserve(8);
+    if (wtex.w0 || wtex.h0) {
+        MGA_WR32(MGAREG_TEXWIDTH, wtex.w0);
+        MGA_WR32(MGAREG_TEXHEIGHT, wtex.h0);
+    }
+    if (wtex.map1) {
+        MGA_WR32(MGAREG_TEXCTL2, wtex.texctl2 | TEXCTL2_MAP1);
+        MGA_WR32(MGAREG_TEXWIDTH, wtex.w1);
+        MGA_WR32(MGAREG_TEXHEIGHT, wtex.h1);
+        MGA_WR32(MGAREG_TEXCTL2, wtex.texctl2);
+    }
 }
 
 void warp_tex_sizes(uint32_t w0, uint32_t h0, uint32_t w1, uint32_t h1)
 {
+    wtex.set = 1;
+    wtex.map1 = 0;
+    wtex.w0 = w0; wtex.h0 = h0; wtex.w1 = w1; wtex.h1 = h1;
     fifo_reserve(4);
     MGA_WR32(MGAREG_WR(54), w0 | 0x40);            /* | MGA_G400_WR_MAGIC */
     MGA_WR32(MGAREG_WR(62), h0 | 0x40);
@@ -384,13 +427,19 @@ static uint32_t mesa_wh(int lg)
 void warp_tex(int map, int log2w, int log2h, uint32_t texctl2)
 {
     const uint32_t w = mesa_wh(log2w), h = mesa_wh(log2h);
+    wtex.set = 1;
     if (!map) {
+        wtex.w0 = w; wtex.h0 = h;
+        wtex.map1 = 0;
         fifo_reserve(4);
         MGA_WR32(MGAREG_TEXWIDTH, w);
         MGA_WR32(MGAREG_TEXHEIGHT, h);
         MGA_WR32(MGAREG_WR(54), w | 0x40);
         MGA_WR32(MGAREG_WR(62), h | 0x40);
     } else {
+        wtex.w1 = w; wtex.h1 = h;
+        wtex.map1 = 1;
+        wtex.texctl2 = texctl2;
         fifo_reserve(6);
         MGA_WR32(MGAREG_TEXCTL2, texctl2 | TEXCTL2_MAP1);
         MGA_WR32(MGAREG_TEXWIDTH, w);
@@ -399,7 +448,7 @@ void warp_tex(int map, int log2w, int log2h, uint32_t texctl2)
         MGA_WR32(MGAREG_WR(52), w | 0x40);
         MGA_WR32(MGAREG_WR(60), h | 0x40);
     }
-    setup_invalidate();                 /* (setup_triangle's TEXWIDTH/TEXHEIGHT shadows) */
+    setup_stale = 1;                    /* (setup_triangle's TEXWIDTH/TEXHEIGHT shadows) */
 }
 
 int warp_vertices(const mga_wvtx *v, int n)
@@ -409,6 +458,9 @@ int warp_vertices(const mga_wvtx *v, int n)
     if (!running && (sel_pipe < 0 || warp_select(sel_pipe) != 0))
         return -1;
     dw = (cur_pipe & WARP_T2) ? 10 : 8;
+    if (setup_wrote_texsize)
+        wtex_again();
+    setup_stale = 1;
     if (mga_cmd_open) {
         if (vused + (uint32_t)(n * dw) * 4u > VERT_BYTES || lused + 12u > LIST_BYTES / 4u)
             dma_kick();                 /* (the triangles stay whole within a run) */
