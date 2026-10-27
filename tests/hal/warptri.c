@@ -152,12 +152,30 @@ static void save(void)
     hx_save_ppm("W0", SW, SH, rgb);
 }
 
+/* Every line of the CPU's caches written back: 2 MB read (4 x a Pentium
+ * II's L2), so a bus master that does not snoop sees what the CPU wrote. */
+static void flush_caches(void)
+{
+    static volatile uint32_t *big;
+    uint32_t i, sum = 0;
+    if (!big)
+        big = (volatile uint32_t *)malloc(2u << 20);
+    if (!big)
+        return;
+    for (i = 0; i < (2u << 20) / 4u; i += 8)
+        sum += big[i];
+    (void)sum;
+}
+
+static int agp_hcap;
+
 int main(int argc, char **argv)
 {
     static const vtx g[3] = { { 40, 30, 0, 255, 0, 0 }, { 290, 60, 0, 0, 255, 0 }, { 120, 200, 0, 0, 0, 255 } };
     static const vtx z1[3] = { { 30, 260, 1000, 255, 255, 0 }, { 280, 270, 60000, 255, 255, 0 }, { 150, 460, 30000, 255, 255, 0 } };
     static const vtx z2[3] = { { 40, 450, 60000, 0, 255, 255 }, { 290, 300, 1000, 0, 255, 255 }, { 200, 470, 30000, 0, 255, 255 } };
     int pipe = 0, count = 4000, i, ok, pitch, cover, colour, drawn, starts = 0, reload = 0, keep = 0, dmabw = 0;
+    int agpinfo = 0, agp_rate = 0, agp_draw = 0;
     mga_vbe_mode mode;
     mga_target tg;
     uint64_t t0, t1;
@@ -174,6 +192,9 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "keep")) keep = 1;
         else if (!strcmp(argv[i], "noreset")) warp_reset_before_load = 0;
         else if (!strcmp(argv[i], "dmabw")) dmabw = 1;
+        else if (!strcmp(argv[i], "agpinfo")) agpinfo = 1;
+        else if (!strncmp(argv[i], "agp=", 4)) agp_rate = atoi(argv[i] + 4);
+        else if (!strcmp(argv[i], "agpdraw")) agp_draw = 1;     /* with agp=N: the drawing tests, not dmabw */
     }
     hx_init(1, argv, "warptri");
     ok = mga_find(&mga) == 0 && mga_map(&mga) == 0;
@@ -197,6 +218,52 @@ int main(int argc, char **argv)
     hx_log("HX-STAT warptri pipe=%d status=%08lx opmode=%08lx", pipe, (unsigned long)MGA_RD32(MGAREG_STATUS),
            (unsigned long)opmode_saved);
 
+    if (agpinfo) {
+        int r;
+        for (r = 0; r < 0x100; r += 16)
+            hx_log("HX-STAT agp host %02x: %08lx %08lx %08lx %08lx", r, (unsigned long)mga_pci_read32(0, 0, 0, r),
+                   (unsigned long)mga_pci_read32(0, 0, 0, r + 4), (unsigned long)mga_pci_read32(0, 0, 0, r + 8),
+                   (unsigned long)mga_pci_read32(0, 0, 0, r + 12));
+        for (r = 0x30; r < 0x100; r += 16)
+            hx_log("HX-STAT agp card %d:%d.%d %02x: %08lx %08lx %08lx %08lx", mga.bus, mga.dev, mga.fn, r,
+                   (unsigned long)mga_pci_read32(mga.bus, mga.dev, mga.fn, r),
+                   (unsigned long)mga_pci_read32(mga.bus, mga.dev, mga.fn, r + 4),
+                   (unsigned long)mga_pci_read32(mga.bus, mga.dev, mga.fn, r + 8),
+                   (unsigned long)mga_pci_read32(mga.bus, mga.dev, mga.fn, r + 12));
+        hx_test("agpinfo", 1, "dumped");
+        goto out;
+    }
+    if (agp_rate) {
+        /* EXPERIMENT: AGP on, the target (host bridge's capability) first,
+         * then the G400 (AGP_CMD F8h), at agp_rate x with sideband
+         * addressing, the card's queue depth the bridge's. */
+        int hcap = (int)(mga_pci_read32(0, 0, 0, 0x34) & 0xFC), k;
+        uint32_t hsts, csts, rate = agp_rate == 2 ? 2u : 1u;
+        for (k = 0; k < 8 && hcap && (mga_pci_read32(0, 0, 0, hcap) & 0xFF) != 2; k++)
+            hcap = (int)((mga_pci_read32(0, 0, 0, hcap) >> 8) & 0xFC);
+        if (!hcap || (mga_pci_read32(0, 0, 0, hcap) & 0xFF) != 2) {
+            hx_test("agp", 0, "no AGP capability on the host bridge");
+            goto out;
+        }
+        hsts = mga_pci_read32(0, 0, 0, hcap + 4);
+        csts = mga_pci_read32(mga.bus, mga.dev, mga.fn, 0xF4);
+        hx_log("HX-STAT agp host cap=%02x sts=%08lx cmd=%08lx; card sts=%08lx cmd=%08lx", hcap, (unsigned long)hsts,
+               (unsigned long)mga_pci_read32(0, 0, 0, hcap + 8), (unsigned long)csts,
+               (unsigned long)mga_pci_read32(mga.bus, mga.dev, mga.fn, 0xF8));
+        if (!(hsts & csts & rate) || !(hsts & csts & (1u << 9))) {
+            hx_test("agp", 0, "rate %lux or sideband not supported by both", (unsigned long)rate);
+            goto out;
+        }
+        mga_pci_write32(0, 0, 0, hcap + 8, rate | (1u << 8) | (1u << 9));
+        mga_pci_write32(mga.bus, mga.dev, mga.fn, 0xF8, rate | (1u << 8) | (1u << 9) |
+                        ((((hsts >> 24) & 0xFF) > 31 ? 31u : ((hsts >> 24) & 0xFF)) << 24));
+        hx_log("HX-STAT agp on: host cmd=%08lx card cmd=%08lx", (unsigned long)mga_pci_read32(0, 0, 0, hcap + 8),
+               (unsigned long)mga_pci_read32(mga.bus, mga.dev, mga.fn, 0xF8));
+        agp_hcap = hcap;
+        warp_agp_xfer = 1;
+        warp_pre_kick = flush_caches;           /* (the CPU's writes out of its caches before each fetch) */
+        dmabw = !agp_draw;
+    }
     if (dmabw) {
         uint64_t ticks = 0, best = ~(uint64_t)0;
         uint32_t got = 0;
@@ -206,12 +273,28 @@ int main(int argc, char **argv)
             goto out;
         }
         for (k = 0; k < 20; k++) {
-            got = warp_dma_bandwidth(8192, rdtsc, &ticks);
+            got = warp_dma_bandwidth(8192, rdtsc, &ticks, flush_caches);
             if (got && ticks < best)
                 best = ticks;
         }
         hx_log("HX-STAT warptri dmabw bytes=%lu ticks=%lu mb_s=%lu", (unsigned long)got, (unsigned long)best,
                got && best ? (unsigned long)((double)got * 398.0 / (double)best) : 0ul);
+        {   /* WARP triangles by the batch: small ones (fill negligible) */
+            static const vtx tv[3] = { { 100, 100, 0, 255, 0, 0 }, { 108, 101, 0, 0, 255, 0 }, { 102, 107, 0, 0, 0, 255 } };
+            mga_wvtx w[3];
+            uint64_t fe = 0, dn = 0, bf = ~(uint64_t)0, bd = ~(uint64_t)0;
+            int n = 0;
+            w[0] = wv(&tv[0]); w[1] = wv(&tv[1]); w[2] = wv(&tv[2]);
+            context(dw_i);
+            for (k = 0; k < 10; k++) {
+                n = warp_dma_vertex_bandwidth(w, 1000, rdtsc, &fe, &dn, flush_caches);
+                if (n > 0 && fe < bf) bf = fe;
+                if (n > 0 && dn < bd) bd = dn;
+            }
+            hx_log("HX-STAT warptri warpbw tris=%d fetch_ticks=%lu done_ticks=%lu ktris_s_fetch=%lu ktris_s_done=%lu", n,
+                   (unsigned long)bf, (unsigned long)bd, n > 0 ? (unsigned long)((double)n * 398000.0 / (double)bf) : 0ul,
+                   n > 0 ? (unsigned long)((double)n * 398000.0 / (double)bd) : 0ul);
+        }
         hx_test("dmabw", got != 0, "%lu bytes", (unsigned long)got);
         goto out;
     }
@@ -348,6 +431,12 @@ int main(int argc, char **argv)
     }
 out:
     warp_stop();
+    if (agp_hcap) {                             /* AGP off again: the card first, then the bridge */
+        warp_agp_xfer = 0;
+        warp_pre_kick = NULL;
+        mga_pci_write32(mga.bus, mga.dev, mga.fn, 0xF8, 0);
+        mga_pci_write32(0, 0, 0, agp_hcap + 8, 0);
+    }
     MGA_WR32(MGAREG_OPMODE, opmode_saved);
     if (!keep)
         engine_reset();                         /* the next program finds the engine and the WARPs reset */

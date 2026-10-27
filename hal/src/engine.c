@@ -104,8 +104,34 @@ void engine_init(int pitch_px, int bpp)
     mga_opmode = MGA_OPMODE_UNKNOWN;
 }
 
+/* WARP triangles the drawing engine may not have had yet: the WARPs set
+ * them up after the bus FIFO has emptied, and STATUS can read idle before
+ * they are drawn (on a real G400 a framebuffer read after them found the
+ * frame still clear). A fence: DWGSYNC takes the value written to it only
+ * once the drawing engine has finished the primitives sent before it. */
+static uint32_t fence_tag;
+static int fence_out;
+
+static void warp_fence(void)
+{
+    if (!mga_warp_pending || !mga.has_dwgsync || fence_out)
+        return;
+    fence_tag = (fence_tag + 4u) & ~3u;
+    if (!fence_tag)
+        fence_tag = 4u;
+    fifo_reserve(1);
+    MGA_WR32(MGAREG_DWGSYNC, fence_tag);
+    fence_out = 1;
+}
+
+static int fence_passed(void)
+{
+    return !fence_out || MGA_RD32(MGAREG_DWGSYNC) == fence_tag;
+}
+
 int engine_sync(uint32_t timeout_us)
 {
+    warp_fence();
     if (mga_dma_pending && mga_dma_flush)
         mga_dma_flush();
     if (timeout_us < 120000u)
@@ -114,7 +140,8 @@ int engine_sync(uint32_t timeout_us)
     /* Idle means the bus FIFO is empty (FIFOSTATUS.bempty, bit 9) and the
      * drawing engine is not busy; commands can still be queued while the
      * engine reports idle. */
-    while (!(MGA_RD32(MGAREG_FIFOSTATUS) & (1u << 9)) || (MGA_RD32(MGAREG_STATUS) & STATUS_DWGENGSTS)) {
+    while (!(MGA_RD32(MGAREG_FIFOSTATUS) & (1u << 9)) || (MGA_RD32(MGAREG_STATUS) & STATUS_DWGENGSTS) ||
+           !fence_passed()) {
         if ((++polls & 1023) == 0 && (uint32_t)(sys_time_us() - start) > timeout_us) {
             engine_timeouts++;
             engine_reset();
@@ -126,6 +153,7 @@ int engine_sync(uint32_t timeout_us)
     MGA_WR8(MGAREG_CRTC_INDEX, 0);
     fifo_reset();
     mga_warp_pending = 0;
+    fence_out = 0;
     return 0;
 }
 
@@ -134,9 +162,15 @@ int engine_sync(uint32_t timeout_us)
  * they wait (DOS-GL's swap, which lets a program's audio thread run). */
 int engine_idle(void)
 {
+    warp_fence();
     if (mga_dma_pending && mga_dma_flush)
         mga_dma_flush();
-    return (MGA_RD32(MGAREG_FIFOSTATUS) & (1u << 9)) && !(MGA_RD32(MGAREG_STATUS) & STATUS_DWGENGSTS);
+    if ((MGA_RD32(MGAREG_FIFOSTATUS) & (1u << 9)) && !(MGA_RD32(MGAREG_STATUS) & STATUS_DWGENGSTS) && fence_passed()) {
+        mga_warp_pending = 0;
+        fence_out = 0;
+        return 1;
+    }
+    return 0;
 }
 
 /* Another program has had the engine (GLOS's GPU lock changing hands):
@@ -165,6 +199,8 @@ void engine_reset(void)
     sys_delay_us(20);
     MGA_WR32(MGAREG_RST, 0);
     fifo_reset();
+    fence_out = 0;                      /* (nothing drawn is waited for any more) */
+    mga_warp_pending = 0;
     engine_init(cur.pitch_px ? cur.pitch_px : 1024, cur.bpp ? cur.bpp : 16);
     if (s.t.pitch_px && s.t.bpp)
         engine_restore(&s);             /* (engine_init leaves the target at offset 0) */

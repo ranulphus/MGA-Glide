@@ -15,11 +15,14 @@
 #include "mga/sys.h"
 #include "mga/prof.h"
 #include "warp_g400.h"
+#include <string.h>
 
 uint32_t warp_tris, warp_failures, warp_dma_kicks;
 int warp_use_dma = 1;
 int warp_start_pads = 3;
 int warp_reset_before_load = 1;
+int warp_agp_xfer;                  /* EXPERIMENT: fetch by AGP cycles (needs AGP on, and uncached buffers) */
+void (*warp_pre_kick)(void);        /* EXPERIMENT: called before each kick (a cache flush for AGP cycles) */
 uint32_t warp_diag[5];
 
 /* Bus-master DMA, as Linux's mga DRM does it (G400 specification 4.1.9): a
@@ -189,7 +192,7 @@ static void close_run(void)
     list_put(DMAREG(MGAREG_DMAPAD), 0);
     list_put(DMAREG(MGAREG_DMAPAD), 0);
     list_put(DMAREG(MGAREG_SECADDRESS), (dbuf[dcur].phys + LIST_BYTES + vrun) | 3u);   /* vertex write */
-    list_put(DMAREG(MGAREG_SECEND), dbuf[dcur].phys + LIST_BYTES + vused);             /* PCI */
+    list_put(DMAREG(MGAREG_SECEND), (dbuf[dcur].phys + LIST_BYTES + vused) | (warp_agp_xfer ? 2u : 0u));
     vrun = NO_RUN;
 }
 
@@ -203,8 +206,10 @@ static void dma_kick(void)
         fail();
         return;
     }
+    if (warp_pre_kick)
+        warp_pre_kick();
     MGA_WR32_DIRECT(MGAREG_PRIMADDRESS, dbuf[dcur].phys);              /* general purpose */
-    MGA_WR32_DIRECT(MGAREG_PRIMEND, dbuf[dcur].phys + lused * 4u);     /* PCI memory; starts the channel */
+    MGA_WR32_DIRECT(MGAREG_PRIMEND, (dbuf[dcur].phys + lused * 4u) | (warp_agp_xfer ? 2u : 0u));  /* starts it */
     inflight = 1;
     warp_dma_kicks++;
     dcur ^= 1;
@@ -465,7 +470,7 @@ void warp_tex(int map, int log2w, int log2h, uint32_t texctl2)
 
 /* Diagnostic: bytes of DMAPAD packets fetched by the primary channel, and
  * the TSC ticks it took (0 when there is no stream). */
-uint32_t warp_dma_bandwidth(uint32_t bytes, uint64_t (*tsc)(void), uint64_t *ticks)
+uint32_t warp_dma_bandwidth(uint32_t bytes, uint64_t (*tsc)(void), uint64_t *ticks, void (*flush)(void))
 {
     uint32_t n = 0, packets;
     uint64_t t0;
@@ -478,11 +483,46 @@ uint32_t warp_dma_bandwidth(uint32_t bytes, uint64_t (*tsc)(void), uint64_t *tic
         packets = LIST_BYTES / 4u / 5u;
     for (n = 0; n < packets * 4u; n++)
         list_put(DMAREG(MGAREG_DMAPAD), 0);
+    if (flush)
+        flush();                        /* (the list out of the CPU's caches, for AGP cycles) */
     t0 = tsc();
     dma_kick();
     dma_wait();
     *ticks = tsc() - t0;
     return packets * 20u;
+}
+
+/* Diagnostic: ntris copies of triangle t (3 vertices) put in one batch, the
+ * CPU's caches flushed, then the ticks of tsc() from the kick until the
+ * chip has fetched them (*fetch) and until the engine is idle (*done). */
+int warp_dma_vertex_bandwidth(const mga_wvtx *t, int ntris, uint64_t (*tsc)(void), uint64_t *fetch, uint64_t *done,
+                              void (*flush)(void))
+{
+    int i, k, dw;
+    uint64_t t0;
+    if (dma_state <= 0 || !mga_cmd_open || !running)
+        return -1;
+    if (mga_dma_pending)
+        dma_flush();
+    dw = (cur_pipe & WARP_T2) ? 10 : 8;
+    if ((uint32_t)(ntris * 3 * dw) * 4u > VERT_BYTES)
+        ntris = (int)(VERT_BYTES / 4u / (uint32_t)(3 * dw));
+    vrun = vused;
+    for (i = 0; i < ntris; i++)
+        for (k = 0; k < 3; k++) {
+            memcpy(dbuf[dcur].p + (LIST_BYTES + vused) / 4u, &t[k], (size_t)dw * 4u);
+            vused += (uint32_t)dw * 4u;
+        }
+    if (flush)
+        flush();
+    t0 = tsc();
+    dma_kick();
+    dma_wait();
+    *fetch = tsc() - t0;
+    engine_sync(2000000);
+    *done = tsc() - t0;
+    warp_tris += (uint32_t)ntris;
+    return ntris;
 }
 
 uint32_t *warp_reserve(int n, int *dwords)

@@ -50,7 +50,15 @@ uint32_t *warp_reserve(int n, int *dwords);
 void warp_commit(int n);
 /* Diagnostic: a list of DMAPAD packets (up to the list's size) fetched by
  * the primary channel; its bytes, and the ticks of tsc() it took in *ticks. */
-uint32_t warp_dma_bandwidth(uint32_t bytes, uint64_t (*tsc)(void), uint64_t *ticks);
+uint32_t warp_dma_bandwidth(uint32_t bytes, uint64_t (*tsc)(void), uint64_t *ticks, void (*flush)(void));
+/* Diagnostic: ntris copies of triangle t in one batch, caches flushed, then
+ * the ticks from the kick to the fetch's end (*fetch) and the engine idle
+ * (*done). The number of triangles sent, or -1. */
+int warp_dma_vertex_bandwidth(const mga_wvtx *t, int ntris, uint64_t (*tsc)(void), uint64_t *fetch, uint64_t *done,
+                              void (*flush)(void));
+/* EXPERIMENT: the DMA stream's fetches by AGP cycles (PRIMEND/SECEND bit 1). */
+extern int warp_agp_xfer;
+extern void (*warp_pre_kick)(void);
 /* The DMA window back in general-purpose mode, the WARP suspended (before
  * the engine is used without it, or by another program). */
 void warp_stop(void);
