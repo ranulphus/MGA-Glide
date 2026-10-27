@@ -969,7 +969,7 @@ static struct {
  * them (fp_epoch moves with each): vtx() and alpha_setup's rules, then
  * wvtx_base. A game's triangles share vertices; one changed in place since
  * misses (its contents are compared). */
-#define FP_SLOTS_LOG2 6
+#define FP_SLOTS_LOG2 8
 typedef struct { const GrVertex *key; uint32_t epoch; GrVertex in; mga_svtx sv; mga_wvtx w; } fp_vtx;
 static fp_vtx fpv[1 << FP_SLOTS_LOG2];
 static uint32_t fp_epoch = 1;
