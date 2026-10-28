@@ -446,7 +446,10 @@ static uint32_t dmawin_pos;
 static void dma_blit_mode(void)
 {
     if (mga_opmode != OPMODE_DMAMOD_BLIT) {
-        engine_sync(200000);                         /* OPMODE is not queued behind drawing */
+        /* OPMODE is not queued behind drawing, and on a G400 it may not
+         * leave general purpose while the WARPs still work: after the list
+         * had only been fetched, the loads came out as without iload_done. */
+        engine_sync(200000);
         MGA_WR32(MGAREG_OPMODE, OPMODE_DMAMOD_BLIT);
         mga_opmode = OPMODE_DMAMOD_BLIT;
     }
@@ -485,7 +488,9 @@ static void iload_go(uint32_t dwgctl, int xl, int xr, int y, int h, uint32_t ar0
  * Waiting for the engine before or after each load changed nothing; with
  * OPMODE put back, every frame matched the CPU's writes (DGL_ILOAD=0).
  * 86Box reads OPMODE for the DMA window only. The next load sets blit mode
- * again (dma_blit_mode). */
+ * again (dma_blit_mode). Going back needed no wait on the card (none, or
+ * the bus FIFO empty: frames exact, no faster); the sync stays, as for any
+ * OPMODE write. */
 static void iload_done(void)
 {
     if (mga_cmd_open && mga_opmode != 0) {

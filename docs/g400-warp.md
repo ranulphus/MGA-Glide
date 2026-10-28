@@ -246,6 +246,21 @@ wrap and flat shading's colour, and was 5% to 11% slower by AGP than by PCI unti
   while WARP triangles are pending (`mga_warp_pending`, set by `warp_vertices`, cleared by `engine_sync`). Every
   flat case then matches 86Box; texture, blend and depth registers needed no barrier (the Arena's batches drew
   right without one).
+- **ILOAD and OPMODE (2026-10-28).** An ILOAD sets OPMODE to blit mode for its data through the DMA window. Left
+  there while the WARPs' DMA stream went on, it spoiled GLQuake's lightmap updates (`glTexSubImage2D` by ILOAD).
+  In demo1 the lightmaps went wrong in rows, more as the demo went on, and then triangles flew across the screen.
+  - **Isolated:** the frames were clean with `DGL_ILOAD=0` or `DGL_WARP=0`, and the same with `DGL_AGP=0`.
+  - **Ruled out:** waiting for the engine before or after each load changed nothing; the frames matched to the
+    pixel.
+  - **Fix:** OPMODE put back to general purpose after each load while the stream is open (`engine.c`, `iload_done`).
+    Frames 200, 600 and 960 then matched `DGL_ILOAD=0`'s.
+  - **The rule, as far as it is known:** OPMODE may not leave general purpose while the WARPs still work. Entering
+    blit mode after the list had only been fetched, not after the fence, spoiled the frames exactly as before.
+    Going back needs no wait: with none, or with only the bus FIFO empty, the frames were exact.
+  - **Mechanism:** not characterised. t29 (one changed page between draws) passed on the card without the fix.
+  - **Cost:** the wait before each load drains the WARPs. CPU writes became faster on this card: demo1 39.3 fps
+    against 35.9 by ILOAD, 33.0 against 31.6 with `-mtex`. DOS-GL now writes sub-images by the CPU while the stream
+    is open; `DGL_ILOAD=1` forces ILOAD, and its conformance test t31 runs that way.
 - **STATUS<22:20>** (warpbfpath, wfipath, wfopath) point at WARP1 after an odd number of triangles, and keep that
   across suspend and start.
 - **Open:**
@@ -262,6 +277,8 @@ setup, copied into the patch as `src/video/mgahal/`. That is what the silicon's 
 - **The third load:** modelled. A start after three loads since a soft reset leaves the WARPs dead (no busy bits,
   no vertices taken), and the log says so. The soft reset stops the WARPs.
 - **Culling:** not modelled yet.
+- **OPMODE:** read for the DMA window only. On the G400, blit mode left in OPMODE spoils ILOADs among the WARPs' DMA
+  (above); not modelled, since what the chip does with it is not known.
 
 `WARPTRI` in Loop A on the G400 passes: Gouraud and depth identical to the CPU setup, and two triangles in one batch
 drawn.
