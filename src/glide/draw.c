@@ -177,9 +177,17 @@ static void wvtx_base(const mga_svtx *v, mga_wvtx *w, double zs)
     w->spec = cbyte(v->sb) | (cbyte(v->sg) << 8) | (cbyte(v->sr) << 16) | (cbyte(v->fog) << 24);
 }
 
+/* 1/q as the WARP vertex uses it, rounded to a float (a store: the same
+ * value whether kept or not, so the fast path keeps it with the vertex). */
+static float wvtx_rq(float q)
+{
+    volatile float rq = 1.0f / (q > 0 ? q : 1e-9f);
+    return rq;
+}
+
 static void wvtx_uv(const mga_svtx *v, mga_wvtx *w)
 {
-    const float rq = 1.0f / (v->q > 0 ? v->q : 1e-9f);
+    const float rq = wvtx_rq(v->q);
     w->u0 = v->s * rq;
     w->v0 = v->t * rq;
     w->u1 = w->v1 = 0;
@@ -273,10 +281,16 @@ static double log2d(double v)
  * level; the level is floor(lambda), clamped to the chain. */
 typedef struct { double s0, sx, sy, t0, tx, ty, q0, qx, qy, x0, y0; int valid; } lod_planes;
 
-static void lod_setup(lod_planes *L, const GrVertex *a, const GrVertex *b, const GrVertex *c)
+/* k: the largest level's texels per 256 (lod_scale(): the state's alone) */
+static double lod_scale(void)
+{
+    return (256 >> tmu0.large) / 256.0;
+}
+
+static void lod_setup_k(lod_planes *L, const GrVertex *a, const GrVertex *b, const GrVertex *c, double k)
 {
     const GrVertex *v[3];
-    double k = (256 >> tmu0.large) / 256.0, x[3], y[3], S[3], T[3], Q[3], area;
+    double x[3], y[3], S[3], T[3], Q[3], area;
     int i;
     v[0] = a; v[1] = b; v[2] = c;
     for (i = 0; i < 3; i++) {
@@ -296,6 +310,11 @@ static void lod_setup(lod_planes *L, const GrVertex *a, const GrVertex *b, const
     PL(S, s); PL(T, t); PL(Q, q);
 #undef PL
     L->x0 = x[0]; L->y0 = y[0];
+}
+
+static void lod_setup(lod_planes *L, const GrVertex *a, const GrVertex *b, const GrVertex *c)
+{
+    lod_setup_k(L, a, b, c, lod_scale());
 }
 
 /* floor(2 * log2 g) for g > 0, exactly, from the double's bits: with
@@ -961,6 +980,7 @@ static struct {
         mga_texstate regs;      /* the texture registers' (emit_texture_state's) */
     } lv[GR_LOD_1 + 1];
     int lod_off;                /* lod_offset() */
+    double lod_k;               /* lod_scale() */
     int emitted_lod;            /* the level whose registers were last written, */
     uint32_t emitted;           /* ... at this scache_epoch (0: not yet) */
 } fp;
@@ -970,7 +990,18 @@ static struct {
  * wvtx_base. A game's triangles share vertices; one changed in place since
  * misses (its contents are compared). */
 #define FP_SLOTS_LOG2 8
-typedef struct { const GrVertex *key; uint32_t epoch; GrVertex in; mga_svtx sv; mga_wvtx w; } fp_vtx;
+typedef struct {
+    const GrVertex *key;
+    uint32_t epoch;
+    GrVertex in;
+    mga_svtx sv;
+    mga_wvtx w;                 /* (its x, y, z, rhw, bgra, spec) */
+    float rq;                   /* wvtx_rq(sv.q) */
+    int lvl;                    /* the level ls..fv are for (-1 none) */
+    int norm;                   /* ls, lt finite, q positive and finite: fp_adjust may use fu, fv */
+    float ls, lt;               /* s, t scaled to the level (draw_band's) */
+    double fu, fv;              /* mga_floor of ls / q, lt / q (tex_adjust_coords' terms) */
+} fp_vtx;
 static fp_vtx fpv[1 << FP_SLOTS_LOG2];
 static uint32_t fp_epoch = 1;
 
@@ -983,6 +1014,8 @@ static void fp_fill(fp_vtx *e, const GrVertex *v, int32_t sx, int32_t sy, double
     if (fp.a_invert)
         e->sv.a = 255 - e->sv.a;
     wvtx_base(&e->sv, &e->w, zs);
+    e->rq = wvtx_rq(e->sv.q);
+    e->lvl = -1;
 }
 
 /* *a == *b, bit for bit: its 15 words (include/glide/layout.h; memcmp is a
@@ -995,7 +1028,7 @@ static int same_vtx(const GrVertex *a, const GrVertex *b)
              (p[12] ^ q[12]) | (p[13] ^ q[13]) | (p[14] ^ q[14]));
 }
 
-static const fp_vtx *fp_vert(const GrVertex *v, int32_t sx, int32_t sy, double zs)
+static fp_vtx *fp_vert(const GrVertex *v, int32_t sx, int32_t sy, double zs)
 {
     fp_vtx *e = &fpv[((uint32_t)(size_t)v * 2654435761u) >> (32 - FP_SLOTS_LOG2)];
     if (e->key == v && e->epoch == fp_epoch && same_vtx(&e->in, v))
@@ -1071,6 +1104,7 @@ static void fp_prepare(const mg_plan *plan_in, const mg_aplan *ap, int depth, in
     fp.modulate = plan.modulate;
     fp.need_lod = !(tmu0.mipmap == GR_MIPMAP_DISABLE || tmu0.small == tmu0.large || plan.tex_white);
     fp.lod_off = lod_offset();
+    fp.lod_k = lod_scale();
     fp.table_fog = mg.fog_on && mg_fog_source() == GR_FOG_WITH_TABLE;
     fp.dwgctl = DWG_BOP_COPY | (plan.textured ? DWG_OPCOD_TEXTURE_TRAP : DWG_OPCOD_TRAP) |
                 (depth ? (mg.st.depth_mask ? DWG_ATYPE_ZI : DWG_ATYPE_I) | zmode_for(mg.st.depth_func, wmode)
@@ -1082,11 +1116,11 @@ static void fp_prepare(const mg_plan *plan_in, const mg_aplan *ap, int depth, in
 }
 
 /* The triangle's three vertices into the DMA stream: the cached part and
- * the map coordinates tq (scaled and moved by whole periods, or not for an
- * untextured draw). 0, or -1 when the WARP stopped taking them. */
-static int fp_send(const fp_vtx *const *P, const mga_svtx *tq, int tw, int th)
+ * the map coordinates st (s, t a vertex: scaled and moved by whole periods,
+ * or as they are for an untextured draw), times the vertex's 1/q (wvtx_uv).
+ * 0, or -1 when the WARP stopped taking them. */
+static int fp_send(fp_vtx *const *P, const float *st, int tw, int th)
 {
-    mga_wvtx uv;
     uint32_t *d;
     int i, dw;
     setup_dwgctl(fp.dwgctl);
@@ -1094,16 +1128,21 @@ static int fp_send(const fp_vtx *const *P, const mga_svtx *tq, int tw, int th)
     d = warp_reserve(3, &dw);
     if (d) {                            /* straight into the DMA stream */
         for (i = 0; i < 3; i++, d += dw) {
+            float u = st[2 * i] * P[i]->rq, v = st[2 * i + 1] * P[i]->rq;
             memcpy(d, &P[i]->w, 24);    /* x, y, z, rhw, bgra, spec */
-            wvtx_uv(&tq[i], &uv);
-            memcpy(d + 6, &uv.u0, (size_t)(dw - 6) * 4u);
+            memcpy(d + 6, &u, 4);
+            memcpy(d + 7, &v, 4);
+            if (dw == 10)
+                d[8] = d[9] = 0;
         }
         warp_commit(3);
     } else {
         mga_wvtx w[3];
         for (i = 0; i < 3; i++) {
             w[i] = P[i]->w;
-            wvtx_uv(&tq[i], &w[i]);
+            w[i].u0 = st[2 * i] * P[i]->rq;
+            w[i].v0 = st[2 * i + 1] * P[i]->rq;
+            w[i].u1 = w[i].v1 = 0;
         }
         if (warp_vertices(w, 3) != 0) {
             warp_ok = 0;
@@ -1115,15 +1154,42 @@ static int fp_send(const fp_vtx *const *P, const mga_svtx *tq, int tw, int th)
     return 0;
 }
 
-/* draw_band's for the fast path: the triangle at level lod, its coordinates
- * (s, t, q in tq0) scaled to the level and moved by whole periods; under
- * the clip narrowed to rows [row0, row1) when es holds the clip to narrow.
- * 0, 1 when none of its rows is visible, -1 when the WARP failed. */
-static int fp_level(const fp_vtx *const *P, const mga_svtx *tq0, GrLOD_t lod, int row0, int row1,
-                    const mga_engine_state *es)
+/* A float's exponent is not all ones (not an infinity or NaN). */
+static int finite_f(float f)
+{
+    union { float f; uint32_t u; } c;
+    c.f = f;
+    return (c.u & 0x7F800000u) != 0x7F800000u;
+}
+
+/* The vertex's coordinates at level lv (draw_band's scale), and the terms
+ * tex_adjust_coords takes the smallest of. */
+static void fp_at_level(fp_vtx *e, GrLOD_t lod, const struct fp_level *lv)
+{
+    e->lvl = lod;
+    e->ls = e->sv.s * lv->sig_s;
+    e->lt = e->sv.t * lv->sig_t;
+    e->norm = finite_f(e->ls) && finite_f(e->lt) && finite_f(e->sv.q) && e->sv.q > 0;
+    if (e->norm) {
+        e->fu = mga_floor((double)e->ls / (double)e->sv.q);
+        e->fv = mga_floor((double)e->lt / (double)e->sv.q);
+    }
+}
+
+/* draw_band's for the fast path: the triangle at level lod, its vertices'
+ * coordinates scaled to the level and moved by whole periods; under the
+ * clip narrowed to rows [row0, row1) when es holds the clip to narrow.
+ * 0, 1 when none of its rows is visible, -1 when the WARP failed.
+ *
+ * The whole periods are tex_adjust_coords' (map 0, no half-texel shift):
+ * floor of the smallest s / q, as a double, which is the smallest of the
+ * vertices' floors (rounding and floor keep the order), kept with each
+ * vertex for its level. Anything else (an infinity, a NaN, q <= 0, the
+ * half-texel shift) goes through tex_adjust_coords itself. */
+static int fp_level(fp_vtx *const *P, GrLOD_t lod, int row0, int row1, const mga_engine_state *es)
 {
     struct fp_level *lv;
-    mga_svtx tq[3];
+    float st[6];
     int i, r, po = PROF_SWITCH(PROF_G_TEXBIND);
     lv = &fp.lv[lod];
     if (!lv->valid) {                   /* draw_band's binding */
@@ -1144,12 +1210,40 @@ static int fp_level(const fp_vtx *const *P, const mga_svtx *tq0, GrLOD_t lod, in
         lv->valid = 1;
     }
     mg_stats.bands++;
-    for (i = 0; i < 3; i++) {
-        tq[i].s = tq0[i].s * lv->sig_s;
-        tq[i].t = tq0[i].t * lv->sig_t;
-        tq[i].q = tq0[i].q;
+    for (i = 0; i < 3; i++)
+        if (P[i]->lvl != lod)
+            fp_at_level(P[i], lod, lv);
+    if (P[0]->norm && P[1]->norm && P[2]->norm && !(lv->ts.bilinear && !mga.texel_centre)) {
+        double su = 0, sv = 0;
+        if (!lv->ts.clamp_u) {
+            double m = P[0]->fu < 1e30 ? P[0]->fu : 1e30;   /* (tex_adjust_coords' mn starts at 1e30) */
+            if (P[1]->fu < m) m = P[1]->fu;
+            if (P[2]->fu < m) m = P[2]->fu;
+            su -= m;
+        }
+        if (!lv->ts.clamp_v) {
+            double m = P[0]->fv < 1e30 ? P[0]->fv : 1e30;
+            if (P[1]->fv < m) m = P[1]->fv;
+            if (P[2]->fv < m) m = P[2]->fv;
+            sv -= m;
+        }
+        for (i = 0; i < 3; i++) {
+            st[2 * i] = P[i]->ls + (float)(su * P[i]->sv.q);
+            st[2 * i + 1] = P[i]->lt + (float)(sv * P[i]->sv.q);
+        }
+    } else {
+        mga_svtx tq[3];
+        for (i = 0; i < 3; i++) {
+            tq[i].s = P[i]->ls;
+            tq[i].t = P[i]->lt;
+            tq[i].q = P[i]->sv.q;
+        }
+        tex_adjust_coords(&tq[0], &tq[1], &tq[2], &lv->ts);
+        for (i = 0; i < 3; i++) {
+            st[2 * i] = tq[i].s;
+            st[2 * i + 1] = tq[i].t;
+        }
     }
-    tex_adjust_coords(&tq[0], &tq[1], &tq[2], &lv->ts);
     if (lod != fp.emitted_lod || fp.emitted == 0 || fp.emitted != scache_epoch || !scache_fresh()) {
         if (fp.emitted && fp.emitted == scache_epoch && scache_fresh() && scache.tex &&
             scache.alphactrl == fp.opts.alphactrl) {
@@ -1170,7 +1264,7 @@ static int fp_level(const fp_vtx *const *P, const mga_svtx *tq0, GrLOD_t lod, in
         engine_set_clip(es->clip[0], y0, es->clip[2], y1);
     }
     po = PROF_SWITCH(PROF_G_WARP);
-    r = fp_send(P, tq, lv->hw.w_log2, lv->hw.h_log2);
+    r = fp_send(P, st, lv->hw.w_log2, lv->hw.h_log2);
     PROF_BACK(po);
     return r;
 }
@@ -1181,9 +1275,8 @@ static int fp_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c, int32
                   int32_t by, int32_t cx, int32_t cy)
 {
     const double zs = mg.zbits == 32 ? 1.0 / 4294967295.0 : 1.0 / 65535.0;
-    const fp_vtx *P[3];
+    fp_vtx *P[3];
     fp_vtx spare[3];
-    mga_svtx tq[3];                     /* the map coordinates: s, t, q */
     int i, po;
     if (mg.dirty)
         mg_validate();
@@ -1199,20 +1292,20 @@ static int fp_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c, int32
         fp_fill(&spare[1], b, bx, by, zs);
         P[1] = &spare[1];
     }
-    for (i = 0; i < 3; i++) {           /* (what tex_adjust_coords and wvtx_uv read) */
-        tq[i].s = P[i]->sv.s;
-        tq[i].t = P[i]->sv.t;
-        tq[i].q = P[i]->sv.q;
-    }
     PROF_BACK(po);
     if (!fp.textured) {
+        float st[6];
         int r;
         if (!alphactrl_cached(fp.opts.alphactrl)) {
             fifo_reserve(1);
             MGA_WR32(MGAREG_ALPHACTRL, fp.opts.alphactrl);
         }
+        for (i = 0; i < 3; i++) {       /* (the coordinates as they are: wvtx_uv's) */
+            st[2 * i] = P[i]->sv.s;
+            st[2 * i + 1] = P[i]->sv.t;
+        }
         po = PROF_SWITCH(PROF_G_WARP);
-        r = fp_send(P, tq, 0, 0);
+        r = fp_send(P, st, 0, 0);
         PROF_BACK(po);
         if (r != 0)
             return 0;
@@ -1245,7 +1338,7 @@ static int fp_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c, int32
             lod_planes L;
             double cxm;
             int row, lpo = PROF_SWITCH(PROF_G_LOD);
-            lod_setup(&L, a, b, c);
+            lod_setup_k(&L, a, b, c, fp.lod_k);
             cxm = (a->x + b->x + c->x) / 3.0;
             for (row = r0; row < r1; row += BAND_ROWS) {
                 int mid = row + BAND_ROWS / 2;
@@ -1272,7 +1365,7 @@ static int fp_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c, int32
                 return 0;
         rs[nr] = r1;
         if (nr == 1) {                  /* the whole triangle, its rows unclipped */
-            if (fp_level(P, tq, rl[0], 0, mg.rh, NULL) < 0)
+            if (fp_level(P, rl[0], 0, mg.rh, NULL) < 0)
                 return 0;
         } else {
             /* the whole triangle at each run's level, under the clip
@@ -1281,7 +1374,7 @@ static int fp_tri(const GrVertex *a, const GrVertex *b, const GrVertex *c, int32
             int k, r = 0;
             engine_save(&es);
             for (k = 0; k < nr && r >= 0; k++)
-                r = fp_level(P, tq, rl[k], rs[k], rs[k + 1], &es);
+                r = fp_level(P, rl[k], rs[k], rs[k + 1], &es);
             engine_set_clip(es.clip[0], es.clip[1], es.clip[2], es.clip[3]);
             if (r < 0 && k == 1)
                 return 0;               /* (the WARP failed at once: the general path, by the CPU) */
