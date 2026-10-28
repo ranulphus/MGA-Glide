@@ -26,6 +26,22 @@ int (*mga_cmd_route)(uint32_t off, uint32_t v);
 uint32_t mga_opmode = MGA_OPMODE_UNKNOWN;   /* what OPMODE holds (ILOAD here, vertices in warp.c) */
 static int pitch_reg = -1;         /* the value in PITCH: targets may differ in pitch */
 
+/* Before a register write that triangles the WARPs are still setting up
+ * would see (on a real G400 the next clip cut them): two zero-length draws,
+ * as Linux's mga DRM puts before every clip on a G400 (mga_emit_clip_rect). */
+static void warp_barrier(void)
+{
+    const uint32_t dwg = DWG_OPCOD_TRAP | DWG_ATYPE_I | DWG_ZMODE_NOZCMP | DWG_SHFTZERO | DWG_BOP_COPY;
+    if (!mga_warp_pending)
+        return;
+    fifo_reserve(4);
+    MGA_WR32(MGAREG_DWGCTL, dwg);
+    MGA_WR32(MGAREG_LEN + MGAREG_EXEC, 0x80000000u);
+    MGA_WR32(MGAREG_DWGCTL, dwg);
+    MGA_WR32(MGAREG_LEN + MGAREG_EXEC, 0x80000000u);
+    setup_forget_dwgctl();
+}
+
 static void emit_clip(void)
 {
     uint32_t base = (uint32_t)cur_ydstorg_px;
@@ -33,19 +49,7 @@ static void emit_clip(void)
     if (x1 <= x0 || y1 <= y0) {
         x0 = 0; x1 = 0; y0 = 1; y1 = 0;      /* empty: nothing passes */
     }
-    if (mga_warp_pending) {
-        /* A new clip would reach triangles the WARPs are still setting up
-         * (on a real G400 they were cut by the next clip): first two
-         * zero-length draws, as Linux's mga DRM puts before every clip on
-         * a G400 (mga_emit_clip_rect). */
-        const uint32_t dwg = DWG_OPCOD_TRAP | DWG_ATYPE_I | DWG_ZMODE_NOZCMP | DWG_SHFTZERO | DWG_BOP_COPY;
-        fifo_reserve(4);
-        MGA_WR32(MGAREG_DWGCTL, dwg);
-        MGA_WR32(MGAREG_LEN + MGAREG_EXEC, 0x80000000u);
-        MGA_WR32(MGAREG_DWGCTL, dwg);
-        MGA_WR32(MGAREG_LEN + MGAREG_EXEC, 0x80000000u);
-        setup_forget_dwgctl();
-    }
+    warp_barrier();
     fifo_reserve(3);
     MGA_WR32(MGAREG_CXBNDRY, ((uint32_t)(x1 - 1) << 16) | (uint32_t)x0);
     MGA_WR32(MGAREG_YTOP, (uint32_t)y0 * (uint32_t)cur.pitch_px + base);
@@ -592,6 +596,82 @@ void engine_iload_end(void)
     while (iload_rows > 0)
         engine_iload_row(NULL);
     iload_done();
+    fifo_reserve(1);
+    MGA_WR32(MGAREG_PITCH, (uint32_t)cur.pitch_px);
+    pitch_reg = cur.pitch_px;
+    engine_set_target(&cur);                        /* DSTORG, ZORG, MACCESS */
+    emit_clip();
+}
+
+/* Copies from one surface in VRAM to another, queued like draws (G200+):
+ * DOS-GL changes a texture that queued draws still read in a new block,
+ * the CPU writing the new texels there and these copies the rest from the
+ * old block, with no wait for the engine. A copy's rows are pitch_px pixels
+ * apart in both surfaces; dst and src are its first pixel's byte addresses.
+ * DSTORG and SRCORG are rounded down to 64 bytes (the G400's units) and the
+ * rest goes in the columns and AR3. Between the first copy and
+ * engine_vram_copy_end the registers hold the copies' surface;
+ * engine_vram_copy_end writes the target back (PITCH, origins, MACCESS,
+ * the clip). PLNWT is left all ones. */
+static int vcopy_open;
+
+int engine_vram_copy(uint32_t dst, uint32_t src, int pitch_px, int bpp, int w, int h)
+{
+    uint32_t b = (uint32_t)bpp / 8, sp = (uint32_t)pitch_px, W = (uint32_t)w - 1, x0 = (dst & 63u) / b,
+             room = mga.family == MGA_FAMILY_G400 ? (1u << 21) - 1 : (1u << 17) - 1;   /* what AR0 can hold */
+    int band, done, n;
+    if (!mga.has_dstorg || (bpp != 8 && bpp != 16 && bpp != 32) || pitch_px <= 0 || pitch_px > 4096 ||
+        ((uint32_t)pitch_px * b) & 63u || dst % b || src % b || w > 4096 - (int)x0)
+        return 0;
+    if (w <= 0 || h <= 0)
+        return 1;
+    if (!vcopy_open) {
+        warp_barrier();                 /* (DSTORG, PITCH and MACCESS change under the WARPs' triangles) */
+        fifo_reserve(4);
+        MGA_WR32(MGAREG_PLNWT, 0xFFFFFFFFu);
+        MGA_WR32(MGAREG_CXBNDRY, 0x0FFF0000u);      /* (for chips that ignore clipdis) */
+        MGA_WR32(MGAREG_YTOP, 0);
+        MGA_WR32(MGAREG_YBOT, 0x00FFFFFFu);
+        vcopy_open = 1;
+    }
+    fifo_reserve(6);
+    setup_forget_dwgctl();
+    MGA_WR32(MGAREG_DWGCTL, DWG_OPCOD_BITBLT | DWG_ATYPE_RSTR | DWG_SGNZERO | DWG_SHFTZERO | DWG_BOP_COPY |
+                            DWG_BLTMOD_BFCOL | DWG_CLIPDIS);
+    MGA_WR32(MGAREG_MACCESS, b == 4 ? MACCESS_PW32 : b == 2 ? MACCESS_PW16 : MACCESS_PW8);
+    MGA_WR32(MGAREG_PITCH, sp);
+    pitch_reg = pitch_px;
+    MGA_WR32(MGAREG_DSTORG, dst & ~63u);
+    MGA_WR32(MGAREG_AR5, sp);
+    MGA_WR32(MGAREG_FXBNDRY, ((x0 + W) << 16) | x0);
+    band = (int)((room - 63 / b - W) / sp) + 1;     /* rows whose addresses fit AR0 (blit.c) */
+    for (done = 0; done < h; done += n) {
+        uint32_t at = src + (uint32_t)done * sp * b, first = (at & 63u) / b;
+        n = h - done < band ? h - done : band;
+        fifo_reserve(4);
+        MGA_WR32(MGAREG_SRCORG, at & ~63u);
+        MGA_WR32(MGAREG_AR0, first + W);
+        MGA_WR32(MGAREG_AR3, first);
+        MGA_WR32(MGAREG_YDSTLEN + MGAREG_EXEC, ((uint32_t)done << 16) | (uint32_t)n);
+    }
+    return 1;
+}
+
+/* bytes bytes from src to dst (not overlapping), as rows of 32 pixels (64
+ * at 8 bits) of the widest pixel the addresses and the length allow. */
+int engine_vram_move(uint32_t dst, uint32_t src, uint32_t bytes)
+{
+    uint32_t a = dst | src | bytes, b = !(a & 3u) ? 4u : !(a & 1u) ? 2u : 1u, px = b == 1 ? 64u : 32u,
+             row = px * b, rows = bytes / row, rest = bytes % row;
+    return engine_vram_copy(dst, src, (int)px, (int)b * 8, (int)px, (int)rows) &&
+           engine_vram_copy(dst + rows * row, src + rows * row, (int)px, (int)b * 8, (int)(rest / b), 1);
+}
+
+void engine_vram_copy_end(void)
+{
+    if (!vcopy_open)
+        return;
+    vcopy_open = 0;
     fifo_reserve(1);
     MGA_WR32(MGAREG_PITCH, (uint32_t)cur.pitch_px);
     pitch_reg = cur.pitch_px;

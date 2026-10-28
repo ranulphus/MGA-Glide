@@ -150,6 +150,16 @@ void     engine_tlut_load(uint32_t off, int first, int count);   /* G200+: textu
 int      engine_iload_begin(uint32_t off, int pitch_px, int bpp, int x, int y, int w, int h);
 void     engine_iload_row(const uint32_t *d);
 void     engine_iload_end(void);
+/* G200+: copies between surfaces in VRAM (not overlapping), queued in order
+ * with drawing. engine_vram_copy: w x h pixels of bpp bits (8, 16 or 32),
+ * rows pitch_px apart in both (pitch_px x bpp a multiple of 64 bytes, up
+ * to 4096), from the pixel at byte address src to the one at dst (whole
+ * pixels, anywhere). engine_vram_move: bytes bytes. Each returns 1, or 0
+ * when it can't (then nothing of that call was queued); after one or more,
+ * engine_vram_copy_end writes the target back. They leave PLNWT all ones. */
+int      engine_vram_copy(uint32_t dst, uint32_t src, int pitch_px, int bpp, int w, int h);
+int      engine_vram_move(uint32_t dst, uint32_t src, uint32_t bytes);
+void     engine_vram_copy_end(void);
 
 /* 2D drawing (engine.c, blit.c; docs/matrox-2d.md). On the target
  * (engine_set_target: its origin 64-byte aligned, its pitch a multiple of
