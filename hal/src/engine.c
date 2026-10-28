@@ -626,7 +626,18 @@ int engine_vram_copy(uint32_t dst, uint32_t src, int pitch_px, int bpp, int w, i
     if (w <= 0 || h <= 0)
         return 1;
     if (!vcopy_open) {
-        warp_barrier();                 /* (DSTORG, PITCH and MACCESS change under the WARPs' triangles) */
+        /* DSTORG, PITCH, MACCESS and DWGCTL change: first two DWGSYNC
+         * writes, as Linux's mga DRM puts before its blits and loads
+         * (mga_dma_dispatch_blit), with tags from the fence's sequence. Not
+         * warp_barrier: on bench-g400 its zero-length draws' DWGCTL reached
+         * triangles the WARPs were still setting up (GLQuake -mtex, frame
+         * 600 of demo1: 1,056 pixels of a pillar unlike DGL_TEXMOVE=0's),
+         * while with the DWGSYNC writes alone every frame matched. */
+        if (mga_warp_pending && mga.has_dwgsync) {
+            fifo_reserve(2);
+            MGA_WR32(MGAREG_DWGSYNC, mga_dwgsync_next());
+            MGA_WR32(MGAREG_DWGSYNC, mga_dwgsync_next());
+        }
         fifo_reserve(4);
         MGA_WR32(MGAREG_PLNWT, 0xFFFFFFFFu);
         MGA_WR32(MGAREG_CXBNDRY, 0x0FFF0000u);      /* (for chips that ignore clipdis) */

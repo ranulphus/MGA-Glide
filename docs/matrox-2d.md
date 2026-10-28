@@ -66,8 +66,9 @@ BITBLT, xy source, bltmod BFCOL, bop S, shftzero: `0x040C4018` (SPEC §4.5.7 p.4
     addresses and the length allow.
   - **After them:** `engine_vram_copy_end` writes the target back (PITCH, the origins, MACCESS, the clip). PLNWT is
     left all ones.
-  - **WARP triangles pending:** the first copy starts with the two zero-length draws the clip needs
-    ([g400-warp.md](g400-warp.md)), because DSTORG, PITCH and MACCESS change under them.
+  - **WARP triangles pending:** the first copy starts with two DWGSYNC writes, as Linux's DRM starts its blits,
+    because DSTORG, PITCH, MACCESS and DWGCTL change under them. The clip's two zero-length draws did harm here
+    ([g400-warp.md](g400-warp.md), "Copies among WARP triangles").
 
 ## 3. Colour expansion
 

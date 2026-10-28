@@ -261,6 +261,20 @@ wrap and flat shading's colour, and was 5% to 11% slower by AGP than by PCI unti
   - **Cost:** the wait before each load drains the WARPs. CPU writes became faster on this card: demo1 39.3 fps
     against 35.9 by ILOAD, 33.0 against 31.6 with `-mtex`. DOS-GL now writes sub-images by the CPU while the stream
     is open; `DGL_ILOAD=1` forces ILOAD, and its conformance test t31 runs that way.
+- **Copies among WARP triangles (2026-10-28).** DOS-GL moves a lightmap that queued draws still read to a new
+  block, and the engine copies the unchanged rows there (`engine_vram_copy`) between GLQuake's `-mtex` surfaces. The
+  copies change DSTORG, PITCH, MACCESS and DWGCTL while WARP triangles may still be in flight.
+  - **With `warp_barrier` first** (the clip's two zero-length draws): frame 600 of demo1 differed from
+    `DGL_TEXMOVE=0`'s in 1,056 pixels of one pillar, the same in every run; frames 200 and 960 matched.
+  - **Isolated:** an `engine_sync` before the copies gave exact frames (and 7% fewer fps); one after them did not.
+    Two DWGSYNC writes before them gave exact frames with the zero-length draws left out, and the same 1,056 pixels
+    with the draws after the DWGSYNC writes. So the draws themselves did the harm: their DWGCTL (an untextured
+    trapezoid without depth test) reached triangles the WARPs were still setting up.
+  - **Fix:** the copies start with two DWGSYNC writes, as Linux's DRM starts its blits and loads
+    (`mga_dma_dispatch_blit`), with tags from the fence's sequence.
+  - **Open:** the DRM's zero-length draws before a clip write its context's own DWGCTL; `emit_clip`'s write an
+    untextured one. That was enough for E9's flat quads; textured triangles in flight at a clip change may need the
+    current DWGCTL.
 - **STATUS<22:20>** (warpbfpath, wfipath, wfopath) point at WARP1 after an odd number of triangles, and keep that
   across suspend and start.
 - **Open:**
