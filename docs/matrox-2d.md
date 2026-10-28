@@ -54,6 +54,20 @@ BITBLT, xy source, bltmod BFCOL, bop S, shftzero: `0x040C4018` (SPEC §4.5.7 p.4
   what happens then. So on the G200 and G400 the HAL points SRCORG at the band of rows it copies (rounded down to 64
   bytes, the rest in AR3) and copies a tall rectangle a band at a time, each band's addresses within AR0's range
   (bottom band first when scanning up). The G100 has no SRCORG: its addresses are absolute, as X.org's are (§7).
+- **Between other surfaces (`engine_vram_copy`, `engine_vram_move`; G200 and G400).** These copy from one surface in
+  VRAM to another, neither of them the target, queued like draws.
+  - **Use:** DOS-GL changes a texture that queued draws still read in a new block. The CPU writes the new texels
+    there and these copies bring the rest over from the old block, so neither waits for the engine.
+  - **Registers:** the same BITBLT, with sgnzero and clipdis, MACCESS at the copy's depth, and PITCH as both pitches
+    (AR5 the source's).
+  - **Origins:** DSTORG is rounded down to 64 bytes like SRCORG, the rest going into the columns. Past the pitch,
+    those run on into the next line, as linear addresses do **[inf]**.
+  - **`engine_vram_move`:** copies a byte range as lines of 32 pixels (64 at 8 bits), of the widest pixel that the
+    addresses and the length allow.
+  - **After them:** `engine_vram_copy_end` writes the target back (PITCH, the origins, MACCESS, the clip). PLNWT is
+    left all ones.
+  - **WARP triangles pending:** the first copy starts with the two zero-length draws the clip needs
+    ([g400-warp.md](g400-warp.md)), because DSTORG, PITCH and MACCESS change under them.
 
 ## 3. Colour expansion
 
