@@ -1,5 +1,5 @@
 diff --git a/src/video/vid_mga.c b/src/video/vid_mga.c
-index 55bd1df..afed4c3 100644
+index 55bd1df..6d1c9ff 100644
 --- a/src/video/vid_mga.c
 +++ b/src/video/vid_mga.c
 @@ -67,7 +67,42 @@ mystique_unsupported(const char *fmt, ...)
@@ -46,21 +46,22 @@ index 55bd1df..afed4c3 100644
  #define ROM_MILLENNIUM_II     "roms/video/matrox/matrox2164wpc.BIN"
  #define ROM_MILLENNIUM_II_AGP "roms/video/matrox/865-4.bin"
  #define ROM_MYSTIQUE          "roms/video/matrox/MYSTIQUE.VBI"
-@@ -656,6 +691,13 @@ typedef struct mystique_t {
+@@ -656,6 +691,14 @@ typedef struct mystique_t {
          int      vdw, vn;
          uint32_t vs[64];            /* MGA-Glide local patch: a vertex for the ACCEPT sequencer's slot */
          int      seq_first, seqptr; /* ... the first triangle still to come whole; the next seqdst */
 +        /* MGA-Glide local patch (silicon hazards): triangles set up since
 +         * the host last drained the WARPs, 1 while the WARP's own writes
-+         * go through, and the values the host last wrote to the registers
-+         * of warp_hz_regs (host_known: which it has written). */
++         * go through, and the clip registers' values the host last wrote
++         * (warp_hz_clip; host_known: which it has written). */
 +        int      inflight, in_tri;
-+        uint32_t host[9];
++        uint32_t tri_state[4];      /* (the last triangle's DWGCTL, DSTORG, PITCH, MACCESS: warp_state) */
++        uint32_t host[5];
 +        unsigned host_known;
      } warp;
  
      struct {
-@@ -2506,6 +2548,7 @@ mystique_ctrl_write_b(uint32_t addr, uint8_t val, void *priv)
+@@ -2506,6 +2549,7 @@ mystique_ctrl_write_b(uint32_t addr, uint8_t val, void *priv)
                  mystique->warp.running = 0;     /* MGA-Glide local patch: the soft reset stops the WARPs */
                  mystique->warp.loads   = 0;
                  mystique->warp.vdw = mystique->warp.vn = 0;
@@ -68,7 +69,7 @@ index 55bd1df..afed4c3 100644
              }
              mystique->busy                        = 0;
              mystique->blitter_submit_refcount     = 0;
-@@ -3094,11 +3137,128 @@ g400_routes(mystique_t *mystique, uint32_t addr)
+@@ -3094,11 +3138,167 @@ g400_routes(mystique_t *mystique, uint32_t addr)
      return mystique->type >= MGA_G400 && g400_map_reg(mystique, a & 0x3ffc, 0) != NULL;
  }
  
@@ -121,15 +122,23 @@ index 55bd1df..afed4c3 100644
 +
 +/* MGA-Glide local patch (silicon hazards): host writes, checked in the
 + * order the engine takes them (the bus FIFO, the DMA lists).
-+ * - The WARPs: on a real G400, a drawing register written by the host
-+ *   reaches triangles the WARPs are still setting up (bench-g400: a new
-+ *   clip cut the second WARP's triangle; the clip's barrier draws' DWGCTL and
-+ *   lightmap copies' DSTORG, PITCH, MACCESS and DWGCTL spoiled GLQuake's
-+ *   textured triangles; GLOS took the engine back onto its own target).
-+ *   This model finishes each triangle at once, so it reports a change to one
-+ *   of warp_hz_regs while triangles are in flight: set up since the last
-+ *   DWGSYNC write, host-started draw (the DRM's barrier before a clip) or
-+ *   soft reset. A rewrite of the same value is harmless.
++ * - The WARPs: this model finishes each triangle at once; a real G400 is
++ *   still setting some up when STATUS reads idle, and on bench-g400 the host
++ *   overtook them twice over:
++ *   - a new clip (CXBNDRY, YTOP, YBOT) cut the second WARP's triangle;
++ *   - a draw the host started with other state reached them: the clip
++ *     barrier's zero-length draws with an untextured DWGCTL and lightmap
++ *     copies (DSTORG, PITCH, MACCESS, DWGCTL) spoiled GLQuake's textured
++ *     triangles, and GLOS's HAL drew its own after a program's.
++ *   Linux's DRM does the same as the fixes: two DWGSYNC writes before its
++ *   clears and blits, and before a clip two zero-length draws with the
++ *   context's own DWGCTL. State written between vertex runs for the next
++ *   triangles is no hazard (the DRM does that all the time).
++ *   So with triangles in flight (set up since the last DWGSYNC write,
++ *   host-started draw or soft reset), a change of the clip, or a draw
++ *   started with DWGCTL, DSTORG, PITCH or MACCESS other than the last WARP
++ *   triangle's, is reported. Rewriting the clip the host last wrote is no
++ *   change.
 + * - OPMODE into blit mode while the WARPs work: GLQuake's lightmaps by ILOAD
 + *   went wrong in rows (the mechanism is not known).
 + * - TEXWIDTH/TEXHEIGHT whose rfw doesn't fit the size: the CPU setup's
@@ -137,12 +146,19 @@ index 55bd1df..afed4c3 100644
 + *   for the WARP. The specification's 8 - log2 - k for prescaled q displaced
 + *   texels in perspective on the card; this model ignores rfw.
 + * - SECEND's AGP bit: agp_check. */
-+static const uint16_t warp_hz_regs[9] = {
-+    REG_DWGCTL, REG_MACCESS, REG_PITCH, REG_CXBNDRY, REG_CXLEFT, REG_CXRIGHT, REG_YTOP, REG_YBOT, REG_DSTORG
-+};
-+static const char *const warp_hz_names[9] = {
-+    "DWGCTL", "MACCESS", "PITCH", "CXBNDRY", "CXLEFT", "CXRIGHT", "YTOP", "YBOT", "DSTORG"
-+};
++static const uint16_t warp_hz_clip[5]           = { REG_CXBNDRY, REG_CXLEFT, REG_CXRIGHT, REG_YTOP, REG_YBOT };
++static const char *const warp_hz_clip_names[5]  = { "CXBNDRY", "CXLEFT", "CXRIGHT", "YTOP", "YBOT" };
++static const char *const warp_hz_state_names[4] = { "DWGCTL", "DSTORG", "PITCH", "MACCESS" };
++
++/* The state a WARP triangle or a host-started draw is drawn with. */
++static void
++warp_state(const mystique_t *mystique, uint32_t st[4])
++{
++    st[0] = mystique->dwgreg.dwgctrl;
++    st[1] = mystique->dwgreg.dstorg;
++    st[2] = mystique->dwgreg.pitch;
++    st[3] = mystique->maccess;
++}
 +
 +static void
 +hazard_check(mystique_t *mystique, uint32_t addr, uint32_t val, int bytes)
@@ -170,22 +186,46 @@ index 55bd1df..afed4c3 100644
 +    } else if (r == REG_SECEND && bytes == 4 && (val & 2))
 +        agp_check("SECEND", mystique->dma.secaddress, val);
 +    else {
-+        for (int i = 0; i < 9; i++) {
-+            if (r != warp_hz_regs[i])
++        for (int i = 0; i < 5; i++) {
++            if (r != warp_hz_clip[i])
 +                continue;
 +            const int      sh  = (int) (a & 3) * 8;
 +            const uint32_t old = mystique->warp.host[i];
 +            const uint32_t nv  = bytes == 4 ? val : ((old & ~(0xffu << sh)) | ((val & 0xff) << sh));
 +            if (mystique->warp.inflight && (mystique->warp.host_known & (1u << i)) && nv != old)
-+                mga_hazard(HZ_WARP_REG, "%s %08x -> %08x with %d WARP triangles in flight: on a real G400 they take it (DWGSYNC first)",
-+                           warp_hz_names[i], old, nv, mystique->warp.inflight);
++                mga_hazard(HZ_WARP_REG, "%s %08x -> %08x with %d WARP triangles in flight: on a real G400 the clip reaches them "
++                           "(the DRM's barrier first: two zero-length draws with their DWGCTL)",
++                           warp_hz_clip_names[i], old, nv, mystique->warp.inflight);
 +            mystique->warp.host[i] = nv;
 +            mystique->warp.host_known |= 1u << i;
 +            break;
 +        }
 +    }
-+    if (exec && (bytes == 4 || (a & 3) == 3))
++    if (exec && (bytes == 4 || (a & 3) == 3)) {
++        if (mystique->warp.inflight) {
++            uint32_t st[4];
++            char     d[128] = "";
++            warp_state(mystique, st);
++            if (bytes == 4) {   /* (this write's own value, when it is one of them) */
++                if (r == REG_DWGCTL)
++                    st[0] = val;
++                else if (r == REG_DSTORG)
++                    st[1] = val;
++                else if (r == REG_PITCH)
++                    st[2] = val & 0xffff;
++                else if (r == REG_MACCESS)
++                    st[3] = val;
++            }
++            for (int i = 0; i < 4; i++)
++                if (st[i] != mystique->warp.tri_state[i])
++                    snprintf(d + strlen(d), sizeof(d) - strlen(d), " %s %08x (theirs %08x)", warp_hz_state_names[i],
++                             st[i], mystique->warp.tri_state[i]);
++            if (d[0])
++                mga_hazard(HZ_WARP_REG, "a draw started with%s and %d WARP triangles in flight: on a real G400 it reaches "
++                           "them (DWGSYNC first)", d, mystique->warp.inflight);
++        }
 +        mystique->warp.inflight = 0;
++    }
 +}
 +
  static void
@@ -197,7 +237,7 @@ index 55bd1df..afed4c3 100644
      if (g400_routes(mystique, addr))
          g400_texreg_write(mystique, addr, val, 1, priv);
      else
-@@ -3110,6 +3270,7 @@ mystique_accel_ctrl_write_l(uint32_t addr, uint32_t val, void *priv)
+@@ -3110,6 +3310,7 @@ mystique_accel_ctrl_write_l(uint32_t addr, uint32_t val, void *priv)
  {
      mystique_t *mystique = (mystique_t *) priv;
  
@@ -205,18 +245,19 @@ index 55bd1df..afed4c3 100644
      if (g400_routes(mystique, addr))
          g400_texreg_write(mystique, addr, val, 4, priv);
      else
-@@ -3228,7 +3389,10 @@ warp_input(mystique_t *mystique, uint32_t val)
+@@ -3228,7 +3429,11 @@ warp_input(mystique_t *mystique, uint32_t val)
      r.texwidth1  = mystique->map1.texwidth;
      r.texheight1 = mystique->map1.texheight;
      r.texctl2_1  = mystique->map1.texctl2;
-+    mystique->warp.in_tri = 1;      /* MGA-Glide local patch (silicon hazards): the WARP's own writes */
++    warp_state(mystique, mystique->warp.tri_state);    /* MGA-Glide local patch (silicon hazards) */
++    mystique->warp.in_tri = 1;      /* (the WARP's own writes) */
      mgawarp_triangle(mystique->warp.v[0], mystique->warp.v[1], mystique->warp.v[2], &r, warp_wr, mystique);
 +    mystique->warp.in_tri = 0;
 +    mystique->warp.inflight++;
  }
  
  /* The WARP's host registers (not queued): 1 when addr was one. */
-@@ -3293,6 +3457,8 @@ mystique_ctrl_write_l(uint32_t addr, uint32_t val, void *priv)
+@@ -3293,6 +3498,8 @@ mystique_ctrl_write_l(uint32_t addr, uint32_t val, void *priv)
          case REG_PRIMEND:
              thread_wait_mutex(mystique->dma.lock);
              mystique->dma.primend = val;

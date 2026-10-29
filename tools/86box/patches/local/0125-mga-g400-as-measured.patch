@@ -1,8 +1,8 @@
 diff --git a/src/video/vid_mga.c b/src/video/vid_mga.c
-index afed4c3..54a6b9f 100644
+index 6d1c9ff..0f097fc 100644
 --- a/src/video/vid_mga.c
 +++ b/src/video/vid_mga.c
-@@ -4429,6 +4429,24 @@ dither_24_to_8(int r, int g, int b)
+@@ -4470,6 +4470,24 @@ dither_24_to_8(int r, int g, int b)
              x = ((x) < 0) ? 0 : 0xff; \
      } while (0)
  
@@ -27,7 +27,7 @@ index afed4c3..54a6b9f 100644
  static void
  blit_iload_iload(mystique_t *mystique, uint32_t data, int size)
  {
-@@ -4506,9 +4524,7 @@ blit_iload_iload(mystique_t *mystique, uint32_t data, int size)
+@@ -4547,9 +4565,7 @@ blit_iload_iload(mystique_t *mystique, uint32_t data, int size)
                  while ((mystique->dwgreg.length_cur > 0) && (size >= 16)) {
                      uint16_t src = data & 0xffff;
  
@@ -38,7 +38,7 @@ index afed4c3..54a6b9f 100644
                      mystique->dwgreg.ydst++;
                      mystique->dwgreg.length_cur--;
                      data >>= 16;
-@@ -7031,9 +7047,7 @@ blit_bitblt(mystique_t *mystique)
+@@ -7072,9 +7088,7 @@ blit_bitblt(mystique_t *mystique)
                  while (mystique->dwgreg.length) {
                      uint16_t src = ((uint16_t *) svga->vram)[(src_addr + (srcorg >> 1)) & mystique->vram_mask_w];
  
@@ -49,7 +49,7 @@ index afed4c3..54a6b9f 100644
                      src_addr++;
                      y++;
                      mystique->dwgreg.length--;
-@@ -7705,10 +7719,10 @@ mystique_pci_read(UNUSED(int func), int addr, UNUSED(int len), void *priv)
+@@ -7746,10 +7760,10 @@ mystique_pci_read(UNUSED(int func), int addr, UNUSED(int len), void *priv)
                  break; /*Fast DEVSEL timing*/
  
              case 0x08:
@@ -63,7 +63,7 @@ index afed4c3..54a6b9f 100644
                  break; /*Revision ID*/
              case 0x09:
                  ret = 0;
-@@ -7865,12 +7879,15 @@ mystique_pci_read(UNUSED(int func), int addr, UNUSED(int len), void *priv)
+@@ -7906,12 +7920,15 @@ mystique_pci_read(UNUSED(int func), int addr, UNUSED(int len), void *priv)
                  ret = 0x00;
                  break;
  
@@ -81,7 +81,7 @@ index afed4c3..54a6b9f 100644
                  break;
  
              case 0xf5:
-@@ -7878,7 +7895,7 @@ mystique_pci_read(UNUSED(int func), int addr, UNUSED(int len), void *priv)
+@@ -7919,7 +7936,7 @@ mystique_pci_read(UNUSED(int func), int addr, UNUSED(int len), void *priv)
                  break;
  
              case 0xf7:

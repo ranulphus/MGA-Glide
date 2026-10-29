@@ -360,11 +360,20 @@ int main(int argc, char **argv)
         engine_sync(200000);
         fifo_reserve(1);
         MGA_WR32(MGAREG_CXBNDRY, (uint32_t)(SW - 1) << 16);
-        /* 2: the same DWGCTL again (none), then another (a hazard) */
+        /* 2: state for the next triangles between WARP runs (none, as the
+         * DRM writes it); a draw started with the triangles' DWGCTL (none:
+         * the DRM's clip barrier); then, after more, one with another (a
+         * hazard) */
+        warp_tri(s1);
+        fifo_reserve(4);
+        MGA_WR32(MGAREG_DWGCTL, dw_z);
+        MGA_WR32(MGAREG_DWGCTL, dw_i);
+        MGA_WR32(MGAREG_DWGCTL, dw_i);
+        MGA_WR32(MGAREG_LEN + MGAREG_EXEC, 0x80000000u);
         warp_tri(s1);
         fifo_reserve(2);
-        MGA_WR32(MGAREG_DWGCTL, dw_i);
         MGA_WR32(MGAREG_DWGCTL, dw_z);
+        MGA_WR32(MGAREG_LEN + MGAREG_EXEC, 0x80000000u);
         engine_sync(200000);
         context(dw_i);
         /* 3: OPMODE into blit mode while the WARPs work (a hazard), and back */

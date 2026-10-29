@@ -208,10 +208,13 @@ It found six places where 86Box differed, and GLOS's tests found more. Local pat
   lines on stderr that run.py collects into `result.json`'s `mga_hazards` (each kind's count and first message;
   `--hazards fail`, or `LOOPA_HAZARDS=fail`, turns a passing job into status `HAZARD`). Where the chip's behaviour
   is not known well enough to model, the model draws as before and says so (`docs/emulated-g400.md`, "Checks"):
-  - `warp-inflight`: the host changes DWGCTL, the clip (CXBNDRY, CXLEFT, CXRIGHT, YTOP, YBOT), DSTORG, PITCH or
-    MACCESS while WARP triangles may still be in flight, that is set up since the last DWGSYNC write, host-started
-    draw or soft reset. On bench-g400 such writes cut and spoiled triangles four times (the clip, lightmap copies,
-    the clip barrier's DWGCTL, GLOS's window hand-over); the model's WARP finishes each triangle at once.
+  - `warp-inflight`: with WARP triangles in flight (set up since the last DWGSYNC write, host-started draw or soft
+    reset), the host changes the clip (CXBNDRY, CXLEFT, CXRIGHT, YTOP, YBOT) or starts a draw with DWGCTL, DSTORG,
+    PITCH or MACCESS other than the last WARP triangle's. On bench-g400 both reached triangles still being set up
+    (a clip cut one; the clip barrier's untextured draws, lightmap copies and GLOS's own draws spoiled them); the
+    model's WARP finishes each triangle at once. State written between vertex runs for the next triangles is no
+    hazard: Linux's DRM writes it so, and fences only its clears and blits (two DWGSYNC writes) and clips (two
+    zero-length draws with the context's DWGCTL).
   - `warp-opmode`: OPMODE into blit mode while the WARPs work (GLQuake's lightmaps by ILOAD, 2026-10-28).
   - `rfw`: TEXWIDTH or TEXHEIGHT whose rfw doesn't fit the size, as the CPU setup writes it (8 - log2) or Mesa
     does for the WARP (2 - log2, with tw = log2 + 11). The model ignores rfw; the specification's value displaced

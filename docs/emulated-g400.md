@@ -93,15 +93,15 @@ Only the G400 and G450 are checked: the findings are a G400's.
 
 | Kind | Reported when | On bench-g400 |
 |---|---|---|
-| `warp-inflight` | the host changes DWGCTL, CXBNDRY, CXLEFT, CXRIGHT, YTOP, YBOT, DSTORG, PITCH or MACCESS while WARP triangles are in flight: set up since the last DWGSYNC write, host-started draw or soft reset. Writing the value the host last wrote is no change. | a clip cut the second WARP's triangle; the clip barrier's untextured DWGCTL and lightmap copies spoiled GLQuake's textured triangles; GLOS's HAL took the engine back onto its own target |
+| `warp-inflight` | with WARP triangles in flight (set up since the last DWGSYNC write, host-started draw or soft reset), the host changes the clip (CXBNDRY, CXLEFT, CXRIGHT, YTOP, YBOT; rewriting the value it last wrote is no change), or starts a draw whose DWGCTL, DSTORG, PITCH or MACCESS differs from the last WARP triangle's. State written between vertex runs for the next triangles is not reported: Linux's DRM does it all the time. | a clip cut the second WARP's triangle; the clip barrier's untextured zero-length draws and lightmap copies spoiled GLQuake's textured triangles; GLOS's HAL drew onto its own target after a program's WARP triangles |
 | `warp-opmode` | OPMODE into blit mode with WARP triangles in flight | GLQuake's lightmaps by ILOAD wrong in rows, then triangles across the screen |
 | `rfw` | TEXWIDTH or TEXHEIGHT with an rfw that fits neither the CPU setup's encoding (tw = log2, rfw = 8 - log2) nor Mesa's for the WARP (tw = log2 + 11, rfw = 2 - log2) | the specification's 8 - log2 - k displaced prescaled texels in perspective |
 | `agp-cached` | PRIMEND or SECEND starts an AGP fetch (bit 1) from memory the CPU's MTRRs and CR0.CD make write-back (the page tables' PCD and PWT aren't looked at) | without a cache flush, WARPTRI by AGP drew nothing |
 | `tlut` | a TLUT load (0125 loads nothing on the G400 family) | every TW8 sample black |
 
-The in-flight rule is the HAL's own (`mga_warp_pending`, cleared by `engine_sync`'s DWGSYNC fence), and it is a lower
-bound: on the card, the clip barrier's draws spoiled triangles even after two DWGSYNC writes (`docs/g400-warp.md`,
-copies among WARP triangles), which the check doesn't see. `WARPTRI hazards` commits each hazard once beside its
+The in-flight rule follows the HAL's (`mga_warp_pending`, cleared by `engine_sync`'s DWGSYNC fence) and the DRM's
+habits, and it is a lower bound: on the card, the clip barrier's untextured draws spoiled triangles even after two
+DWGSYNC writes (`docs/g400-warp.md`, copies among WARP triangles), which the check doesn't see. `WARPTRI hazards` commits each hazard once beside its
 safe form; `make loopa-selftest-ext CHECKS=hazards` checks the counts.
 
 ## Still unchecked
