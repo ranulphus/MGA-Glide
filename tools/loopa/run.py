@@ -345,6 +345,15 @@ def hdd_disk(a):
     return cimg, "", ""
 
 
+def scratch_cyls(mb):
+    """--scratch-hdd MB: whole cylinders of 63 sectors by 16 heads (516,096 bytes), 1 to 1023 (the BIOS's CHS
+    limit, about 504 MB)."""
+    cyl = int(mb) * 1048576 // (63 * 16 * 512)
+    if not 1 <= cyl <= 1023:
+        raise RuntimeError("--scratch-hdd %s: 1 to 504 MB" % mb)
+    return cyl
+
+
 FATAL_RE = re.compile(r"(^|\s)(FATAL|fatal error|Fatal error)", re.M)
 
 
@@ -424,6 +433,14 @@ def run(a):
             rb = os.path.join(tmp, "RUN.BAT")
             open(rb, "wb").write(dos_bat(run_lines))
             d.put(rb, "/RUN.BAT")
+
+        if a.scratch_hdd:                       # a blank disk for raw-sector tests (GLOS's DSKTORT), IDE 1:0
+            cyl = scratch_cyls(a.scratch_hdd)
+            simg = os.path.join(vm, "scratch.img")
+            with open(simg, "wb") as f:
+                f.truncate(63 * 16 * 512 * cyl)
+            extra += "hdd_03_parameters = 63, 16, %d, 0, ide\nhdd_03_fn = %s\nhdd_03_ide_channel = 1:0\n" % (cyl, simg)
+            result["scratch_hdd"] = {"cylinders": cyl, "sectors": 63 * 16 * cyl}
 
         serial = os.path.join(out, "serial.log")
         open(serial, "w").close()
@@ -689,6 +706,8 @@ def main():
     ap.add_argument("--hdd", help="boot this raw hard disk image as C: instead (in place, written to; no floppy, "
                     "nothing put on it): a bench PC's own disk. Outside the repository and the cache, mount its "
                     "directory into the dev container with MGA_EXTRA_DIR")
+    ap.add_argument("--scratch-hdd", metavar="MB", help="a blank disk of MB megabytes (sparse, made for the run) on "
+                    "IDE 1:0, unpartitioned, so DOS leaves it alone: for raw-sector tests (GLOS's DSKTORT)")
     ap.add_argument("--pre", action="append", default=[], help="extra RUN.BAT lines before the test")
     ap.add_argument("--keys", default="", help="comma list of SECONDS:SCANCODE[:down|up] after HX-BOOT, "
                     "or SECONDS:mouse:DX:DY[:BUTTONS] (mickeys; buttons bit 0 left, 1 right, 2 middle; needs --mouse), "
