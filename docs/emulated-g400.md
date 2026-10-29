@@ -15,8 +15,10 @@ Patch `0009-mga-g400-dual-texture.patch` adds the second texture map and
 the combiner (below). Patch `0012-mga-ar-field-widths.patch` gives the
 trapezoid walk the G400 specification's 22-bit AR fields (18 before the
 G400) and lets crossed spans draw nothing, as a G200eR2 does
-(`docs/loop-c-results.md`). Neither models CRTC2, the MAVEN or the WARP
-setup engine; the runtimes do not use them.
+(`docs/loop-c-results.md`). Patches 0122 and 0123 model the WARP setup
+engine (`docs/g400-warp.md`); 0119-0121, 0124 and 0125 follow what a real
+G400 did (below). Neither card models CRTC2 or the MAVEN; the runtimes do
+not use them.
 
 ## Dual texturing (patch 0009)
 
@@ -60,7 +62,8 @@ through `tools/bench/run.py`, next to the same PROBE under `--card g400`:
 
 | | Silicon | 86Box | |
 |---|---|---|---|
-| Identity | `0525` revision 05, subsystem `0338102B` | revision 03, subsystem 0 | model: report revision 05? (the BIOS's fixes key on revision 2 only) |
+| Identity | `0525` revision 05, subsystem `0338102B` | revision 05 (0125; 03 before), subsystem 0 | the subsystem comes from the BIOS image's 7FF8h, as on the card, and Matrox's package image has none there |
+| AGP capability (F0h-F8h) | `00200002`, status `1f000203` (1x and 2x, sideband, queue 32), command `1f000301` after the BIOS | status `1f000203` (0125; `01000201` before), the same command | the HAL's AGP start picks 2x in Loop A too |
 | OPTION | `50040120` | `50040120` | same |
 | OPTION2, OPTION3 | `01003000`, `0190A419` (G4EXP E7) | 0, 0 | not modelled |
 | STATUS at rest | `80020024` | `00020000` | the G200eR2 reads `80020024` too |
@@ -70,13 +73,36 @@ through `tools/bench/run.py`, next to the same PROBE under `--card g400`:
 | DAC, CRTC after the mode set | as 86Box | | identical lines |
 | 16-bit palette lookup | each component's own value (red and blue entries 0-31, green 0-63), the BIOS's layout | patch 0003 indexed by the top bits | **0003 was wrong:** DOS-GL's and Glide's ramps, written for it, came out at an eighth of the brightness on this card. 0003 is dropped and `dac_set_ramp` writes the BIOS's layout |
 | Engine | sync, fill and depth fill pass | the same | |
-| TEXWIDTH/TEXHEIGHT `rfw` | used: `8 - log2(size)` gives the right texels with the setup's prescaled s and q; the specification's `8 - log2 - k` displaced prescaled triangles in perspective (DOS-GL E9, 2026-10-27) | ignored | the HAL now writes `8 - log2(size)`; 86Box can't show a wrong `rfw` |
-| Clip after WARP triangles | a new CXBNDRY/YTOP/YBOT reaches triangles the WARPs are still setting up (the second of a pair was cut) | in order | the HAL puts the DRM's barrier (two zero-length draws) first; see `docs/g400-warp.md` |
+| TEXWIDTH/TEXHEIGHT `rfw` | used: `8 - log2(size)` gives the right texels with the setup's prescaled s and q; the specification's `8 - log2 - k` displaced prescaled triangles in perspective (DOS-GL E9, 2026-10-27) | ignored; a value that fits neither encoding reported (`rfw`, 0124) | the HAL now writes `8 - log2(size)` |
+| Clip after WARP triangles | a new CXBNDRY/YTOP/YBOT reaches triangles the WARPs are still setting up (the second of a pair was cut) | in order; reported (`warp-inflight`, 0124) | the HAL puts the DRM's barrier (two zero-length draws) first; see `docs/g400-warp.md` |
+| TLUT load and TW8 | every sample black (DOS-GL G4EXP E5 under `DGL_TLUT=1`) | loads nothing (0125; it loaded as on the G200 before) and reports `tlut` | the HAL expands paletted textures on the G400 family |
+| AGP fetches | don't snoop the CPU's caches: without a flush WARPTRI drew nothing | read memory as it is; reported from write-back memory (`agp-cached`, 0124) | the HAL's AGP rings are write-combining |
 | WARP microcode loads | the third load since a soft reset leaves the WARPs dead | modelled by 0122 | the HAL resets before each load |
 
 DOS-GL's conformance suite passes 23 of 27 here, against 27 of 27 in 86Box. The four differences are the texture
 cache and texel-centre filtering (`docs/g400-dual-texture.md` §7, answers 7 and 8). They are modelling work for
 patch 0009, as is a texture cache, which 86Box has none of. FPCHECK passes on the Pentium II (72003 cases).
+
+## Checks (local patch 0124)
+
+Where a real G400 went wrong and the model draws right, and what the chip does is not known well enough to model,
+the model reports the hazard instead: an `MGA-HAZARD: KIND: #N: ...` line on stderr and in the 86Box log, each
+kind's first four, then its 10th, 100th and so on. `tools/loopa/run.py` collects them into `result.json`'s
+`mga_hazards`, and with `--hazards fail` (or `LOOPA_HAZARDS=fail`) a job that would pass gets status `HAZARD`.
+Only the G400 and G450 are checked: the findings are a G400's.
+
+| Kind | Reported when | On bench-g400 |
+|---|---|---|
+| `warp-inflight` | the host changes DWGCTL, CXBNDRY, CXLEFT, CXRIGHT, YTOP, YBOT, DSTORG, PITCH or MACCESS while WARP triangles are in flight: set up since the last DWGSYNC write, host-started draw or soft reset. Writing the value the host last wrote is no change. | a clip cut the second WARP's triangle; the clip barrier's untextured DWGCTL and lightmap copies spoiled GLQuake's textured triangles; GLOS's HAL took the engine back onto its own target |
+| `warp-opmode` | OPMODE into blit mode with WARP triangles in flight | GLQuake's lightmaps by ILOAD wrong in rows, then triangles across the screen |
+| `rfw` | TEXWIDTH or TEXHEIGHT with an rfw that fits neither the CPU setup's encoding (tw = log2, rfw = 8 - log2) nor Mesa's for the WARP (tw = log2 + 11, rfw = 2 - log2) | the specification's 8 - log2 - k displaced prescaled texels in perspective |
+| `agp-cached` | PRIMEND or SECEND starts an AGP fetch (bit 1) from memory the CPU's MTRRs and CR0.CD make write-back (the page tables' PCD and PWT aren't looked at) | without a cache flush, WARPTRI by AGP drew nothing |
+| `tlut` | a TLUT load (0125 loads nothing on the G400 family) | every TW8 sample black |
+
+The in-flight rule is the HAL's own (`mga_warp_pending`, cleared by `engine_sync`'s DWGSYNC fence), and it is a lower
+bound: on the card, the clip barrier's draws spoiled triangles even after two DWGSYNC writes (`docs/g400-warp.md`,
+copies among WARP triangles), which the check doesn't see. `WARPTRI hazards` commits each hazard once beside its
+safe form; `make loopa-selftest-ext CHECKS=hazards` checks the counts.
 
 ## Still unchecked
 

@@ -4,6 +4,7 @@
  *   WARPTRI [pipe=N] [n=COUNT] [pio] [pads=K] [keep]
  *   WARPTRI starts=N [reload] [pads=K] [keep] [pio]
  *   WARPTRI switch=N [pipe=P]: the cycles of a T0/T2 pipe switch (N triangles on one pipe, then N switching)
+ *   WARPTRI hazards: each hazard 86Box's silicon checks report (local patch 0124), beside its safe form
  *
  * The vertices go by bus-master DMA (warp.c's default) or, with pio,
  * through the DMA window by the CPU. pads sets warp_start_pads; keep leaves
@@ -176,7 +177,7 @@ int main(int argc, char **argv)
     static const vtx z1[3] = { { 30, 260, 1000, 255, 255, 0 }, { 280, 270, 60000, 255, 255, 0 }, { 150, 460, 30000, 255, 255, 0 } };
     static const vtx z2[3] = { { 40, 450, 60000, 0, 255, 255 }, { 290, 300, 1000, 0, 255, 255 }, { 200, 470, 30000, 0, 255, 255 } };
     int pipe = 0, count = 4000, i, ok, pitch, cover, colour, drawn, starts = 0, reload = 0, keep = 0, dmabw = 0;
-    int agpinfo = 0, agp_rate = 0, agp_draw = 0, agp_noflush = 0, seqtest = 0, switches = 0;
+    int agpinfo = 0, agp_rate = 0, agp_draw = 0, agp_noflush = 0, seqtest = 0, switches = 0, hazards = 0;
     uint32_t seq_fan = 0, seq_strip = 0;
     mga_vbe_mode mode;
     mga_target tg;
@@ -202,6 +203,7 @@ int main(int argc, char **argv)
         else if (!strncmp(argv[i], "switch=", 7)) switches = atoi(argv[i] + 7);   /* the cost of a pipe switch */
         else if (!strncmp(argv[i], "seqf=", 5)) seq_fan = (uint32_t)strtoul(argv[i] + 5, NULL, 16);
         else if (!strncmp(argv[i], "seqs=", 5)) seq_strip = (uint32_t)strtoul(argv[i] + 5, NULL, 16);
+        else if (!strcmp(argv[i], "hazards")) hazards = 1;      /* 86Box's silicon checks (local patch 0124) */
     }
     hx_init(1, argv, "warptri");
     ok = mga_find(&mga) == 0 && mga_map(&mga) == 0;
@@ -335,6 +337,58 @@ int main(int argc, char **argv)
                (unsigned long)((b - a) / (uint64_t)switches), (unsigned long)((c - b) / (uint64_t)switches),
                (unsigned long)(((c - b) - (b - a)) / (uint64_t)switches), (unsigned long)(engine_resets - r0));
         hx_test("switch", fails == 0 && !aborted, "%d switches, %d failed", switches, fails);
+        goto out;
+    }
+    if (hazards) {
+        /* Each hazard 86Box's silicon checks report (local patch 0124,
+         * MGA-HAZARD lines in Loop A's result.json), beside its safe form,
+         * with the vertices by PIO so that every write reaches the engine in
+         * program order. Loop A should report warp-inflight twice (steps 1
+         * and 2), warp-opmode, rfw and tlut once each, and nothing for the
+         * rest. On a real G400 steps 1 and 3 may cut or spoil a triangle. */
+        static const vtx s1[3] = { { 20, 20, 0, 255, 255, 255 }, { 60, 22, 0, 255, 255, 255 }, { 30, 50, 0, 255, 255, 255 } };
+        warp_use_dma = 0;
+        if (warp_select(pipe) != 0) {
+            hx_test("hazards", 0, "the WARP did not start");
+            goto out;
+        }
+        context(dw_i);
+        /* 1: a new clip straight after WARP triangles (a hazard); after the fence, back (none) */
+        warp_tri(s1);
+        fifo_reserve(1);
+        MGA_WR32(MGAREG_CXBNDRY, (uint32_t)(SW - 2) << 16);
+        engine_sync(200000);
+        fifo_reserve(1);
+        MGA_WR32(MGAREG_CXBNDRY, (uint32_t)(SW - 1) << 16);
+        /* 2: the same DWGCTL again (none), then another (a hazard) */
+        warp_tri(s1);
+        fifo_reserve(2);
+        MGA_WR32(MGAREG_DWGCTL, dw_i);
+        MGA_WR32(MGAREG_DWGCTL, dw_z);
+        engine_sync(200000);
+        context(dw_i);
+        /* 3: OPMODE into blit mode while the WARPs work (a hazard), and back */
+        warp_tri(s1);
+        MGA_WR32(MGAREG_OPMODE, (opmode_saved & ~0xCu) | 0x4u);
+        MGA_WR32(MGAREG_OPMODE, opmode_saved);
+        engine_sync(200000);
+        /* 4: a clip through the HAL: the DRM's barrier first, with this DWGCTL (none) */
+        context(dw_i);
+        warp_tri(s1);
+        engine_set_clip(0, 0, SW - 2, SH);
+        engine_set_clip(0, 0, SW, SH);
+        engine_sync(200000);
+        /* 5: TEXWIDTH for a 64-texel map with the specification's rfw for a
+         * prescale of 3 (a hazard), then the CPU setup's and Mesa's (none) */
+        fifo_reserve(3);
+        MGA_WR32(MGAREG_TEXWIDTH, TEXWH(6, 8 - 6 - 3, 63));
+        MGA_WR32(MGAREG_TEXWIDTH, TEXWH(6, 8 - 6, 63));
+        MGA_WR32(MGAREG_TEXWIDTH, TEXWH(6 + 11, 2 - 6, 63));
+        /* 6: the G200's TLUT load (a hazard on the G400 family) */
+        engine_tlut_load(0, 0, 16);
+        warp_stop();
+        engine_sync(200000);
+        hx_test("hazards", !aborted, "six steps done%s", aborted ? ", the WARP stopped taking vertices" : "");
         goto out;
     }
     if (starts > 0) {

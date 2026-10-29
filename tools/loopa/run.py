@@ -642,6 +642,13 @@ def run(a):
         result.update(info)
         stderr_text = open(os.path.join(out, "stderr.log"), "rb").read().decode("latin-1")
         result["mga_unsupported"] = sorted(set(re.findall(r"MGA-UNSUPPORTED: (.*)", stderr_text)))
+        # 86Box's silicon checks (local patch 0124): each kind's count (the highest reported, so at least
+        # this many) and its first message
+        hazards = {}
+        for kind, n, msg in re.findall(r"MGA-HAZARD: ([a-z-]+): #(\d+): (.*)", stderr_text):
+            h = hazards.setdefault(kind, {"count": 0, "first": msg})
+            h["count"] = max(h["count"], int(n))
+        result["mga_hazards"] = hazards
         logpath = os.path.join(out, "86box.log")
         boxlog = open(logpath, "rb").read().decode("latin-1") if os.path.exists(logpath) else ""
         if status is None:
@@ -662,6 +669,8 @@ def run(a):
             result["note"] = "unit tester exit did not end 86Box"
         if steps and status == "PASS" and (steps.failed or steps.is_alive()):
             status = "FAIL"                     # the guest ended well, the SSH steps didn't
+        if status == "PASS" and a.hazards == "fail" and hazards:
+            status = "HAZARD"                   # 86Box saw what goes wrong on a real G400 (patch 0124)
         result["status"] = status
         # Collect guest output files and convert images.
         files = os.path.join(out, "files")
@@ -701,6 +710,9 @@ def main():
                     help="games list (default tools/games/games.json; DOS-GL has its own)")
     ap.add_argument("--ovl-dst", help="DOS path for --ovl (default C:\\TEST\\GLIDE2X.OVL, or the game's)")
     ap.add_argument("--args", default="")
+    ap.add_argument("--hazards", choices=("report", "fail"), default=os.environ.get("LOOPA_HAZARDS", "report"),
+                    help="86Box's silicon checks (local patch 0124): always in result.json mga_hazards; with fail, "
+                         "a job that would pass gets status HAZARD (default $LOOPA_HAZARDS or report)")
     ap.add_argument("--ovl", help="GLIDE2X.OVL to install as C:\\TEST\\GLIDE2X.OVL")
     ap.add_argument("--file", action="append", default=[], help="SRC[=/DOS/PATH] extra files")
     ap.add_argument("--hdd", help="boot this raw hard disk image as C: instead (in place, written to; no floppy, "

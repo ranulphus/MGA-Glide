@@ -222,7 +222,7 @@ loopa-cfgcheck:
 
 # The harness's machine options: 486 profiles, the VBE card, and more
 # (tools/loopa/selftest_ext.py; CHECKS="486 vbe" runs some).
-loopa-selftest-ext: dostests build/djgpp/STACKPG.EXE build/djgpp/PROBE.EXE v86test
+loopa-selftest-ext: dostests build/djgpp/STACKPG.EXE build/djgpp/PROBE.EXE build/djgpp/WARPTRI.EXE v86test
 	$(DEV) $(PYTHON) tools/loopa/selftest_ext.py $(CHECKS)
 
 # The HAL's 2D primitives, cursor and display start on every Matrox card

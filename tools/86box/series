@@ -36,3 +36,5 @@ local/0120-mga-g400-texel-centres.patch
 local/0121-mga-g400-texture-cache.patch
 local/0122-mga-g400-warp.patch
 local/0123-mga-g400-warp-sequencer.patch
+local/0124-mga-g400-silicon-checks.patch
+local/0125-mga-g400-as-measured.patch

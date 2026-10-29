@@ -292,7 +292,10 @@ setup, copied into the patch as `src/video/mgahal/`. That is what the silicon's 
   no vertices taken), and the log says so. The soft reset stops the WARPs.
 - **Culling:** not modelled yet.
 - **OPMODE:** read for the DMA window only. On the G400, blit mode left in OPMODE spoils ILOADs among the WARPs' DMA
-  (above); not modelled, since what the chip does with it is not known.
+  (above); not modelled, since what the chip does with it is not known. Patch 0124 reports it (`warp-opmode`).
+- **Work in flight:** the model's WARP finishes each triangle at once, so host writes can't overtake it as they do
+  on the card (the clip, the copies, GLOS's hand-over above). Patch 0124 reports a change of DWGCTL, the clip,
+  DSTORG, PITCH or MACCESS while triangles are in flight (`warp-inflight`; `docs/emulated-g400.md`, "Checks").
 
 `WARPTRI` in Loop A on the G400 passes: Gouraud and depth identical to the CPU setup, and two triangles in one batch
 drawn.

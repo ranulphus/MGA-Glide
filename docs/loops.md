@@ -104,6 +104,7 @@ with `tools/loopa/ref/`. It needs no emulator; after a deliberate change,
 | `--hdd IMG` | Boots a raw hard disk image as C: instead of the golden floppy and disk: a bench PC's own disk, for reproducing what it does (GLOS on bench-g400's MS-DOS 7.1, 2026-10-26). Used in place and written to; no floppy; nothing put on it, so `--exe`, `--cmd`, `--file`, `--pre`, `--ovl`, `--game` and `--net-dos` are refused. Its size must be whole cylinders of 63 sectors by 16 heads. No F1 taps, so the disk's own boot menu times out; `--shots` and `--keys` count from 86Box's start. Outside the repository and the cache, mount the image's folder into the dev container with `MGA_EXTRA_DIR=DIR`. |
 | `--scratch-hdd MB` | A blank disk of MB megabytes (1–504; whole cylinders of 63 × 16 sectors) on IDE 1:0, made sparse for each run and thrown away with it. It has no partition table, so DOS leaves it alone and a test can read and write its sectors through the BIOS: GLOS's disk-cache torture test (DSKTORT, 2026-10-29). Its BIOS number is the next after the others (81h, or 82h with `--game`). |
 | `--dynarec 0` | Runs 86Box's interpreter instead of the dynamic recompiler. |
+| `--hazards report\|fail` | 86Box's silicon checks (local patch 0124) always go into `result.json` `mga_hazards`; with `fail` (or `LOOPA_HAZARDS=fail`, which `tools/dev` passes on) a job that would pass gets status `HAZARD`. |
 
 `make loopa-selftest-ext` (`tools/loopa/selftest_ext.py`; `CHECKS="486 vbe"`
 picks some) checks them:
@@ -118,6 +119,7 @@ picks some) checks them:
 | `cpu` | V86TEST on all three profiles |
 | `pci` | The HAL's PROBE on the 486dx2 with each PCI Matrox card |
 | `rtc` | RTCSET on the BF6 and the 486dx2: a change of century through INT 1Ah 05h leaves RTC registers A and B as they were and the year as set |
+| `hazards` | On the G400 (patches 0124, 0125): WARPTRI's own runs report no hazard; `WARPTRI hazards` reports `warp-inflight` twice and `warp-opmode`, `rfw` and `tlut` once, as many as it commits; WARPTRI by AGP from cached conventional memory reports `agp-cached`, with AGP at 2x; PROBE sees revision 05 |
 
 **V86TEST** (`tests/cpu/`) is a CPU self-test for the paths a virtual-8086
 monitor depends on.
@@ -202,6 +204,29 @@ It found six places where 86Box differed, and GLOS's tests found more. Local pat
 - **0123:** the WARPs' ACCEPT sequencer (WACCEPTSEQ): after the first triangle of a sequence each vertex goes to
   the bank `seqdst[seqptr]` names and the three banks make the next triangle, so strips and fans draw as on a real
   G400 (WARPTRI `seq` there: pixel for pixel the same triangles as a list). seqoff is lists, as before.
+- **0124:** silicon checks: what goes wrong on a real G400 where the model draws right, reported as `MGA-HAZARD`
+  lines on stderr that run.py collects into `result.json`'s `mga_hazards` (each kind's count and first message;
+  `--hazards fail`, or `LOOPA_HAZARDS=fail`, turns a passing job into status `HAZARD`). Where the chip's behaviour
+  is not known well enough to model, the model draws as before and says so (`docs/emulated-g400.md`, "Checks"):
+  - `warp-inflight`: the host changes DWGCTL, the clip (CXBNDRY, CXLEFT, CXRIGHT, YTOP, YBOT), DSTORG, PITCH or
+    MACCESS while WARP triangles may still be in flight, that is set up since the last DWGSYNC write, host-started
+    draw or soft reset. On bench-g400 such writes cut and spoiled triangles four times (the clip, lightmap copies,
+    the clip barrier's DWGCTL, GLOS's window hand-over); the model's WARP finishes each triangle at once.
+  - `warp-opmode`: OPMODE into blit mode while the WARPs work (GLQuake's lightmaps by ILOAD, 2026-10-28).
+  - `rfw`: TEXWIDTH or TEXHEIGHT whose rfw doesn't fit the size, as the CPU setup writes it (8 - log2) or Mesa
+    does for the WARP (2 - log2, with tw = log2 + 11). The model ignores rfw; the specification's value displaced
+    texels in perspective on the card.
+  - `agp-cached`: a DMA channel fetching by AGP (PRIMEND's or SECEND's bit 1) from memory the CPU's MTRRs make
+    write-back. A real G400's AGP reads don't snoop the caches (WARPTRI `noflush` drew nothing); the model reads
+    memory as it is. The page tables' PCD and PWT are not looked at.
+  - `tlut`: a TLUT load on the G400 family (0125).
+- **0125:** the G400 as bench-g400 measured it:
+  - A TLUT load (the G200's recipe, MACCESS.tlutload) loads nothing on the G400 family, so paletted texels
+    sample black, as DOS-GL's G4EXP E5 drew them on the card with `DGL_TLUT=1`. What loads a G400's LUT is not
+    known; the HAL expands paletted textures there.
+  - The G400 reports PCI revision 05 (3 before).
+  - Its AGP capability says AGP 2.0, 1x and 2x, sideband addressing and a request queue 32 deep (`1f000203`,
+    the card's), not 1x only with a queue of 1, so the HAL's AGP start picks 2x as on the card.
 - **0003 dropped:** it indexed the 16-bit DAC palette by each component's top bits. A real G400 indexes it by the
   component's own value, the layout its BIOS loads, so the runtimes' ramps, written for 0003, put every frame on
   the card's monitor at an eighth of its brightness. `dac_set_ramp` now writes the BIOS's layout.

@@ -20,10 +20,16 @@ Each check runs one short job through run.py and looks at its result:
   rtc     RTCSET on bf6 and the 486dx2: a change of the RTC's century
           through the BIOS leaves registers A and B as they were and the
           year as set (the bf6's BIOS traps port 71h; local patch 0118)
+  hazards 86Box's silicon checks on the G400 (local patches 0124, 0125):
+          WARPTRI's own runs report none; WARPTRI hazards reports each
+          kind as many times as it commits it; WARPTRI by AGP from cached
+          conventional memory reports agp-cached, at 2x as on bench-g400;
+          PROBE sees revision 05
 
 Runs inside the dev container (tools/dev). Arguments pick checks; the
 default is all of them. Exit status 1 if any check fails.
 """
+import json
 import os
 import subprocess
 import sys
@@ -176,8 +182,37 @@ def check_rtc():
     return ok
 
 
+def hazards_of(name):
+    try:
+        return json.load(open(os.path.join(OUT, name, "result.json"))).get("mga_hazards", {})
+    except (OSError, ValueError):
+        return None
+
+
+def check_hazards():
+    ok = True
+    exe = ("--card", "g400", "--exe", "build/djgpp/WARPTRI.EXE")
+    st, serial = job("selftest-hazards-none", *exe)
+    hz = hazards_of("selftest-hazards-none")
+    ok &= report("hazards-none", st == "PASS" and hz == {}, "WARPTRI %s, hazards %s" % (st, hz))
+    st, serial = job("selftest-hazards", *exe, "--args", "hazards")
+    hz = hazards_of("selftest-hazards") or {}
+    got = dict((k, v["count"]) for k, v in hz.items())
+    want = {"warp-inflight": 2, "warp-opmode": 1, "rfw": 1, "tlut": 1}
+    ok &= report("hazards", st == "PASS" and got == want, "WARPTRI hazards %s, %s (want %s)" % (st, got, want))
+    st, serial = job("selftest-hazards-agp", *exe, "--args", "agp=2 agpdraw")
+    hz = hazards_of("selftest-hazards-agp") or {}
+    on = next((l for l in serial.split("\n") if l.startswith("HX-STAT agp on:")), "")
+    good = st == "PASS" and set(hz) == {"agp-cached"} and on.endswith("card cmd=1f000302")
+    ok &= report("hazards-agp", good, "WARPTRI agp=2 %s, %s; %s" % (st, sorted(hz), on[len("HX-STAT "):] or "AGP not on"))
+    st, serial = job("selftest-hazards-probe", "--card", "g400", "--exe", "build/djgpp/PROBE.EXE")
+    pci = next((l for l in serial.split("\n") if l.startswith("HX-TEST pci ")), "no pci case")
+    ok &= report("hazards-probe", st == "PASS" and " rev=05 " in pci, "PROBE %s: %s" % (st, pci[len("HX-TEST pci "):]))
+    return ok
+
+
 CHECKS = {"486": check_486, "vbe": check_vbe, "net": check_net, "com2": check_com2, "himemx": check_himemx,
-          "cpu": check_cpu, "pci": check_pci, "rtc": check_rtc}
+          "cpu": check_cpu, "pci": check_pci, "rtc": check_rtc, "hazards": check_hazards}
 
 
 def main():
