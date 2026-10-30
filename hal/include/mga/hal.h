@@ -124,6 +124,9 @@ void     engine_init(int pitch_px, int bpp);
  * and write the current target, clip and MACCESS again. */
 void     engine_resync(void);
 int      engine_sync(uint32_t timeout_us);     /* 0 ok, -1 timeout (engine reset) */
+/* engine_sync when the engine changes hands: another HAL's WARP triangles
+ * fenced too (the G400 family; GLOS's hand-overs). */
+int      engine_take(uint32_t timeout_us);
 int      engine_idle(void);                    /* 1 when the FIFO is empty and the engine idle (no wait) */
 /* A soft reset of the drawing engine (and the WARPs): every drawing
  * register goes back to its reset value. The HAL writes back what it owns
@@ -282,6 +285,13 @@ extern void (*mga_dma_flush)(void);
  * engine_sync clears it). On a G400 the clip registers do not wait for
  * them: emit_clip puts the DRM's barrier in front of a new clip. */
 extern int mga_warp_pending;
+/* The DWGCTL the WARP's triangles are drawn with: setup_dwgctl keeps it, and
+ * the barrier draws with it (0: not known). */
+extern uint32_t mga_warp_dwgctl;
+/* Two DWGSYNC writes while WARP triangles may be in flight, as the DRM's
+ * before its clears and blits: the HAL's fills, blits and loads start with
+ * them, and so must any other draw a caller starts itself. */
+void engine_warp_order(void);
 /* Called by engine_reset after the soft reset (warp.c's DMA stream). */
 extern void (*mga_reset_hook)(void);
 /* DWGSYNC's tags: a new one, and the last given (one sequence). */

@@ -272,9 +272,22 @@ wrap and flat shading's colour, and was 5% to 11% slower by AGP than by PCI unti
     trapezoid without depth test) reached triangles the WARPs were still setting up.
   - **Fix:** the copies start with two DWGSYNC writes, as Linux's DRM starts its blits and loads
     (`mga_dma_dispatch_blit`), with tags from the fence's sequence.
-  - **Open:** the DRM's zero-length draws before a clip write its context's own DWGCTL; `emit_clip`'s write an
-    untextured one. That was enough for E9's flat quads; textured triangles in flight at a clip change may need the
-    current DWGCTL.
+  - **The clip's draws (2026-10-30):** the DRM's zero-length draws before a clip write its context's own DWGCTL;
+    `emit_clip`'s wrote an untextured one, enough for E9's flat quads. 86Box's checks (local patch 0124) found
+    them among GLQuake's textured triangles over 1,000 times in 400 frames, and in Glide conformance t09, t12 and
+    t20. They now draw with the DWGCTL last given to `setup_dwgctl` (`mga_warp_dwgctl`), which DOS-GL and Glide
+    give the WARP's. Not yet run on bench-g400.
+- **Other draws among WARP triangles (2026-10-30).** Fills, blits, colour expansion and TLUT loads start with
+  the copies' two DWGSYNC writes while WARP triangles are pending (`engine_warp_order`), as the DRM's clears and
+  blits do (`mga_dma_dispatch_clear`, `_blit`). 0124 found a fill unfenced in Glide conformance t27. ILOADs need
+  no more: `dma_blit_mode` waits for the engine before OPMODE leaves general purpose. A caller that starts a draw
+  itself calls `engine_warp_order` first. Not yet run on bench-g400.
+- **Another HAL's triangles (2026-10-30).** When GLOS's GPU lock changes hands, the new owner's HAL never saw
+  the old owner's WARP triangles, and STATUS can read idle before they are drawn. In a GLOS window on bench-g400,
+  conformance t27's triangles landed on GLOS's target, so DOS-GL has set triangles up by the CPU in windows since
+  (DOS-GL eed800e). `engine_take`, GLOS's sync at a hand-over, waits for the old owner's DMA to end (STATUS<17>,
+  as the DRM's idle test), then fences with a DWGSYNC tag far from any the old owner used. Not yet run on
+  bench-g400.
 - **STATUS<22:20>** (warpbfpath, wfipath, wfopath) point at WARP1 after an odd number of triangles, and keep that
   across suspend and start.
 - **Open:**

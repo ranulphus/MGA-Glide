@@ -47,6 +47,7 @@ typedef char sh_dwg_is_bit_0[SH_DWG == SETUP_VALID_DWG ? 1 : -1];   /* (setup_fo
  * under the same shadow and the same rule for bits that act when written. */
 void setup_dwgctl(uint32_t dwgctl)
 {
+    mga_warp_dwgctl = dwgctl;          /* (the barrier's, engine.c) */
     if ((setup_valid & SH_DWG) && sh.dwgctl == dwgctl && !(dwgctl & DWG_WRITE_TIME))
         return;
     fifo_reserve(1);

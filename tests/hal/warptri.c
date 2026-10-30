@@ -381,12 +381,18 @@ int main(int argc, char **argv)
         MGA_WR32(MGAREG_OPMODE, (opmode_saved & ~0xCu) | 0x4u);
         MGA_WR32(MGAREG_OPMODE, opmode_saved);
         engine_sync(200000);
-        /* 4: a clip through the HAL: the DRM's barrier first, with this DWGCTL (none) */
-        context(dw_i);
+        /* 4: a clip through the HAL after triangles whose DWGCTL it was given
+         * (setup_dwgctl): the DRM's barrier first, with that DWGCTL (none);
+         * then a fill through the HAL, after two DWGSYNC writes (none) */
+        context(dw_z);
+        setup_dwgctl(dw_z);
         warp_tri(s1);
         engine_set_clip(0, 0, SW - 2, SH);
         engine_set_clip(0, 0, SW, SH);
+        warp_tri(s1);
+        engine_fill(0, 0, 4, 4, 0);
         engine_sync(200000);
+        context(dw_i);
         /* 5: TEXWIDTH for a 64-texel map with the specification's rfw for a
          * prescale of 3 (a hazard), then the CPU setup's and Mesa's (none) */
         fifo_reserve(3);

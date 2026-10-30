@@ -21,6 +21,7 @@ int mga_fifo_free;                  /* stays 0: every reservation reaches the st
 void fifo_reserve(int n) { (void)n; }
 unsigned setup_valid;               /* (engine.c's: no shadow holds at the start) */
 int setup_stale, setup_wrote_texsize;   /* (engine.c's) */
+uint32_t mga_warp_dwgctl;          /* (engine.c's) */
 
 /* Exact coverage test: centre (16x+8, 16y+8) against edge functions with
  * the top-left rule (edges are half-open towards bottom-right). */

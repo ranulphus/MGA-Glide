@@ -34,6 +34,7 @@ void engine_copy_from(uint32_t src_off, int src_pitch_px, int sx, int sy, int dx
     int band, done, n;
     if (w <= 0 || h <= 0 || src_pitch_px <= 0)
         return;
+    engine_warp_order();
     fifo_reserve(4);
     setup_forget_dwgctl();
     MGA_WR32(MGAREG_DWGCTL, DWG_OPCOD_BITBLT | DWG_ATYPE_RSTR | DWG_SHFTZERO | DWG_BOP_COPY | DWG_BLTMOD_BFCOL);
@@ -89,6 +90,7 @@ void engine_mono_vram(uint32_t off, int stride, int x, int y, int w, int h, uint
     int band, done, n;
     if (w <= 0 || h <= 0 || stride <= 0)
         return;
+    engine_warp_order();
     fifo_reserve(6);
     setup_forget_dwgctl();
     MGA_WR32(MGAREG_DWGCTL, DWG_OPCOD_BITBLT | DWG_ATYPE_RSTR | DWG_SGNZERO | DWG_SHFTZERO | DWG_BOP_COPY |

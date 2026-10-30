@@ -19,6 +19,7 @@ static int cur_ydstorg_px;
 static int clip_x0, clip_y0, clip_x1 = 0x7FFF, clip_y1 = 0x7FFF;
 int mga_dma_pending;                    /* vertices buffered or in flight by DMA (warp.c; hal.h) */
 int mga_warp_pending;                   /* WARP triangles since the engine was last idle (hal.h) */
+uint32_t mga_warp_dwgctl;               /* the DWGCTL they were drawn with (setup_dwgctl; hal.h) */
 void (*mga_dma_flush)(void);            /* sends and waits for them: register writes come after */
 void (*mga_reset_hook)(void);
 int mga_cmd_open;                       /* the DMA command stream is taking register writes (mmio.h) */
@@ -28,10 +29,14 @@ static int pitch_reg = -1;         /* the value in PITCH: targets may differ in 
 
 /* Before a register write that triangles the WARPs are still setting up
  * would see (on a real G400 the next clip cut them): two zero-length draws,
- * as Linux's mga DRM puts before every clip on a G400 (mga_emit_clip_rect). */
+ * as Linux's mga DRM puts before every clip on a G400 (mga_emit_clip_rect),
+ * with the triangles' own DWGCTL as the DRM's are: the draws reach them too
+ * (an untextured DWGCTL here spoiled GLQuake's on bench-g400; 86Box 0124
+ * reports it). */
 static void warp_barrier(void)
 {
-    const uint32_t dwg = DWG_OPCOD_TRAP | DWG_ATYPE_I | DWG_ZMODE_NOZCMP | DWG_SHFTZERO | DWG_BOP_COPY;
+    const uint32_t dwg = mga_warp_dwgctl ? mga_warp_dwgctl
+                                         : DWG_OPCOD_TRAP | DWG_ATYPE_I | DWG_ZMODE_NOZCMP | DWG_SHFTZERO | DWG_BOP_COPY;
     if (!mga_warp_pending)
         return;
     fifo_reserve(4);
@@ -231,6 +236,27 @@ int engine_idle(void)
     return 0;
 }
 
+/* The engine from another owner (GLOS's GPU lock changing hands): WARP
+ * triangles its copy of the HAL sent may still be in flight, which this
+ * copy's mga_warp_pending knows nothing of, and STATUS can read idle before
+ * they are drawn (a program's in a GLOS window landed on GLOS's target on
+ * bench-g400). On the G400 family, once the other owner's DMA has ended
+ * (STATUS<17>, as the DRM's idle test) and the bus FIFO is empty: a fence
+ * with a tag far from any the other owner gave DWGSYNC. Then as engine_sync. */
+int engine_take(uint32_t timeout_us)
+{
+    if (mga.family == MGA_FAMILY_G400 && mga.has_dwgsync) {
+        uint32_t start = sys_time_us(), polls = 0;
+        while (!(MGA_RD32(MGAREG_STATUS) & (1u << 17)) || !(MGA_RD32(MGAREG_FIFOSTATUS) & (1u << 9)))
+            if ((++polls & 1023) == 0 && (uint32_t)(sys_time_us() - start) > timeout_us)
+                break;                  /* (engine_sync times out too, and resets) */
+        fence_tag = (MGA_RD32(MGAREG_DWGSYNC) & ~3u) + 0x40000000u;
+        fence_out = 0;
+        mga_warp_pending = 1;
+    }
+    return engine_sync(timeout_us);
+}
+
 /* Another program has had the engine (GLOS's GPU lock changing hands):
  * nothing this copy of the HAL knows about the registers holds any more.
  * The FIFO's free slots are read again, OPMODE and the pitch written
@@ -339,10 +365,28 @@ void engine_set_clip(int x0, int y0, int x1, int y1)
     emit_clip();
 }
 
+/* Before a draw the host starts (fills, blits, loads), and before the state
+ * it writes for one, while WARP triangles may still be in flight: two
+ * DWGSYNC writes, as Linux's mga DRM puts before its clears, blits and
+ * loads (mga_dma_dispatch_clear, _blit), with tags from the fence's
+ * sequence. Not warp_barrier: on bench-g400 its zero-length draws' DWGCTL
+ * reached triangles the WARPs were still setting up (GLQuake -mtex, frame
+ * 600 of demo1: 1,056 pixels of a pillar unlike DGL_TEXMOVE=0's), while
+ * with the DWGSYNC writes alone every frame matched. */
+void engine_warp_order(void)
+{
+    if (!mga_warp_pending || !mga.has_dwgsync)
+        return;
+    fifo_reserve(2);
+    MGA_WR32(MGAREG_DWGSYNC, mga_dwgsync_next());
+    MGA_WR32(MGAREG_DWGSYNC, mga_dwgsync_next());
+}
+
 static void solid_fill(int x, int y, int w, int h, uint32_t fcol)
 {
     if (w <= 0 || h <= 0)
         return;
+    engine_warp_order();
     fifo_reserve(4);
     setup_forget_dwgctl();
     MGA_WR32(MGAREG_DWGCTL, DWG_OPCOD_TRAP | DWG_ATYPE_RSTR | DWG_SOLID | DWG_ARZERO |
@@ -418,6 +462,7 @@ void engine_tlut_load(uint32_t off, int first, int count)
     uint32_t src = off / 2;
     if (count <= 0)
         return;
+    engine_warp_order();
     fifo_reserve(9);
     MGA_WR32(MGAREG_MACCESS, MACCESS_PW16 | MACCESS_TLUTLOAD);
     MGA_WR32(MGAREG_PITCH, 1024);
@@ -626,18 +671,7 @@ int engine_vram_copy(uint32_t dst, uint32_t src, int pitch_px, int bpp, int w, i
     if (w <= 0 || h <= 0)
         return 1;
     if (!vcopy_open) {
-        /* DSTORG, PITCH, MACCESS and DWGCTL change: first two DWGSYNC
-         * writes, as Linux's mga DRM puts before its blits and loads
-         * (mga_dma_dispatch_blit), with tags from the fence's sequence. Not
-         * warp_barrier: on bench-g400 its zero-length draws' DWGCTL reached
-         * triangles the WARPs were still setting up (GLQuake -mtex, frame
-         * 600 of demo1: 1,056 pixels of a pillar unlike DGL_TEXMOVE=0's),
-         * while with the DWGSYNC writes alone every frame matched. */
-        if (mga_warp_pending && mga.has_dwgsync) {
-            fifo_reserve(2);
-            MGA_WR32(MGAREG_DWGSYNC, mga_dwgsync_next());
-            MGA_WR32(MGAREG_DWGSYNC, mga_dwgsync_next());
-        }
+        engine_warp_order();                    /* (DSTORG, PITCH, MACCESS and DWGCTL change) */
         fifo_reserve(4);
         MGA_WR32(MGAREG_PLNWT, 0xFFFFFFFFu);
         MGA_WR32(MGAREG_CXBNDRY, 0x0FFF0000u);      /* (for chips that ignore clipdis) */
