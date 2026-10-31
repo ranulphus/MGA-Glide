@@ -47,18 +47,25 @@ static void warp_barrier(void)
     setup_forget_dwgctl();
 }
 
-static void emit_clip(void)
+/* The clip registers alone: after a draw the host started behind
+ * engine_warp_order, with no WARP triangle since (engine_vram_copy_end). */
+static void clip_regs(void)
 {
     uint32_t base = (uint32_t)cur_ydstorg_px;
     int x0 = clip_x0, y0 = clip_y0, x1 = clip_x1, y1 = clip_y1;
     if (x1 <= x0 || y1 <= y0) {
         x0 = 0; x1 = 0; y0 = 1; y1 = 0;      /* empty: nothing passes */
     }
-    warp_barrier();
     fifo_reserve(3);
     MGA_WR32(MGAREG_CXBNDRY, ((uint32_t)(x1 - 1) << 16) | (uint32_t)x0);
     MGA_WR32(MGAREG_YTOP, (uint32_t)y0 * (uint32_t)cur.pitch_px + base);
     MGA_WR32(MGAREG_YBOT, (uint32_t)(y1 - 1) * (uint32_t)cur.pitch_px + base);
+}
+
+static void emit_clip(void)
+{
+    warp_barrier();
+    clip_regs();
 }
 
 static uint32_t maccess_extra;     /* caller-owned bits: NODITHER, FOGEN */
@@ -721,5 +728,12 @@ void engine_vram_copy_end(void)
     MGA_WR32(MGAREG_PITCH, (uint32_t)cur.pitch_px);
     pitch_reg = cur.pitch_px;
     engine_set_target(&cur);                        /* DSTORG, ZORG, MACCESS */
-    emit_clip();
+    /* Without warp_barrier: the copies began with engine_warp_order, as the
+     * DRM's blits do, and no WARP triangle has come since. On bench-g400
+     * its zero-length draws with the triangles' textured DWGCTL, right
+     * after copies into a texture's new block, spoiled that texture's
+     * first texels for the triangles after (t32: three rows of level 0
+     * showed level 1's; correct with an untextured DWGCTL, with no barrier
+     * here, or with DGL_TEXMOVE=0). */
+    clip_regs();
 }
