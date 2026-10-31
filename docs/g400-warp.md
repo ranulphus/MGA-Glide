@@ -118,9 +118,11 @@ else has been idle for 20 ms and 4,096 looks is let go (`engine_fence_stuck`) ra
 The DRM writes DWGSYNC only around clears and swaps, never between vertex buffers. `engine_timeout_diag` keeps the
 first timeout's registers (Glide's MGL-TIMEOUT line).
 
-GLOS's own HAL takes the engine back from a windowed program without that fence, and the program's last WARP
-triangles were then set up onto GLOS's target (DOS-GL's t27 in a window copied an empty frame). DOS-GL therefore
-uses the CPU's setup in GLOS windows until GLOS fences the WARPs at a hand-over.
+GLOS takes the engine back from a windowed program in any DOS or GLOS call, or while the program is quiet. A
+kick hands the chip only what is in the list up to PRIMEND, so work still in the list runs later, after GLOS's
+own drawing, with GLOS's target (DOS-GL's t27 in a window copied an empty frame). A program on GLOS's GPU lock
+therefore sends WARP vertices by the CPU, through the DMA window (DOS-GL does in windows), and GLOS's hand-over
+waits for the WARPs (`engine_take`, below).
 
 ## Glide (W5)
 
@@ -283,11 +285,14 @@ wrap and flat shading's colour, and was 5% to 11% slower by AGP than by PCI unti
   no more: `dma_blit_mode` waits for the engine before OPMODE leaves general purpose. A caller that starts a draw
   itself calls `engine_warp_order` first. Not yet run on bench-g400.
 - **Another HAL's triangles (2026-10-30).** When GLOS's GPU lock changes hands, the new owner's HAL never saw
-  the old owner's WARP triangles, and STATUS can read idle before they are drawn. In a GLOS window on bench-g400,
-  conformance t27's triangles landed on GLOS's target, so DOS-GL has set triangles up by the CPU in windows since
-  (DOS-GL eed800e). `engine_take`, GLOS's sync at a hand-over, waits for the old owner's DMA to end (STATUS<17>,
-  as the DRM's idle test), then fences with a DWGSYNC tag far from any the old owner used. Not yet run on
-  bench-g400.
+  the old owner's WARP triangles. In a GLOS window on bench-g400, conformance t27's triangles landed on GLOS's
+  target; this was read as STATUS showing idle before the WARPs had drawn them, and DOS-GL set triangles up by
+  the CPU in windows (DOS-GL eed800e). `engine_take`, GLOS's sync at a hand-over, waits for the old owner's DMA
+  to end (STATUS<17>, as the DRM's idle test), then fences with a DWGSYNC tag far from any the old owner used.
+  Loop A found the likelier cause (2026-10-31): DOS-GL's windows had used the DMA stream all along (its
+  `DGL_WARPDMA` reading undid the window's rule), and the triangles were still in the program's list when GLOS
+  took the engine (above; DOS-GL 6caeb3e). So whether STATUS reads idle too early is unproven; the fence stays.
+  Not yet run on bench-g400.
 - **STATUS<22:20>** (warpbfpath, wfipath, wfopath) point at WARP1 after an odd number of triangles, and keep that
   across suspend and start.
 - **Open:**
