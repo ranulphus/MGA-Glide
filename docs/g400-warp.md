@@ -278,12 +278,21 @@ wrap and flat shading's colour, and was 5% to 11% slower by AGP than by PCI unti
     `emit_clip`'s wrote an untextured one, enough for E9's flat quads. 86Box's checks (local patch 0124) found
     them among GLQuake's textured triangles over 1,000 times in 400 frames, and in Glide conformance t09, t12 and
     t20. They now draw with the DWGCTL last given to `setup_dwgctl` (`mga_warp_dwgctl`), which DOS-GL and Glide
-    give the WARP's. Not yet run on bench-g400.
+    give the WARP's. On bench-g400 (2026-10-31) GLQuake's `-mtex` frames 200, 600 and 960 and Glide
+    conformance's 46 frames were the bytes main drew.
+  - **But not after the copies (2026-10-31, bench-g400).** `engine_vram_copy_end` wrote the clip back through
+    `emit_clip`, so the textured zero-length draws came right after copies into a texture's new block. DOS-GL t32
+    full-screen then showed level 1's texels in the first three rows of level 0 in every quad after a change,
+    every run (likely the texture cache, not proven). The frame was correct with the untextured draws, with
+    none there, or with `DGL_TEXMOVE=0`, and with the CPU's vertices; 86Box drew it right throughout. Nothing
+    reaches the WARPs between the copies and that clip write, and the copies already began with the DWGSYNC
+    writes, so `engine_vram_copy_end` writes the clip alone (`clip_regs`).
 - **Other draws among WARP triangles (2026-10-30).** Fills, blits, colour expansion and TLUT loads start with
   the copies' two DWGSYNC writes while WARP triangles are pending (`engine_warp_order`), as the DRM's clears and
   blits do (`mga_dma_dispatch_clear`, `_blit`). 0124 found a fill unfenced in Glide conformance t27. ILOADs need
   no more: `dma_blit_mode` waits for the engine before OPMODE leaves general purpose. A caller that starts a draw
-  itself calls `engine_warp_order` first. Not yet run on bench-g400.
+  itself calls `engine_warp_order` first. On bench-g400 (2026-10-31, with the rest of 572020a) Glide conformance
+  drew main's 46 frames to the byte, DOS-GL's 32 conformance programs passed, and WARPTRI passed.
 - **Another HAL's triangles (2026-10-30).** When GLOS's GPU lock changes hands, the new owner's HAL never saw
   the old owner's WARP triangles. In a GLOS window on bench-g400, conformance t27's triangles landed on GLOS's
   target; this was read as STATUS showing idle before the WARPs had drawn them, and DOS-GL set triangles up by
@@ -292,7 +301,13 @@ wrap and flat shading's colour, and was 5% to 11% slower by AGP than by PCI unti
   Loop A found the likelier cause (2026-10-31): DOS-GL's windows had used the DMA stream all along (its
   `DGL_WARPDMA` reading undid the window's rule), and the triangles were still in the program's list when GLOS
   took the engine (above; DOS-GL 6caeb3e). So whether STATUS reads idle too early is unproven; the fence stays.
-  Not yet run on bench-g400.
+  On bench-g400 (2026-10-31: GLOS warp-handover with `engine_take`, DOS-GL 6caeb3e's vertices by the CPU in
+  windows) GLOS's `bench_glwin.py --hang` passed: DOS-GL's 32 conformance programs drew the same 33 frames in
+  800x600 windows as full-screen (`DGL_SEQ=0` there too), and the forced hang ended cleanly.
+- **The CPU's vertices are slow (WARPTRI on bench-g400, 2026-10-31):** 4,000 small triangles cost about 6,000
+  cycles each with the vertices written through the DMA window, against 3,446 for the CPU's own setup and 498 by
+  DMA. GLOS windows take the first path (above), so the WARP may cost DOS-GL speed there; not measured in a
+  program yet.
 - **STATUS<22:20>** (warpbfpath, wfipath, wfopath) point at WARP1 after an odd number of triangles, and keep that
   across suspend and start.
 - **Open:**
