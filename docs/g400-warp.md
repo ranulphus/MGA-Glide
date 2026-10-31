@@ -121,8 +121,9 @@ first timeout's registers (Glide's MGL-TIMEOUT line).
 GLOS takes the engine back from a windowed program in any DOS or GLOS call, or while the program is quiet. A
 kick hands the chip only what is in the list up to PRIMEND, so work still in the list runs later, after GLOS's
 own drawing, with GLOS's target (DOS-GL's t27 in a window copied an empty frame). A program on GLOS's GPU lock
-therefore sends WARP vertices by the CPU, through the DMA window (DOS-GL does in windows), and GLOS's hand-over
-waits for the WARPs (`engine_take`, below).
+therefore keeps nothing in the list at a safe point: DOS-GL sets triangles up by the CPU in windows, without the
+WARP (the WARP fed by the CPU was slower and, on bench-g400, stalled a real program: below), and GLOS's
+hand-over still waits for any WARPs (`engine_take`, below).
 
 ## Glide (W5)
 
@@ -301,13 +302,16 @@ wrap and flat shading's colour, and was 5% to 11% slower by AGP than by PCI unti
   Loop A found the likelier cause (2026-10-31): DOS-GL's windows had used the DMA stream all along (its
   `DGL_WARPDMA` reading undid the window's rule), and the triangles were still in the program's list when GLOS
   took the engine (above; DOS-GL 6caeb3e). So whether STATUS reads idle too early is unproven; the fence stays.
-  On bench-g400 (2026-10-31: GLOS warp-handover with `engine_take`, DOS-GL 6caeb3e's vertices by the CPU in
-  windows) GLOS's `bench_glwin.py --hang` passed: DOS-GL's 32 conformance programs drew the same 33 frames in
+  On bench-g400 (2026-10-31: GLOS warp-handover with `engine_take`, DOS-GL with the WARP's vertices by the CPU
+  in windows) GLOS's `bench_glwin.py --hang` passed: DOS-GL's 32 conformance programs drew the same 33 frames in
   800x600 windows as full-screen (`DGL_SEQ=0` there too), and the forced hang ended cleanly.
-- **The CPU's vertices are slow (WARPTRI on bench-g400, 2026-10-31):** 4,000 small triangles cost about 6,000
-  cycles each with the vertices written through the DMA window, against 3,446 for the CPU's own setup and 498 by
-  DMA. GLOS windows take the first path (above), so the WARP may cost DOS-GL speed there; not measured in a
-  program yet.
+- **The WARP fed by the CPU (bench-g400, 2026-10-31):** WARPTRI's 4,000 small triangles cost about 6,000 cycles
+  each with the vertices written through the DMA window, against 3,446 for the CPU's own setup and 498 by DMA.
+  DOSBench's GL scenes run directly in a GLOS window that way were ended by GLOS's GPU watchdog four seconds in,
+  every run, with or without `engine_take` (the program held the engine 500 ms without a safe point; not
+  diagnosed). With the CPU's setup they ran within 1% of their full-screen speed by the same path (6.95, 13.50,
+  8.83 and 10.56 fps). So DOS-GL sets triangles up by the CPU in windows, without the WARP, as DOS-GL eed800e
+  had it; full-screen keeps the WARP by DMA (28, 48, 35 and 26 fps).
 - **STATUS<22:20>** (warpbfpath, wfipath, wfopath) point at WARP1 after an odd number of triangles, and keep that
   across suspend and start.
 - **Open:**
