@@ -120,6 +120,7 @@ picks some) checks them:
 | `pci` | The HAL's PROBE on the 486dx2 with each PCI Matrox card |
 | `rtc` | RTCSET on the BF6 and the 486dx2: a change of century through INT 1Ah 05h leaves RTC registers A and B as they were and the year as set |
 | `hazards` | On the G400 (patches 0124, 0125): WARPTRI's own runs report no hazard; `WARPTRI hazards` reports `warp-inflight` twice and `warp-opmode`, `rfw` and `tlut` once, as many as it commits; WARPTRI by AGP from cached conventional memory reports `agp-cached`, with AGP at 2x; PROBE sees revision 05 |
+| `clock` | CLOCKMON: a minute of DJGPP's `uclock()` alone, then a minute of the DJGPP port's `sys_time_us()` alone; `sys_time_us()` never reads below its last reading. `uclock()` steps back a tick (54.9 ms) 3 to 5 times a minute in 86Box, when the PIT has wrapped and IRQ 0 hasn't yet counted it at 0040:006C, and a HAL wait took the step for a 71-minute timeout (a DOS-GL WARP failure and an engine reset). With main's port the second minute had 3 steps back; the port now holds the clock over them and counts them (`sys_time_backs`, also on WARPTRI's `HX-STAT`) |
 
 **V86TEST** (`tests/cpu/`) is a CPU self-test for the paths a virtual-8086
 monitor depends on.

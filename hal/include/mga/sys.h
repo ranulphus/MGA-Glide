@@ -51,6 +51,7 @@ void *sys_real_ptr(uint16_t seg, uint16_t off);
 /* Monotonic microsecond-ish clock for timeouts (resolution varies). */
 uint32_t sys_time_us(void);
 void     sys_delay_us(uint32_t us);
+extern uint32_t sys_time_backs; /* times the port's clock read behind its last reading and was held (DJGPP's uclock) */
 
 /* Fault and exit hooks. The fault hook runs for divide error, invalid
  * opcode, #GP and #PF, on a private stack, with the exception number,

@@ -25,6 +25,11 @@ Each check runs one short job through run.py and looks at its result:
           kind as many times as it commits it; WARPTRI by AGP from cached
           conventional memory reports agp-cached, at 2x as on bench-g400;
           PROBE sees revision 05
+  clock   CLOCKMON: a minute of uclock() alone, then a minute of the DJGPP
+          port's sys_time_us() alone: sys_time_us() never goes back, though
+          uclock() steps back a tick (54.9 ms) 3 to 5 times a minute, when
+          the PIT has wrapped and IRQ 0 hasn't yet counted it (the HAL's
+          waits took that for a timeout)
 
 Runs inside the dev container (tools/dev). Arguments pick checks; the
 default is all of them. Exit status 1 if any check fails.
@@ -211,8 +216,16 @@ def check_hazards():
     return ok
 
 
+def check_clock():
+    st, serial = job("selftest-clock", "--exe", "build/djgpp/CLOCKMON.EXE", "--args", "60")
+    stat = next((l for l in serial.split("\n") if l.startswith("HX-STAT clock ")), "")
+    f = dict(kv.split("=") for kv in stat.split()[2:])
+    good = st == "PASS" and f.get("backs") == "0"
+    return report("clock", good, "CLOCKMON %s: %s" % (st, stat[len("HX-STAT clock "):] or "no clock line"))
+
+
 CHECKS = {"486": check_486, "vbe": check_vbe, "net": check_net, "com2": check_com2, "himemx": check_himemx,
-          "cpu": check_cpu, "pci": check_pci, "rtc": check_rtc, "hazards": check_hazards}
+          "cpu": check_cpu, "pci": check_pci, "rtc": check_rtc, "hazards": check_hazards, "clock": check_clock}
 
 
 def main():

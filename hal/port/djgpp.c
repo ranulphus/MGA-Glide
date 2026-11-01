@@ -88,9 +88,28 @@ void sys_dos_free(void *p)
     }
 }
 
+/* uclock() reads a tick (54.9 ms) behind when the PIT has wrapped but IRQ 0
+ * hasn't yet counted it at 0x46C: in 86Box 3 or 4 times a minute of reading,
+ * on plain DOS as under GLOS. A wait's (uint32_t)(now - start) then reads as
+ * 71 minutes, a false timeout. So the clock stands still until uclock()
+ * passes its last reading; sys_time_backs counts the steps back. */
+uint32_t sys_time_backs;
+
 uint32_t sys_time_us(void)
 {
-    return (uint32_t)((unsigned long long)uclock() * 1000000ull / UCLOCKS_PER_SEC);
+    static uclock_t last;
+    static int behind;
+    uclock_t t = uclock();
+    if (t < last) {
+        if (!behind)
+            sys_time_backs++;
+        behind = 1;
+        t = last;
+    } else {
+        behind = 0;
+    }
+    last = t;
+    return (uint32_t)((unsigned long long)t * 1000000ull / UCLOCKS_PER_SEC);
 }
 
 void sys_delay_us(uint32_t us)

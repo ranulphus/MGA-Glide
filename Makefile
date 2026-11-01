@@ -153,12 +153,14 @@ DJ_SRC_SBBEEP := tests/shim/sbbeep.c
 DJ_SRC_FPCHECK := tests/hal/fpcheck.c
 DJ_SRC_TWODTEST := tests/hal/twodtest.c tests/hal/sw2d.c
 DJ_SRC_WARPTRI := tests/hal/warptri.c
+DJ_SRC_CLOCKMON := tests/hal/clockmon.c
 build/djgpp/HOOKS.EXE: tests/hal/hooks.c
 build/djgpp/SCALE.EXE: tests/hal/scale.c
 build/djgpp/HELLO.EXE: tests/shim/hello.c
 build/djgpp/PROBE.EXE: tests/hal/probe.c
 build/djgpp/TWODTEST.EXE: tests/hal/twodtest.c tests/hal/sw2d.c tests/hal/sw2d.h
 build/djgpp/WARPTRI.EXE: tests/hal/warptri.c
+build/djgpp/CLOCKMON.EXE: tests/hal/clockmon.c
 build/djgpp/STACKPG.EXE: tests/shim/stackpg.c
 build/djgpp/MOUSETST.EXE: tests/shim/mousetst.c
 build/djgpp/JOYTEST.EXE: tests/shim/joytest.c
@@ -222,7 +224,8 @@ loopa-cfgcheck:
 
 # The harness's machine options: 486 profiles, the VBE card, and more
 # (tools/loopa/selftest_ext.py; CHECKS="486 vbe" runs some).
-loopa-selftest-ext: dostests build/djgpp/STACKPG.EXE build/djgpp/PROBE.EXE build/djgpp/WARPTRI.EXE v86test
+loopa-selftest-ext: dostests build/djgpp/STACKPG.EXE build/djgpp/PROBE.EXE build/djgpp/WARPTRI.EXE \
+                    build/djgpp/CLOCKMON.EXE v86test
 	$(DEV) $(PYTHON) tools/loopa/selftest_ext.py $(CHECKS)
 
 # The HAL's 2D primitives, cursor and display start on every Matrox card

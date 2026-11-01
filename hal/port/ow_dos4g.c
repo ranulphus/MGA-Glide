@@ -107,6 +107,7 @@ uint32_t sys_time_us(void)
     volatile uint32_t *ticks = (volatile uint32_t *)0x46C;
     return (uint32_t)((uint64_t)*ticks * 54925u);
 }
+uint32_t sys_time_backs;                /* (not counted: the BIOS tick goes back only at midnight) */
 
 /* Short delays: each read of port 0x80 takes about a microsecond on ISA
  * timing; longer delays wait on the tick counter. */

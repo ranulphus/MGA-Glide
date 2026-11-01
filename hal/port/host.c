@@ -97,6 +97,7 @@ uint32_t sys_time_us(void)
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint32_t)((uint64_t)ts.tv_sec * 1000000u + (uint64_t)ts.tv_nsec / 1000u);
 }
+uint32_t sys_time_backs;                /* (never moves: CLOCK_MONOTONIC doesn't go back) */
 
 void sys_delay_us(uint32_t us) { MGA_UNUSED(us); }
 

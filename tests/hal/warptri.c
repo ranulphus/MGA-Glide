@@ -33,6 +33,7 @@
 #include "mga/mmio.h"
 #include "mga/regs_mga.h"
 #include "mga/setup.h"
+#include "mga/sys.h"
 #include "mga/warp.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -625,9 +626,9 @@ out:
     MGA_WR32(MGAREG_OPMODE, opmode_saved);
     if (!keep)
         engine_reset();                         /* the next program finds the engine and the WARPs reset */
-    hx_log("HX-STAT warptri warp tris=%lu failures=%lu dma_kicks=%lu engine resets=%lu timeouts=%lu",
+    hx_log("HX-STAT warptri warp tris=%lu failures=%lu dma_kicks=%lu engine resets=%lu timeouts=%lu clock_backs=%lu",
            (unsigned long)warp_tris, (unsigned long)warp_failures, (unsigned long)warp_dma_kicks,
-           (unsigned long)engine_resets, (unsigned long)engine_timeouts);
+           (unsigned long)engine_resets, (unsigned long)engine_timeouts, (unsigned long)sys_time_backs);
     vbe_set_text_mode();
     hx_done(hx_failures() ? HX_FAIL : HX_PASS);
     return 0;
