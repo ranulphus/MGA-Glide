@@ -6,9 +6,9 @@
 #
 # PC is bench-g400 with the G200 swapped in (or vbench-g200 for the dry run
 # in 86Box). Runs on the build host. Builds come from these checkouts
-# (environment overrides): MGA_GLIDE (this one), DOSGL, DOSBENCH, FIFTHWHEEL;
-# DOS-GL, DOSBench and Fifth Wheel are built against MGA_GLIDE's HAL (DOSGL
-# synced from it) and DOSGL. Each phase prints its outcomes on lines of its
+# (environment overrides): MGA_GLIDE (this one), DOSGL, DOSBENCH, FIFTHWHEEL,
+# DGK; DOS-GL, DOSBench and Fifth Wheel are built against MGA_GLIDE's HAL and
+# DOSGL (no pins, no copies). Each phase prints its outcomes on lines of its
 # own; the results stay under out/bench/PC/ and out/g200-session/.
 #
 # Phases (each answers questions in docs/g200-warp.md, "Open, for the card"):
@@ -28,6 +28,8 @@ MGA=${MGA_GLIDE:-$(cd "$(dirname "$0")/../.." && pwd)}
 DOSGL=${DOSGL:-$HOME/DOSGL}
 DOSBENCH=${DOSBENCH:-$HOME/DOSBench}
 FW=${FIFTHWHEEL:-$HOME/FifthWheel}
+DGK=${DGK:-$HOME/dgk}
+export MGA_GLIDE=$MGA
 out=$MGA/out/g200-session/$pc
 mkdir -p "$out"
 say() { printf '%-9s %s\n' "$1" "$2" | tee -a "$out/summary.txt"; }
@@ -62,10 +64,10 @@ PY
 
 build() {
     (cd "$MGA" && make -s hal-djgpp runtime build/djgpp/WARPTRI.EXE dostests) >> "$out/build.log" 2>&1 || return 1
-    (cd "$DOSGL" && tools/sync-hal.sh "$MGA" && make -s lib conform-dos) >> "$out/build.log" 2>&1 || return 1
-    [ -f "$DOSGL/build/sdl/dos/lib/libSDL3.a" ] || (cd "$DOSGL" && make -s sdl) >> "$out/build.log" 2>&1 || return 1
+    (cd "$DOSGL" && make -s MGA_GLIDE="$MGA" lib conform-dos) >> "$out/build.log" 2>&1 || return 1
+    [ -f "$DOSGL/build/sdl/dos/lib/libSDL3.a" ] || (cd "$DOSGL" && make -s MGA_GLIDE="$MGA" sdl) >> "$out/build.log" 2>&1 || return 1
     (cd "$DOSBENCH" && make -s MGA_GLIDE="$MGA" DOSGL="$DOSGL") >> "$out/build.log" 2>&1 || return 1
-    (cd "$FW" && make -s DOSGL="$DOSGL" dos) >> "$out/build.log" 2>&1 || return 1
+    (cd "$FW" && make -s MGA_GLIDE="$MGA" DOSGL="$DOSGL" DGK="$DGK" dos) >> "$out/build.log" 2>&1 || return 1
 }
 
 phase_warptri() {
@@ -81,7 +83,7 @@ phase_warptri() {
 phase_conform() {
     local w
     for w in 1 0; do
-        (cd "$DOSGL" && make conform-bench PC="$pc" PRE="SET DGL_WARP=$w") > "$out/conform-$w.log" 2>&1
+        (cd "$DOSGL" && make conform-bench MGA_GLIDE="$MGA" PC="$pc" PRE="SET DGL_WARP=$w") > "$out/conform-$w.log" 2>&1
         say conform "DGL_WARP=$w: $(grep -c ' PASS ' "$out/conform-$w.log") pass, $(grep -c ' FAIL ' "$out/conform-$w.log") fail"
         cp "$DOSGL/out/conform/summary-$pc.json" "$out/conform-$w.json" 2>/dev/null
         [ -d "$DOSGL/out/conform/$pc" ] && rm -rf "$out/conform-$w" && cp -r "$DOSGL/out/conform/$pc" "$out/conform-$w"
