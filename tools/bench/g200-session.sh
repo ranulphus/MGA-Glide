@@ -20,6 +20,7 @@
 #   glide     the acceptance games' traces through Glide, warp=2 against 0
 #   agp       last (a hang needs a person): AGP 1x and 2x by sideband
 # Phases before agp keep the DMA on PCI (DGL_AGP=0, MGAGLIDE agp=0).
+# SCENES_TESTS and SCENES_SECS narrow the scenes phase (the dry run: G1ARNA, 1).
 set -uo pipefail
 pc=${1:?PC}; shift
 phases=${*:-warptri conform scenes fifth glide agp}
@@ -87,7 +88,7 @@ phase_conform() {
 }
 
 phase_scenes() {
-    local st common="--tests all --data C:\\DOSBENCH\\DATA --secs 5"
+    local st common="--tests ${SCENES_TESTS:-all} --data C:\\DOSBENCH\\DATA --secs ${SCENES_SECS:-5}"
     st=$(bench scenes-data --extender dos4gw $(for f in "$DOSBENCH"/build/data/*.DBS; do echo --file "$f=$(basename "$f")"; done) \
         --cmd "IF NOT EXIST C:\\DOSBENCH\\NUL MD C:\\DOSBENCH" --cmd "IF NOT EXIST C:\\DOSBENCH\\DATA\\NUL MD C:\\DOSBENCH\\DATA" \
         --cmd "COPY C:\\TEST\\*.DBS C:\\DOSBENCH\\DATA > NUL" --cmd "SERSAY HX-DONE 0" --timeout 1200)
