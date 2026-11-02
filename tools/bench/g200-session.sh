@@ -63,6 +63,7 @@ PY
 build() {
     (cd "$MGA" && make -s hal-djgpp runtime build/djgpp/WARPTRI.EXE dostests) >> "$out/build.log" 2>&1 || return 1
     (cd "$DOSGL" && tools/sync-hal.sh "$MGA" && make -s lib conform-dos) >> "$out/build.log" 2>&1 || return 1
+    [ -f "$DOSGL/build/sdl/dos/lib/libSDL3.a" ] || (cd "$DOSGL" && make -s sdl) >> "$out/build.log" 2>&1 || return 1
     (cd "$DOSBENCH" && make -s MGA_GLIDE="$MGA" DOSGL="$DOSGL") >> "$out/build.log" 2>&1 || return 1
     (cd "$FW" && make -s DOSGL="$DOSGL" dos) >> "$out/build.log" 2>&1 || return 1
 }
