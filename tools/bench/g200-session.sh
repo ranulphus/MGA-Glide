@@ -96,14 +96,14 @@ phase_scenes() {
     say scenes "data: $st"
     for w in 1 0; do
         st=$(bench "scenes-gl-$w" --file "$DOSBENCH/build/dos/BENCHGL.EXE" --set "DGL_WARP=$w" --set DGL_AGP=0 \
-            --cmd "BENCHGL.EXE $common" --timeout 3600)
+            --cmd "BENCHGL.EXE $common" --timeout 3600 --idle 900)
         say scenes "OpenGL DGL_WARP=$w: $st"
         serial "scenes-gl-$w" | grep -a 'HX-STAT bench T ' | sed -n 's/.*test=\([A-Z0-9]*\).* fps=\([0-9.]*\).* tris_frame=\([0-9]*\).* ktris_s=\([0-9.]*\).*/  \1 \2 fps, \3 tris, \4 ktris\/s/p' \
             | tee -a "$out/summary.txt"
     done
     for w in 2 0; do
         st=$(bench "scenes-glide-$w" --file "$DOSBENCH/build/dos/BENCHG.EXE" --ovl "$MGA/build/ow/GLIDE2X.OVL" \
-            --set "MGAGLIDE=warp=$w agp=0" --cmd "BENCHG.EXE $common --glide=C:\\TEST\\GLIDE2X.OVL" --timeout 3600)
+            --set "MGAGLIDE=warp=$w agp=0" --cmd "BENCHG.EXE $common --glide=C:\\TEST\\GLIDE2X.OVL" --timeout 3600 --idle 900)
         say scenes "Glide warp=$w: $st"
         serial "scenes-glide-$w" | grep -a 'HX-STAT bench T ' | sed -n 's/.*test=\([A-Z0-9]*\).* fps=\([0-9.]*\).*/  \1 \2 fps/p' | tee -a "$out/summary.txt"
     done
@@ -147,7 +147,7 @@ phase_agp() {
     done
     for w in 1; do
         st=$(bench "agp-scenes-gl" --file "$DOSBENCH/build/dos/BENCHGL.EXE" --set "DGL_WARP=$w" \
-            --cmd "BENCHGL.EXE --tests G --data C:\\DOSBENCH\\DATA --secs 5" --timeout 3600)
+            --cmd "BENCHGL.EXE --tests G --data C:\\DOSBENCH\\DATA --secs 5" --timeout 3600 --idle 900)
         say agp "OpenGL scenes by AGP: $st"
         serial agp-scenes-gl | grep -a 'HX-STAT bench T ' | sed -n 's/.*test=\([A-Z0-9]*\).* fps=\([0-9.]*\).*/  \1 \2 fps/p' | tee -a "$out/summary.txt"
     done
