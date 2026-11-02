@@ -1,12 +1,20 @@
-/* warp.c - the G400's WARP setup engine (docs/g400-warp.md).
+/* warp.c - the WARP setup engine of the G400 (docs/g400-warp.md) and the
+ * G200 (docs/g200-warp.md).
  *
- * The microcode is linux-firmware's matrox/g400_warp.fw (warp_g400.h, MIT,
- * Copyright 1999 Matrox Graphics Inc.). With microcode caching off the two
- * WARPs run from their own 2 KB instruction memories, written through
- * WIMEMADDR and WIMEMDATA/WIMEMDATA1; the values written around a pipe are
- * those of Linux's mga DRM driver (mga_warp_init, mga_g400_emit_pipe).
+ * The microcode is linux-firmware's matrox/g400_warp.fw and g200_warp.fw
+ * (warp_g400.h, warp_g200.h; MIT, Copyright 1999 Matrox Graphics Inc.).
+ * With microcode caching off the WARPs run from their own 2 KB instruction
+ * memories, written through WIMEMADDR and WIMEMDATA (and the G400's second
+ * WARP's WIMEMDATA1); the values written around a pipe are those of Linux's
+ * mga DRM driver (mga_warp_init, mga_g400_emit_pipe, mga_g200_emit_pipe).
  * Vertices and register writes go by bus-master DMA (below), or the
- * vertices through the DMA window with OPMODE in vertex mode. */
+ * vertices through the DMA window with OPMODE in vertex mode.
+ *
+ * The G200 differs (docs/g200-warp.md): one WARP, started through WIADDR;
+ * eight pipes, none with two textures; its own WR constants; texture sizes
+ * in WR24/WR34 with tw = log2 + 28; no ACCEPT sequencer; AGP only with
+ * sideband addressing, and 2x only with AGP_PLL. It is driven only when
+ * warp_g200 is set, until the real card has passed (docs/g200-warp.md). */
 #include "mga/warp.h"
 #include "mga/hal.h"
 #include "mga/mmio.h"
@@ -15,6 +23,7 @@
 #include "mga/sys.h"
 #include "mga/prof.h"
 #include "warp_g400.h"
+#include "warp_g200.h"
 #include <string.h>
 
 uint32_t warp_tris, warp_failures, warp_dma_kicks, warp_seqs, warp_seqs_t2;
@@ -31,6 +40,12 @@ int warp_reset_before_load = 1;
 int warp_agp_xfer;                  /* the channels fetch by AGP cycles (AGP on, write-combining rings) */
 void (*warp_pre_kick)(void);        /* EXPERIMENT: called before each kick (a cache flush for AGP cycles) */
 uint32_t warp_diag[5];
+int warp_g200;                      /* the G200's WARP driven (off until checked on the real card) */
+
+static int g200(void)
+{
+    return mga.family == MGA_FAMILY_G200;
+}
 
 /* Bus-master DMA, as Linux's mga DRM does it (G400 specification 4.1.9): a
  * primary display list in general-purpose mode, each packet a header of
@@ -110,20 +125,23 @@ static uint32_t dmawin_pos;
 
 int warp_available(void)
 {
-    return mga.family == MGA_FAMILY_G400;
+    return mga.family == MGA_FAMILY_G400 || (g200() && warp_g200);
 }
 
-/* The pipe's record in warp_g400_fw: 0, or -1 when there is none. */
+/* The pipe's record in the chip's microcode: 0, or -1 when there is none
+ * (the G200 has pipes 0-7 only: no WARP_T2). */
 static int pipe_code(int pipe, const unsigned char **code, int *len)
 {
+    const unsigned char *fw = g200() ? warp_g200_fw : warp_g400_fw;
+    const unsigned long size = g200() ? sizeof warp_g200_fw : sizeof warp_g400_fw;
     unsigned long off = 0;
     int i = 0;
-    while (off + 6 <= sizeof warp_g400_fw) {
-        int n = (warp_g400_fw[off + 4] << 8) | warp_g400_fw[off + 5];
+    while (off + 6 <= size) {
+        int n = (fw[off + 4] << 8) | fw[off + 5];
         if (!n)
             break;
         if (i++ == pipe) {
-            *code = warp_g400_fw + off + 6;
+            *code = fw + off + 6;
             *len = n;
             return 0;
         }
@@ -167,7 +185,7 @@ static void suspend(void)
 {
     if (running) {
         fifo_reserve(1);
-        MGA_WR32(MGAREG_WIADDR2, WMODE_SUSPEND);
+        MGA_WR32(g200() ? MGAREG_WIADDR : MGAREG_WIADDR2, WMODE_SUSPEND);
         running = 0;
     }
 }
@@ -461,11 +479,13 @@ static void on_reset(void)
 
 /* AGP (docs/g400-warp.md): the channels fetch by AGP cycles, which don't
  * snoop the CPU's caches, so only from write-combining rings (GLOS_FN_CACHE).
- * On: the target (the host bridge's AGP capability) first, then the G400
+ * On: the target (the host bridge's AGP capability) first, then the card
  * (AGP_CMD, F8h), at the fastest rate both have (2x or 1x) with sideband
  * addressing if both have it; the card's request queue the bridge's depth.
+ * The G200 needs sideband addressing, and AGP_PLL for 2x (docs/g200-warp.md).
  * Off: the card first, then the bridge, both as they were. */
 static uint32_t agp_hcmd0, agp_ccmd0;   /* the commands as they were */
+static uint32_t agp_pll0;               /* the G200's AGP_PLL as it was */
 
 static int agp_enable(void)
 {
@@ -488,6 +508,12 @@ static int agp_enable(void)
     rate = (both & 2u) ? 2u : (both & 1u) ? 1u : 0;
     if (!rate)
         return -1;
+    if (g200() && !(both & (1u << 9)))
+        return -1;                      /* (the G200 masters by AGP only with sideband addressing: 3-3, 5.2.2) */
+    if (g200()) {
+        agp_pll0 = MGA_RD32(MGAREG_AGP_PLL);
+        MGA_WR32_DIRECT(MGAREG_AGP_PLL, rate == 2u ? 1u : 0u);    /* agp2xpllen for 2x (the DRM's mga_dma.c) */
+    }
     cmd = rate | (1u << 8) | (both & (1u << 9));     /* (enable; sideband if both) */
     mga_pci_write32(0, 0, 0, (uint8_t)(agp_hcap + 8), cmd);
     mga_pci_write32(mga.bus, mga.dev, mga.fn, 0xF8,
@@ -502,6 +528,8 @@ static void agp_disable(void)
         return;
     mga_pci_write32(mga.bus, mga.dev, mga.fn, 0xF8, agp_ccmd0);
     mga_pci_write32(0, 0, 0, (uint8_t)(agp_hcap + 8), agp_hcmd0);
+    if (g200())
+        MGA_WR32_DIRECT(MGAREG_AGP_PLL, agp_pll0);
     agp_on = 0;
 }
 
@@ -565,7 +593,7 @@ static void fail(void)
     mga_dma_pending = 0;
     ring_reset();
     warp_failures++;
-    MGA_WR32_DIRECT(MGAREG_WIADDRNB2, WMODE_SUSPEND);   /* (bypassing the FIFO) */
+    MGA_WR32_DIRECT(g200() ? MGAREG_WIADDRNB : MGAREG_WIADDRNB2, WMODE_SUSPEND);   /* (bypassing the FIFO) */
     running = 0;
     cur_pipe = -1;
     engine_reset();                     /* (OPMODE unknown after it) */
@@ -577,17 +605,43 @@ void warp_abort(void)
     mga_dma_pending = 0;
     ring_reset();
     if (running)
-        MGA_WR32_DIRECT(MGAREG_WIADDRNB2, WMODE_SUSPEND);   /* (bypassing the FIFO) */
+        MGA_WR32_DIRECT(g200() ? MGAREG_WIADDRNB : MGAREG_WIADDRNB2, WMODE_SUSPEND);   /* (bypassing the FIFO) */
     running = 0;
     cur_pipe = -1;
+}
+
+static int started(uint32_t busy);
+
+/* The G200's start, as Linux's mga_warp_init and mga_g200_emit_pipe write
+ * it (WGETMSB, which the DRM wrote once, at every start here: the HAL
+ * resets the engine before loads). No WACCEPTSEQ, WIADDR2 or WFLAG1: on the
+ * G200 those addresses are reserved. */
+static int g200_start(void)
+{
+    int i;
+    fifo_reserve(10);
+    MGA_WR32(MGAREG_WGETMSB, 0x00001606);
+    MGA_WR32(MGAREG_WVRTXSZ, 7);                   /* 8 dwords a vertex */
+    MGA_WR32(MGAREG_WFLAG, 0);
+    MGA_WR32(MGAREG_WR(24), 0);
+    MGA_WR32(MGAREG_WR(25), 0x00000100);
+    MGA_WR32(MGAREG_WR(34), 0);
+    MGA_WR32(MGAREG_WR(42), 0x0000FFFF);
+    MGA_WR32(MGAREG_WR(60), 0x0000FFFF);
+    for (i = 0; i < warp_start_pads; i++) {
+        fifo_reserve(1);
+        MGA_WR32(MGAREG_DMAPAD, 0xFFFFFFFFu);      /* "required due to hardware bug" (the DRM) */
+    }
+    warp_diag[1] = MGA_RD32(MGAREG_STATUS);
+    fifo_reserve(1);
+    MGA_WR32(MGAREG_WIADDR, 0 | WMODE_START);
+    return started(STATUS_WBUSY);
 }
 
 int warp_select(int pipe)
 {
     const unsigned char *code;
     int len, words, i;
-    long spin;
-    uint32_t st = 0, t0;
     if (!warp_available() || pipe_code(pipe, &code, &len) != 0)
         return -1;
     if (!dma_state)
@@ -617,13 +671,17 @@ int warp_select(int pipe)
             MGA_WR32(MGAREG_WIMEMDATA, le32(code + 8 * i));
             MGA_WR32(MGAREG_WIMEMDATA + 4, le32(code + 8 * i + 4));
         }
-        MGA_WR32(MGAREG_WIMEMADDR, 0);
-        for (i = 0; i < words; i++) {
-            MGA_WR32(MGAREG_WIMEMDATA1, le32(code + 8 * i));
-            MGA_WR32(MGAREG_WIMEMDATA1 + 4, le32(code + 8 * i + 4));
+        if (!g200()) {                              /* (the G400's second WARP) */
+            MGA_WR32(MGAREG_WIMEMADDR, 0);
+            for (i = 0; i < words; i++) {
+                MGA_WR32(MGAREG_WIMEMDATA1, le32(code + 8 * i));
+                MGA_WR32(MGAREG_WIMEMDATA1 + 4, le32(code + 8 * i + 4));
+            }
         }
         cur_pipe = pipe;
     }
+    if (g200())
+        return g200_start();
     fifo_reserve(12);
     MGA_WR32(MGAREG_WGETMSB, 0x00000E00);
     MGA_WR32(MGAREG_WVRTXSZ, (pipe & WARP_T2) ? 0x00001E09 : 0x00001807);
@@ -646,15 +704,23 @@ int warp_select(int pipe)
     warp_diag[1] = MGA_RD32(MGAREG_STATUS);
     fifo_reserve(1);
     MGA_WR32(MGAREG_WIADDR2, 0 | WMODE_START);
+    return started(STATUS_WBUSY | STATUS_WBUSY1);
+}
+
+/* After the start: the WARP busy (it waits for vertices), or the start
+ * failed and the engine is reset. Then the stream opens. */
+static int started(uint32_t busy)
+{
+    long spin;
+    uint32_t st = 0, t0;
     engine_sync(200000);
     for (spin = 0, t0 = sys_time_us();
-         !((st = MGA_RD32(MGAREG_STATUS)) & (STATUS_WBUSY | STATUS_WBUSY1)) &&
-         ((++spin & 1023) || (uint32_t)(sys_time_us() - t0) < 200000u);)
+         !((st = MGA_RD32(MGAREG_STATUS)) & busy) && ((++spin & 1023) || (uint32_t)(sys_time_us() - t0) < 200000u);)
         ;
     warp_diag[2] = st;
     warp_diag[3] = MGA_RD32(MGAREG_WIADDRNB);
-    warp_diag[4] = MGA_RD32(MGAREG_WIADDRNB1);
-    if (!(st & (STATUS_WBUSY | STATUS_WBUSY1))) {
+    warp_diag[4] = g200() ? 0 : MGA_RD32(MGAREG_WIADDRNB1);
+    if (!(st & busy)) {
         fail();
         return -1;
     }
@@ -694,15 +760,23 @@ void warp_tex_sizes(uint32_t w0, uint32_t h0, uint32_t w1, uint32_t h1)
     wtex.map1 = 0;
     wtex.w0 = w0; wtex.h0 = h0; wtex.w1 = w1; wtex.h1 = h1;
     fifo_reserve(4);
+    if (g200()) {                                  /* (mga_g200_emit_tex0: no magic bit, no map 1) */
+        MGA_WR32(MGAREG_WR(24), w0);
+        MGA_WR32(MGAREG_WR(34), h0);
+        return;
+    }
     MGA_WR32(MGAREG_WR(54), w0 | 0x40);            /* | MGA_G400_WR_MAGIC */
     MGA_WR32(MGAREG_WR(62), h0 | 0x40);
     MGA_WR32(MGAREG_WR(52), w1 | 0x40);
     MGA_WR32(MGAREG_WR(60), h1 | 0x40);
 }
 
+/* tw/th = log2 + 11 on the G400, + 28 on the G200 (Mesa's mga_texstate.c:
+ * the scales of the TMRs each chip's microcode writes), modulo 64. */
 static uint32_t mesa_wh(int lg)
 {
-    return ((uint32_t)((1 << lg) - 1) << 18) | ((uint32_t)((2 - lg) & 63) << 9) | ((uint32_t)(lg + 11) & 63);
+    return ((uint32_t)((1 << lg) - 1) << 18) | ((uint32_t)((2 - lg) & 63) << 9) |
+           ((uint32_t)(lg + (g200() ? 28 : 11)) & 63);
 }
 
 void warp_tex(int map, int log2w, int log2h, uint32_t texctl2)
@@ -715,9 +789,9 @@ void warp_tex(int map, int log2w, int log2h, uint32_t texctl2)
         fifo_reserve(4);
         MGA_WR32(MGAREG_TEXWIDTH, w);
         MGA_WR32(MGAREG_TEXHEIGHT, h);
-        MGA_WR32(MGAREG_WR(54), w | 0x40);
-        MGA_WR32(MGAREG_WR(62), h | 0x40);
-    } else {
+        MGA_WR32(g200() ? MGAREG_WR(24) : MGAREG_WR(54), g200() ? w : w | 0x40);
+        MGA_WR32(g200() ? MGAREG_WR(34) : MGAREG_WR(62), g200() ? h : h | 0x40);
+    } else if (!g200()) {                          /* (the G200 has one map) */
         wtex.w1 = w; wtex.h1 = h;
         wtex.map1 = 1;
         wtex.texctl2 = texctl2;
@@ -841,8 +915,8 @@ uint32_t *warp_reserve_seq(int fan, int n, int *dwords)
 {
     int t2;
     check_lost();
-    if (!running || !mga_cmd_open || n < 3)
-        return NULL;
+    if (!running || !mga_cmd_open || n < 3 || g200())
+        return NULL;                    /* (the G200 has no ACCEPT sequencer: the caller sends triangles) */
     t2 = (cur_pipe & WARP_T2) != 0;
     if (setup_wrote_texsize)
         wtex_again();

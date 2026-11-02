@@ -1,5 +1,7 @@
-/* warptri.c - WARPTRI: the G400's WARP setup engine through the HAL's
- * warp.c (speed plan W0; docs/g400-warp.md).
+/* warptri.c - WARPTRI: the WARP setup engine of the G400 (speed plan W0;
+ * docs/g400-warp.md) or the G200 (docs/g200-warp.md) through the HAL's
+ * warp.c. On a G200 it turns warp_g200 on, and the G400-only tests (switch=:
+ * two-texture pipes; seq: the ACCEPT sequencer) report that they don't apply.
  *
  *   WARPTRI [pipe=N] [n=COUNT] [pio] [pads=K] [keep]
  *   WARPTRI starts=N [reload] [pads=K] [keep] [pio]
@@ -21,7 +23,7 @@
  *    with its subpixel offset) on the left, the same through setup_triangle
  *    320 pixels to the right, compared pixel by pixel;
  * b2) two triangles in one batch, no depth (the G400's two WARPs take
- *    alternate triangles): both drawn?
+ *    alternate triangles; the G200 has one): both drawn?
  * c) two triangles crossing in depth (ZI, less-than), both ways;
  * d) COUNT small triangles each way (default 4000), timed with RDTSC
  *    including the wait for the engine: cycles a triangle.
@@ -208,8 +210,9 @@ int main(int argc, char **argv)
     }
     hx_init(1, argv, "warptri");
     ok = mga_find(&mga) == 0 && mga_map(&mga) == 0;
+    warp_g200 = 1;                              /* (the G200's WARP: this test drives it) */
     if (!ok || !warp_available()) {
-        hx_test("init", 0, "a G400 or G450 is needed");
+        hx_test("init", 0, "a G200, G400 or G450 is needed");
         hx_done(HX_INIT_FAILED);
     }
     if (vbe_find_mode(SW, SH, 16, &mode) != 0 || vbe_set_mode(&mode, PITCH, &pitch) != 0 || pitch != PITCH) {
@@ -306,6 +309,10 @@ int main(int argc, char **argv)
                    n > 0 ? (unsigned long)((double)n * 398000.0 / (double)bd) : 0ul);
         }
         hx_test("dmabw", got != 0, "%lu bytes", (unsigned long)got);
+        goto out;
+    }
+    if ((switches > 0 || seqtest) && mga.family == MGA_FAMILY_G200) {
+        hx_log("HX-STAT warptri skipped: the G200 has %s", seqtest ? "no ACCEPT sequencer" : "no two-texture pipes");
         goto out;
     }
     if (switches > 0) {

@@ -1,0 +1,306 @@
+diff --git a/src/include/86box/vid_mga_warp.h b/src/include/86box/vid_mga_warp.h
+index 7d8072f..d571646 100644
+--- a/src/include/86box/vid_mga_warp.h
++++ b/src/include/86box/vid_mga_warp.h
+@@ -1,5 +1,5 @@
+-/* MGA-Glide local patch: the G400's WARP setup engine, at a high level
+- * (src/video/vid_mga_warp.c). */
++/* MGA-Glide local patch: the WARP setup engine of the G400 and the G200,
++ * at a high level (src/video/vid_mga_warp.c). */
+ #ifndef VIDEO_MGA_WARP_H
+ #define VIDEO_MGA_WARP_H
+ #include <stdint.h>
+@@ -15,6 +15,7 @@ int mgawarp_pipe_of(const uint8_t *code, int len);
+ 
+ /* What a triangle's setup needs of the chip's registers. */
+ typedef struct {
++    int      g200;                  /* the G200 (one WARP, one map) rather than the G400 */
+     int      pipe;                  /* MGAWARP_* */
+     uint32_t dwgctl, maccess, wflag;
+     uint32_t texctl, texwidth, texheight;       /* map 0 */
+diff --git a/src/video/vid_mga.c b/src/video/vid_mga.c
+index 0f097fc..10a732f 100644
+--- a/src/video/vid_mga.c
++++ b/src/video/vid_mga.c
+@@ -131,11 +131,12 @@ mga_hazard(int kind, const char *fmt, ...)
+ #define MGA_TCACHE_LINES 1024
+ #define MGA_TCACHE_LINE  32
+ /* MGA-Glide local patch: a write to a drawing register's address plus 100h
+- * starts the engine, except that on the G400 1DC0h-1DFFh (WIADDR, WFLAG,
+- * WGETMSB, WVRTXSZ, WACCEPTSEQ, WIADDR2, WFLAG1) and 2D00h-2DFFh (WR0-WR63)
+- * are the WARP's registers. */
++ * starts the engine, except that on the G200 and G400 1DC0h-1DFFh (WIADDR,
++ * WFLAG, WGETMSB, WVRTXSZ; the G400's WACCEPTSEQ, WIADDR2, WFLAG1) and
++ * 2D00h-2DFFh (WR0-WR63) are the WARP's registers. */
+ #define MGA_EXEC_ADDR(m, a) ((((a) & 0x300) == 0x100) && \
+-                             !((m)->type >= MGA_G400 && (((a) & 0x3fc0) == 0x1dc0 || ((a) & 0x3f00) == 0x2d00)))
++                             !((m)->type >= MGA_G200 && (((a) & 0x3fc0) == 0x1dc0 || ((a) & 0x3f00) == 0x2d00)))
++#define MGA_HAS_WARP(m) ((m)->type >= MGA_G200)   /* MGA-Glide local patch: the G200 (one WARP) and the G400 (two) */
+ #define MGA_BUS_FIFO(m) ((m)->type <= MGA_1064SG ? 32 : (m)->type >= MGA_G400 ? 16 : 64)
+ 
+ #define FIFO_SIZE        65536
+@@ -1907,8 +1908,8 @@ mystique_ctrl_read_b(uint32_t addr, void *priv)
+                 break;
+             case REG_STATUS + 2:
+                 ret = (mystique->status >> 16) & 0xff;
+-                if (mystique->warp.running)
+-                    ret |= 0x0c;        /* MGA-Glide local patch: wbusy, wbusy1 (also while waiting for vertices) */
++                if (mystique->warp.running)     /* MGA-Glide local patch: wbusy, and the G400's wbusy1 (also while waiting for vertices) */
++                    ret |= mystique->type >= MGA_G400 ? 0x0c : 0x04;
+                 if (mystique->busy || ((mystique->blitter_submit_refcount + mystique->blitter_submit_dma_refcount) != mystique->blitter_complete_refcount) || !FIFO_EMPTY
+                 || mystique->dma.state != MGA_DMA_STATE_IDLE || mystique->softrap_pending || mystique->endprdmasts_pending)
+                     ret |= (STATUS_DWGENGSTS >> 16);
+@@ -2662,7 +2663,7 @@ mystique_ctrl_read_l(uint32_t addr, void *priv)
+ 
+     if ((addr & 0x3fff) < 0x1c00)
+         return mystique_iload_read_l(addr, priv);
+-    if (mystique->type >= MGA_G400) {   /* MGA-Glide local patch: WMISC, WIMEMDATA (WARP0's word at WIMEMADDR) */
++    if (MGA_HAS_WARP(mystique)) {   /* MGA-Glide local patch: WMISC, WIMEMDATA (WARP0's word at WIMEMADDR) */
+         const uint32_t a = addr & 0x3fff;
+         if (a == 0x1e70)
+             return mystique->warp.wmisc;
+@@ -2670,7 +2671,7 @@ mystique_ctrl_read_l(uint32_t addr, void *priv)
+             memcpy(&ret, &mystique->warp.imem[0][(mystique->warp.imem_addr & 0xff) * 8 + (a & 4)], 4);
+             return ret;
+         }
+-        if (a >= 0x2100 && a < 0x2180)
++        if (a >= 0x2100 && a < 0x2180 && mystique->type >= MGA_G400)
+             return 0;               /* (WARP1's words are read through WIMEMADDR1, as on the G400) */
+     }
+ 
+@@ -3022,9 +3023,12 @@ mystique_accel_ctrl_write_l_raw(uint32_t addr, uint32_t val, void *priv)
+             mystique->tdualstage[((addr & 0x3ffc) - REG_TDUALSTAGE0) >> 2] = val;
+             break;
+ 
+-        /* MGA-Glide local patch: the WARP's queued registers (G400). */
++        /* MGA-Glide local patch: the WARP's queued registers (G200, G400). */
+         case 0x1dc0:    /* WIADDR */
+-        case 0x1dd8:    /* WIADDR2 */
++            if (MGA_HAS_WARP(mystique))
++                warp_start(mystique, val);
++            break;
++        case 0x1dd8:    /* WIADDR2 (reserved on the G200) */
+             if (mystique->type >= MGA_G400)
+                 warp_start(mystique, val);
+             break;
+@@ -3039,17 +3043,20 @@ mystique_accel_ctrl_write_l_raw(uint32_t addr, uint32_t val, void *priv)
+             mystique->warp.vdw = mystique->warp.vn = 0;
+             break;
+         case 0x1dd4:
++            if (mystique->type < MGA_G400)
++                break;      /* (reserved on the G200: no ACCEPT sequencer) */
+             mystique->warp.wacceptseq = val;
+             mystique->warp.vdw = mystique->warp.vn = 0;     /* (the sequencer starts again: seqptr to seqdst0) */
+             mystique->warp.seq_first = 1;
+             mystique->warp.seqptr    = 0;
+             break;
+         case 0x1de0:
+-            mystique->warp.wflag1 = val;
++            if (mystique->type >= MGA_G400)
++                mystique->warp.wflag1 = val;
+             break;
+ 
+         default:
+-            if (mystique->type >= MGA_G400 && (addr & 0x3ffc) >= 0x2d00 && (addr & 0x3ffc) <= 0x2dfc) {
++            if (MGA_HAS_WARP(mystique) && (addr & 0x3ffc) >= 0x2d00 && (addr & 0x3ffc) <= 0x2dfc) {
+                 mystique->warp.wr[((addr & 0x3ffc) - 0x2d00) >> 2] = val;   /* WR0-WR63 */
+                 break;
+             }
+@@ -3341,7 +3348,7 @@ warp_start(mystique_t *mystique, uint32_t wiaddr)
+             if (!(mystique->warp.wmisc & 1)) {
+                 const int off = (int) (a & 0x7ff);
+                 mystique->warp.pipe = mgawarp_pipe_of(mystique->warp.imem[0] + off, 2048 - off);
+-                if (mystique->warp.loads >= 3) {
++                if (mystique->warp.loads >= 3 && mystique->type >= MGA_G400) {   /* (not known on the G200) */
+                     /* A real G400's WARPs do not start after the third load
+                      * of their instruction memories since a soft reset: no
+                      * busy bits, and vertices are not taken (MGA-Glide's
+@@ -3385,7 +3392,7 @@ warp_input(mystique_t *mystique, uint32_t val)
+ 
+     if (!mystique->warp.running)
+         return;
+-    if ((seq & (1u << 28)) || mystique->warp.seq_first) {
++    if (mystique->type < MGA_G400 || (seq & (1u << 28)) || mystique->warp.seq_first) {   /* (the G200: lists only) */
+         /* Three vertices a triangle: lists (seqoff), and the first
+          * triangle of a sequence (its primsz, contiguous in the WR banks). */
+         mystique->warp.v[mystique->warp.vn][mystique->warp.vdw++] = val;
+@@ -3418,6 +3425,7 @@ warp_input(mystique_t *mystique, uint32_t val)
+         if (++mystique->warp.seqptr > (int) ((seq >> 24) & 3))
+             mystique->warp.seqptr = 0;
+     }
++    r.g200       = mystique->type < MGA_G400;
+     r.pipe       = mystique->warp.pipe;
+     r.dwgctl     = mystique->dwgreg.dwgctrl;
+     r.maccess    = mystique->maccess;
+@@ -3440,6 +3448,10 @@ warp_input(mystique_t *mystique, uint32_t val)
+ static int
+ warp_host_write(mystique_t *mystique, uint32_t a, uint32_t val)
+ {
++    if (mystique->type < MGA_G400) {    /* the G200: no second WARP (WIMEMDATA1, WIADDRNB2, WFLAGNB1 are reserved) */
++        if ((a >= 0x2080 && a < 0x2c00) || a == 0x1e00 || a == 0x1e04 || a == 0x1e08)
++            return 1;
++    }
+     if ((a >= 0x2000 && a < 0x2080) || (a >= 0x2100 && a < 0x2180)) {     /* WIMEMDATA, WIMEMDATA1 */
+         const int k = mystique->warp.imem_addr & 0xff;
+         if (a < 0x2100 && k == 0 && !mystique->warp.imem_half)
+@@ -3479,7 +3491,7 @@ mystique_ctrl_write_l(uint32_t addr, uint32_t val, void *priv)
+     mystique_t *mystique = (mystique_t *) priv;
+     uint32_t    reg_addr;
+ 
+-    if (mystique->type >= MGA_G400 && warp_host_write(mystique, addr & 0x3fff, val))
++    if (MGA_HAS_WARP(mystique) && warp_host_write(mystique, addr & 0x3fff, val))
+         return;
+ 
+     if ((addr & 0x3fff) < 0x1c00) {
+@@ -3632,7 +3644,7 @@ mystique_accel_iload_write_l(UNUSED(uint32_t addr), uint32_t val, void *priv)
+             break;
+ 
+         case 3:     /* MGA-Glide local patch: DMA vertex write, to the WARP */
+-            if (mystique->type >= MGA_G400)
++            if (MGA_HAS_WARP(mystique))
+                 warp_input(mystique, val);
+             break;
+ 
+@@ -3832,7 +3844,7 @@ run_dma(mystique_t *mystique)
+                         }
+                         break;
+ 
+-                    case 3:     /* MGA-Glide local patch: DMA vertex write, to the WARP (G400) */
++                    case 3:     /* MGA-Glide local patch: DMA vertex write, to the WARP (G200, G400) */
+                         if ((mystique->dma.primaddress & DMA_ADDR_MASK) == (mystique->dma.primend & DMA_ADDR_MASK)) {
+                             mystique->endprdmasts_pending = 1;
+                             mystique->dma.state           = MGA_DMA_STATE_IDLE;
+@@ -3843,7 +3855,7 @@ run_dma(mystique_t *mystique)
+                             dma_bm_read(mystique->dma.primaddress & DMA_ADDR_MASK, (uint8_t *) &val, 4, 4);
+                             mystique->dma.primaddress += 4;
+                             words_transferred++;
+-                            if (mystique->type >= MGA_G400)
++                            if (MGA_HAS_WARP(mystique))
+                                 warp_input(mystique, val);
+                         }
+                         if ((mystique->dma.primaddress & DMA_ADDR_MASK) == (mystique->dma.primend & DMA_ADDR_MASK)) {
+@@ -3965,13 +3977,13 @@ run_dma(mystique_t *mystique)
+                         }
+                         break;
+ 
+-                    case 3:     /* MGA-Glide local patch: DMA vertex write, to the WARP (G400) */
++                    case 3:     /* MGA-Glide local patch: DMA vertex write, to the WARP (G200, G400) */
+                         if ((mystique->dma.secaddress & DMA_ADDR_MASK) < (mystique->dma.secend & DMA_ADDR_MASK)) {
+                             uint32_t val;
+                             dma_bm_read(mystique->dma.secaddress & DMA_ADDR_MASK, (uint8_t *) &val, 4, 4);
+                             mystique->dma.secaddress += 4;
+                             words_transferred++;
+-                            if (mystique->type >= MGA_G400)
++                            if (MGA_HAS_WARP(mystique))
+                                 warp_input(mystique, val);
+                         }
+                         if ((mystique->dma.secaddress & DMA_ADDR_MASK) >= (mystique->dma.secend & DMA_ADDR_MASK)) {
+diff --git a/src/video/vid_mga_warp.c b/src/video/vid_mga_warp.c
+index c2abe8b..4724dec 100644
+--- a/src/video/vid_mga_warp.c
++++ b/src/video/vid_mga_warp.c
+@@ -1,8 +1,11 @@
+ /*
+- * MGA-Glide local patch: the Matrox G400's WARP setup engine, at a high
+- * level. The real WARP runs Matrox's microcode (Linux's linux-firmware
+- * matrox/g400_warp.fw, MIT, Copyright 1999 Matrox Graphics Inc.), whose
+- * instruction set is not public. This recognises a pipe by its microcode
++ * MGA-Glide local patch: the WARP setup engine of the Matrox G400 and G200,
++ * at a high level. The real WARP runs Matrox's microcode (Linux's
++ * linux-firmware matrox/g400_warp.fw and g200_warp.fw, MIT, Copyright 1999
++ * Matrox Graphics Inc.), whose instruction set is not public. On the G200
++ * the model sets triangles up with the HAL's G200 capabilities (18-bit AR
++ * fields, one map, its texel convention): that the real G200's WARP draws
++ * the same is what MGA-Glide's docs/g200-warp.md checks on the card. This recognises a pipe by its microcode
+  * and does the pipe's setup with MGA-Glide's own triangle setup
+  * (mgahal/trap.c, MIT, Copyright 2026 The Nulph; see mgahal/LICENSE): on
+  * a real G400 the WARP's Gouraud triangles matched that setup's but for
+@@ -83,6 +86,22 @@ static const struct {
+     { 1256, 0x68534fffu, 0xf }, /* T2GZSAF */
+ };
+ 
++/* The G200's eight pipes in g200_warp.fw (no two-texture pipes). */
++static const struct {
++    int      len;
++    uint32_t crc;
++    int      pipe;
++} g200_pipes[] = {
++    { 1208, 0x16bbe132u, 0x0 }, /* TGZ */
++    { 1352, 0x1f233016u, 0x1 }, /* TGZF */
++    { 1256, 0x384b8a1eu, 0x2 }, /* TGZA */
++    { 1384, 0x1593f083u, 0x3 }, /* TGZAF */
++    { 1472, 0x143e4d32u, 0x4 }, /* TGZS */
++    { 1504, 0x910bff38u, 0x5 }, /* TGZSF */
++    { 1504, 0xe98234ddu, 0x6 }, /* TGZSA */
++    { 1464, 0x1ec97179u, 0x7 }, /* TGZSAF */
++};
++
+ static uint32_t
+ crc32_of(const uint8_t *p, int n)
+ {
+@@ -103,6 +122,9 @@ mgawarp_pipe_of(const uint8_t *code, int len)
+     for (i = 0; i < (int) (sizeof g400_pipes / sizeof g400_pipes[0]); i++)
+         if (g400_pipes[i].len <= len && crc32_of(code, g400_pipes[i].len) == g400_pipes[i].crc)
+             return g400_pipes[i].pipe;
++    for (i = 0; i < (int) (sizeof g200_pipes / sizeof g200_pipes[0]); i++)
++        if (g200_pipes[i].len <= len && crc32_of(code, g200_pipes[i].len) == g200_pipes[i].crc)
++            return g200_pipes[i].pipe;
+     return -1;
+ }
+ 
+@@ -165,8 +187,9 @@ wrap_shift(mga_svtx *v, int map1, int clamp_u, int clamp_v)
+ }
+ 
+ /* A map's size from TEXWIDTH/TEXHEIGHT's mask field (<28:18>): the tw
+- * field holds log2 + 11 under the WARP (Mesa's values) but log2 under
+- * MGA-Glide's own setup, and the mask is the same under both. */
++ * field holds log2 + 11 (G400) or + 28 (G200) under the WARP (Mesa's
++ * values) but log2 under MGA-Glide's own setup, and the mask is the same
++ * under all of them. */
+ static int
+ log2_of_mask(uint32_t wh)
+ {
+@@ -181,7 +204,7 @@ void
+ mgawarp_triangle(const uint32_t *d0, const uint32_t *d1, const uint32_t *d2, const mgawarp_regs *r,
+                  void (*wr)(void *p, uint32_t reg, uint32_t val), void *p)
+ {
+-    const int    t2       = !!(r->pipe & MGAWARP_T2);
++    const int    t2       = !r->g200 && (r->pipe & MGAWARP_T2);
+     const int    textured = (r->dwgctl & 0xf) == DWG_OPCOD_TEXTURE_TRAP;
+     const int    atype    = (int) ((r->dwgctl >> 4) & 7);
+     const int    zmode    = (int) ((r->dwgctl >> 8) & 7);
+@@ -194,18 +217,28 @@ mgawarp_triangle(const uint32_t *d0, const uint32_t *d1, const uint32_t *d2, con
+     vertex(d2, t2, zmax, &v[2]);
+ 
+     memset(&mgawarp_chip, 0, sizeof mgawarp_chip);
+-    mgawarp_chip.family       = MGA_FAMILY_G400;
+-    mgawarp_chip.fifo_depth   = 16;
+-    mgawarp_chip.fifo_mask    = 0x1f;
+-    mgawarp_chip.ar_bits      = 22;
+     mgawarp_chip.has_dwgsync  = 1;
+     mgawarp_chip.has_dstorg   = 1;
+     mgawarp_chip.has_texctl2  = 1;
+     mgawarp_chip.has_alpha_blend = 1;
+     mgawarp_chip.has_alpha_test  = 1;
+     mgawarp_chip.has_specular = 1;
+-    mgawarp_chip.has_dual_tex = 1;
+-    mgawarp_chip.texel_centre = 1;
++    if (r->g200) {                      /* (the HAL's mga_chip_caps for the G200) */
++        mgawarp_chip.family       = MGA_FAMILY_G200;
++        mgawarp_chip.fifo_depth   = 64;
++        mgawarp_chip.fifo_mask    = 0x7f;
++        mgawarp_chip.ar_bits      = 18;
++        mgawarp_chip.has_ydstorg  = 1;
++        mgawarp_chip.has_tlut     = 1;
++        mgawarp_chip.has_decalblend = 1;
++    } else {
++        mgawarp_chip.family       = MGA_FAMILY_G400;
++        mgawarp_chip.fifo_depth   = 16;
++        mgawarp_chip.fifo_mask    = 0x1f;
++        mgawarp_chip.ar_bits      = 22;
++        mgawarp_chip.has_dual_tex = 1;
++        mgawarp_chip.texel_centre = 1;
++    }
+     mgawarp_setup_valid       = 0;      /* the host may have written any register since: write them all */
+ 
+     memset(&ctx, 0, sizeof ctx);

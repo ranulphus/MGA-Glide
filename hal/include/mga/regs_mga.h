@@ -181,11 +181,11 @@
 #define DWG_CLIPDIS             (1u << 31)
 
 /* ---- WARP setup engine (G200/G400; G400 specification 3-260..3-278) ------- */
-#define MGAREG_WIADDR       0x1DC0      /* WARP0's instruction address and mode (FIFO) */
+#define MGAREG_WIADDR       0x1DC0      /* WARP0's instruction address and mode (FIFO); the G200's start */
 #define MGAREG_WFLAG        0x1DC4
 #define MGAREG_WGETMSB      0x1DC8
 #define MGAREG_WVRTXSZ      0x1DCC      /* registers a vertex, minus one; primsz <13:8> */
-#define MGAREG_WACCEPTSEQ   0x1DD4
+#define MGAREG_WACCEPTSEQ   0x1DD4      /* G400 (reserved on the G200) */
 #define MGAREG_WIADDR2      0x1DD8      /* G400: both WARPs */
 #define MGAREG_WFLAG1       0x1DE0      /* G400: WARP1's flags */
 #define MGAREG_WIADDRNB2    0x1E00      /* WIADDR2 bypassing the FIFO */
@@ -194,6 +194,7 @@
 #define MGAREG_WIMEMADDR    0x1E68      /* instruction memory word (0-255) for WIMEMDATA */
 #define MGAREG_WCODEADDR    0x1E6C
 #define MGAREG_WMISC        0x1E70
+#define MGAREG_AGP_PLL      0x1E4C      /* G200-AGP: agp2xpllen <0>, needed for AGP 2x (G200 specification 3-30) */
 #define MGAREG_WIMEMDATA    0x2000      /* WARP0's instruction memory: two dwords a 64-bit word */
 #define MGAREG_WIMEMDATA1   0x2100      /* G400: WARP1's */
 #define MGAREG_WR(n)        (0x2D00 + 4u * (n))   /* WR0-WR63 */

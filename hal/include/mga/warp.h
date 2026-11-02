@@ -1,7 +1,7 @@
-/* warp.h - the G400's WARP setup engine (docs/g400-warp.md): triangles set
- * up by the chip from floating-point vertices (the pipe in the WARPs'
- * instruction memories; vertices by bus-master DMA, or through the DMA
- * window by the CPU). */
+/* warp.h - the WARP setup engine of the G400 (docs/g400-warp.md) and the
+ * G200 (docs/g200-warp.md): triangles set up by the chip from
+ * floating-point vertices (the pipe in the WARPs' instruction memories;
+ * vertices by bus-master DMA, or through the DMA window by the CPU). */
 #ifndef MGA_WARP_H
 #define MGA_WARP_H
 #include "mga/types.h"
@@ -23,19 +23,26 @@ typedef struct {
 /* Pipe flags (Linux's mga_drm.h numbers the pipes by them). */
 enum { WARP_F = 1, WARP_A = 2, WARP_S = 4, WARP_T2 = 8 };
 
-/* 1 when the chip has a WARP this HAL drives (the G400 family). */
+/* 1 when the chip has a WARP this HAL drives: the G400 family, and the
+ * G200 when warp_g200 is set (off until the real card has passed:
+ * docs/g200-warp.md). The G200 has pipes 0-7 only (no WARP_T2) and no
+ * sequencer (warp_reserve_seq returns NULL). */
 int  warp_available(void);
+extern int warp_g200;
 /* The pipe loaded and started (loaded only if another one is in the
  * instruction memories). 0, or -1 when the WARP did not start: then
  * nothing may be sent (a WARP that takes no vertices stalls the bus). */
 int  warp_select(int pipe);
-/* WR54/WR62 (map 0) and WR52/WR60 (map 1): TEXWIDTH/TEXHEIGHT values for
- * the pipe's texture scaling, 0 for none. */
+/* WR54/WR62 (map 0) and WR52/WR60 (map 1), or the G200's WR24/WR34 (map
+ * 0 only): TEXWIDTH/TEXHEIGHT values for the pipe's texture scaling, 0 for
+ * none. */
 void warp_tex_sizes(uint32_t w0, uint32_t h0, uint32_t w1, uint32_t h1);
 /* A map's size for the WARP: TEXWIDTH and TEXHEIGHT as Mesa's mga driver
- * writes them for a G400 (tw = log2 + 11, rfw = 2 - log2: the microcode
- * scales the TMRs it writes by them) and the pipe's WR registers. Map 1 is
- * written through TEXCTL2.map1; texctl2 is TEXCTL2's value without it. */
+ * writes them (tw = log2 + 11 on a G400, + 28 on a G200; rfw = 2 - log2:
+ * the microcode scales the TMRs it writes by them) and the pipe's WR
+ * registers (WR54/WR62 on the G400, WR24/WR34 on the G200). Map 1 (the
+ * G400 only) is written through TEXCTL2.map1; texctl2 is TEXCTL2's value
+ * without it. */
 void warp_tex(int map, int log2w, int log2h, uint32_t texctl2);
 /* n vertices, three a triangle: into the DMA buffer (sent when it fills or
  * before the next register write), or through the DMA window in vertex

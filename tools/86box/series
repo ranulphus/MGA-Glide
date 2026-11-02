@@ -38,3 +38,4 @@ local/0122-mga-g400-warp.patch
 local/0123-mga-g400-warp-sequencer.patch
 local/0124-mga-g400-silicon-checks.patch
 local/0125-mga-g400-as-measured.patch
+local/0126-mga-g200-warp.patch
