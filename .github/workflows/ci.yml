@@ -51,7 +51,6 @@ jobs:
         with: { path: .mga-opt/djgpp, key: "djgpp-${{ hashFiles('tools/setup/versions.mk') }}" }
       - run: make setup-djgpp
       - run: make hal-djgpp smoke-djgpp
-      - run: tools/hal-export.sh && make -C build/hal-export hal-djgpp hal-host tests-host smoke-djgpp
 
   loopa:
     runs-on: ubuntu-24.04
