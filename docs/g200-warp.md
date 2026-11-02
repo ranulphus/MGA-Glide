@@ -57,6 +57,22 @@ WARPTRI passes in Loop A on the emulated G200 (2026-11-01), by DMA and by the CP
 and Gouraud and depth triangles through the WARP match `setup_triangle` pixel for pixel. The G400's WARPTRI and
 `seq` still pass with the patch.
 
+## In emulation (2026-11-02)
+
+- **DOS-GL's conformance** on the emulated G200 passes 32 of 32 both ways. With `DGL_WARP=1`, 31 tests draw through
+  the WARP (the other draws no triangles). Against the CPU's setup, 16 frames are identical. In the other 17, almost
+  every difference is within 8-17 levels: dithering and colour rounding, as on the emulated G400 (the same tests, the
+  same pixel counts). The largest is 41 levels, on 82 pixels of t25's combine grid. No texel moves, so tw = log2 + 28
+  and the half-texel shift agree with the CPU's path.
+- **A DOS-GL bug the WARP brought out (t19):** loading a TW8 texture's palette into the LUT may sync, which ended the
+  draw's busy mark on the texture, so a `glTexSubImage2D` after the draw wrote in place under triangles still queued.
+  The G400 never loads the LUT. DOS-GL now loads the LUT before it marks the texture. The CPU's path had the same race,
+  less often; t19 is now byte-identical both ways.
+- **Glide** (`warp=2`) on the emulated G200: GTA's trace drew 39,253 triangles through the WARP and Screamer Rally's
+  3,320, with no failures. Against `warp=0`, 2 frames are identical and 4 differ on 10-164 pixels, where the WARP's
+  edges meet the CPU's Voodoo-exact edges.
+- **The session** (G6) is `tools/bench/g200-session.sh`.
+
 ## The plan
 
 | Step | What | Where |
@@ -65,8 +81,8 @@ and Gouraud and depth triangles through the WARP match `setup_triangle` pixel fo
 | G1 | `warp_g200.h` from linux-firmware; `tools/warpfw.py` (it reproduces `warp_g400.h`'s bytes too) | done |
 | G2 | The HAL's G200 path; WARPTRI on the G200 | done |
 | G3 | 86Box: patch 0126 | done |
-| G4 | DOS-GL: the G200 under `DGL_WARP=1`; the half-texel shift; conformance and the games in Loop A on the emulated G200, the WARP against the CPU's setup | DOS-GL |
-| G5 | Glide (`mg_config.warp`) on the emulated G200: the acceptance games' replays | MGA-Glide |
+| G4 | DOS-GL: the G200 under `DGL_WARP=1`; the half-texel shift; conformance in Loop A on the emulated G200, the WARP against the CPU's setup | done (below) |
+| G5 | Glide `warp=2` on the emulated G200: the acceptance games' traces | done (below) |
 | G6 | The real card: one session (below) | bench-g400's PC with the G200 in it |
 | G7 | `warp_g200` on by default (and DOS-GL's default); Echoes of the Void's presets re-based | all |
 
