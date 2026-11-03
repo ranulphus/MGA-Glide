@@ -678,7 +678,11 @@ def run(a):
             d.get_dir("/OUT", files)
         for fn in sorted(os.listdir(files)) if os.path.isdir(files) else []:
             if fn.upper().endswith(".PPM"):
-                w, h, rgb = png.read_ppm(os.path.join(files, fn))
+                try:
+                    w, h, rgb = png.read_ppm(os.path.join(files, fn))
+                except ValueError:
+                    result.setdefault("bad_ppm", []).append(fn)   # (cut short: the guest stopped while writing it)
+                    continue
                 png.write_png(os.path.join(out, fn[:-4].lower() + ".png"), w, h, rgb)
         vm_nvr = os.path.join(vm, "nvr")
         if status == "PASS" and not a.hdd and not os.path.isdir(nvr_cache) and os.path.isdir(vm_nvr):

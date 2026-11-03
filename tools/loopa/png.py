@@ -10,12 +10,14 @@ def read_ppm(path):
     while len(parts) < 4:
         while data[i:i + 1].isspace():
             i += 1
+        if i >= len(data):                      # (a frame the guest never finished writing: 0 bytes, or a header
+            raise ValueError("truncated PPM: %s" % path)        # cut short; the loops below would never end)
         if data[i:i + 1] == b"#":
             while data[i:i + 1] not in (b"\n", b""):
                 i += 1
             continue
         j = i
-        while not data[j:j + 1].isspace():
+        while j < len(data) and not data[j:j + 1].isspace():
             j += 1
         parts.append(data[i:j])
         i = j
