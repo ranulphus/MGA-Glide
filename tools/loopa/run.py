@@ -772,8 +772,9 @@ def main():
     ap.add_argument("--dynarec", type=int, choices=(0, 1), default=1, help="86Box's dynamic recompiler")
     ap.add_argument("--boot-cfg", choices=["default"] + sorted(d[4:] for d in os.listdir(HERE) if d.startswith("dos-")),
                     default="default", help="boot floppy variant: default (FreeDOS 1.4, no XMS driver), himemx "
-                    "(HIMEMX.EXE and DOS=HIGH), glosshell and glosshell-himemx (GLOS as the shell, from "
-                    "C:\\TEST\\GLOS.EXE); tools/loopa/mkgolden-variant.sh")
+                    "(HIMEMX.EXE and DOS=HIGH), umbpci (UMBPCI.SYS's UMBs, HIMEMX, DOS=HIGH,UMB), glosshell, "
+                    "glosshell-himemx and glosshell-umbpci (GLOS as the shell, from C:\\TEST\\GLOS.EXE); "
+                    "tools/loopa/mkgolden-variant.sh")
     ap.add_argument("--timeout", type=float, default=float(os.environ.get("LOOPA_TIMEOUT", 300)))
     ap.add_argument("--idle", type=float, default=float(os.environ.get("LOOPA_IDLE", 60)))
     ap.add_argument("--boot-grace", type=float, default=45)

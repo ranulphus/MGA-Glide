@@ -34,3 +34,9 @@ CRYNWR_SHA256  := b5761639a1bf4ad4fa93bfa4643ca62ae46d08412c78d45ae1b5e10d91d0b9
 # "himemx" boot (tools/loopa/mkgolden-variant.sh): the Loop A floppy has none.
 HIMEMX_URL     := https://www.ibiblio.org/pub/micro/pc-stuff/freedos/files/repositories/1.4/base/himemx.zip
 HIMEMX_SHA256  := 99b44e5bbb878105486e172675a460f645cdfb5a86cc1cf1e0e549fa31f29ce6
+
+# UMBPCI 3.90 (Uwe Sieber, freeware): upper memory blocks from the chipset's shadow RAM, with HIMEMX, for Loop A's
+# "umbpci" boots (GLOS's docs/upper-memory.md B1). A test baseline only: fetched into the cache, never committed
+# or shipped.
+UMBPCI_URL     := https://www.uwe-sieber.de/files/umbpci.zip
+UMBPCI_SHA256  := 3ed6cb5ac9b7f0f33ffb70a6b1b8a4c5be33ab13b7c1d872343dbaf1d2f8deed

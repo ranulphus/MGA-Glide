@@ -25,6 +25,8 @@ Each check runs one short job through run.py and looks at its result:
           kind as many times as it commits it; WARPTRI by AGP from cached
           conventional memory reports agp-cached, at 2x as on bench-g400;
           PROBE sees revision 05
+  umbpci  --boot-cfg umbpci on the bf6 (a 440BX): UMBINFO finds free upper
+          memory blocks (and none on the default boot), and HELLO runs
   clock   CLOCKMON: a minute of uclock() alone, then a minute of the DJGPP
           port's sys_time_us() alone: sys_time_us() never goes back, though
           uclock() steps back a tick (54.9 ms) 3 to 5 times a minute, when
@@ -216,6 +218,20 @@ def check_hazards():
     return ok
 
 
+def check_umbpci():
+    umb = ("--file", "build/ow/dos/UMBINFO.COM=/HX/UMBINFO.COM", "--exe", "build/ow/dos/HELLO.EXE", "--pre", "UMBINFO")
+    out = {}
+    for cfg in ("default", "umbpci"):
+        st, serial = job("selftest-umbpci-" + cfg, "--boot-cfg", cfg, *umb)
+        line = next((l for l in serial.split("\n") if l.startswith("HX-UMB")), "")
+        f = dict(kv.split("=") for kv in line.split()[1:]) if line else {}
+        out[cfg] = (st, line, int(f.get("free", "-1")))
+    good = out["default"][0] == "PASS" and out["default"][2] == 0 and out["umbpci"][0] == "PASS" and \
+        out["umbpci"][2] > 32768
+    return report("umbpci", good, "default %s %s; umbpci %s %s" % (out["default"][0], out["default"][1] or "no HX-UMB",
+                                                                    out["umbpci"][0], out["umbpci"][1] or "no HX-UMB"))
+
+
 def check_clock():
     st, serial = job("selftest-clock", "--exe", "build/djgpp/CLOCKMON.EXE", "--args", "60")
     stat = next((l for l in serial.split("\n") if l.startswith("HX-STAT clock ")), "")
@@ -225,7 +241,8 @@ def check_clock():
 
 
 CHECKS = {"486": check_486, "vbe": check_vbe, "net": check_net, "com2": check_com2, "himemx": check_himemx,
-          "cpu": check_cpu, "pci": check_pci, "rtc": check_rtc, "hazards": check_hazards, "clock": check_clock}
+          "cpu": check_cpu, "pci": check_pci, "rtc": check_rtc, "hazards": check_hazards, "clock": check_clock,
+          "umbpci": check_umbpci}
 
 
 def main():

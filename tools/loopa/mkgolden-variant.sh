@@ -6,6 +6,8 @@
 #   glosshell       GLOS as the shell: SHELL=C:\TEST\GLOS.EXE /SHELL ... (the
 #                   job puts GLOS.EXE there with --file)
 #   glosshell-himemx  the same with HIMEMX.EXE and DOS=HIGH
+#   umbpci          UMBPCI.SYS (UMBs from the chipset's shadow RAM) and HIMEMX.EXE, with DOS=HIGH,UMB
+#   glosshell-umbpci  the same with GLOS as the shell
 # Cached in $MGA_CACHE/loopa/golden-VARIANT-KEY; prints that directory.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -13,9 +15,9 @@ root=$(cd "$here/../.." && pwd)
 variant=$1
 [ -d "$here/dos-$variant" ] || { echo "mkgolden-variant: no $here/dos-$variant" >&2; exit 1; }
 cache=${MGA_CACHE:-$HOME/.cache/mga-glide}
-eval "$(sed -n 's/^\(HIMEMX_[A-Z0-9]*\) *:= *\(.*\)$/\1=\2/p' "$root/tools/setup/versions.mk")"
+eval "$(sed -n 's/^\(\(HIMEMX\|UMBPCI\)_[A-Z0-9]*\) *:= *\(.*\)$/\1=\3/p' "$root/tools/setup/versions.mk")"
 base=$("$here/mkgolden.sh" | tail -1)
-key=$( { basename "$base"; cat "$0" "$here/dos-$variant"/*; echo "$HIMEMX_SHA256"; } | sha256sum | cut -c1-12)
+key=$( { basename "$base"; cat "$0" "$here/dos-$variant"/*; echo "$HIMEMX_SHA256"; case $variant in *umbpci) echo "$UMBPCI_SHA256";; esac; } | sha256sum | cut -c1-12)
 gold=$cache/loopa/golden-$variant-$key
 exec 9>"$cache/loopa/.golden.lock"
 flock 9
@@ -29,10 +31,16 @@ for f in "$here/dos-$variant"/*; do
   mcopy -o -i "$b" "$f" "::/$(basename "$f")"
 done
 case $variant in
-  himemx|*-himemx)
+  himemx|*-himemx|umbpci|*-umbpci)
     "$root/tools/setup/fetch.sh" "$HIMEMX_URL" "$HIMEMX_SHA256" "$tmp/himemx.zip"
     unzip -q -o -j "$tmp/himemx.zip" BIN/HimemX.exe -d "$tmp"
     mcopy -o -i "$b" "$tmp/HimemX.exe" ::/HIMEMX.EXE ;;
+esac
+case $variant in
+  umbpci|*-umbpci)
+    "$root/tools/setup/fetch.sh" "$UMBPCI_URL" "$UMBPCI_SHA256" "$tmp/umbpci.zip"
+    unzip -q -o -j "$tmp/umbpci.zip" UMBPCI.SYS -d "$tmp"
+    mcopy -o -i "$b" "$tmp/UMBPCI.SYS" ::/UMBPCI.SYS ;;
 esac
 rm -rf "$gold"; mv "$gold.part" "$gold"
 echo "$gold"
