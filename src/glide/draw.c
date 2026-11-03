@@ -142,7 +142,6 @@ static int warp_tw = -1, warp_th = -1;  /* the map size the WARP's registers hol
 static void warp_prepare(void)
 {
     if (warp_ok < 0) {
-        warp_g200 = mg_config.warp >= 2;    /* warp=2: the G200's too, until it has passed on the card (docs/g200-warp.md) */
         warp_ok = mg_config.warp && warp_available();
         warp_use_agp = mg_config.agp;
         if (mg_config.dma_ring_kb >= 32)

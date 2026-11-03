@@ -21,6 +21,10 @@ void mga_chip_caps(mga_chip *c)
         c->has_dwgsync = 1; c->has_dstorg = 1; c->has_ydstorg = 1;
         c->has_texctl2 = 1; c->has_alpha_blend = 1; c->has_alpha_test = 1;
         c->has_tlut = 1; c->has_specular = 1; c->has_decalblend = 1;
+        /* Bilinear filtering at texel centres, as the G400's: DOS-GL's
+         * conformance passes 32 of 32 on a real G200 only so (bench-g400's PC,
+         * 2026-11-03), where the half-texel shift for texel corners failed 5. */
+        c->texel_centre = 1;
         break;
     case MGA_FAMILY_G400:
         c->fifo_depth = 16; c->fifo_mask = 0x1F;

@@ -1,15 +1,17 @@
 /* warptri.c - WARPTRI: the WARP setup engine of the G400 (speed plan W0;
  * docs/g400-warp.md) or the G200 (docs/g200-warp.md) through the HAL's
- * warp.c. On a G200 it turns warp_g200 on, and the G400-only tests (switch=:
+ * warp.c. On a G200 the G400-only tests (switch=:
  * two-texture pipes; seq: the ACCEPT sequencer) report that they don't apply.
  *
- *   WARPTRI [pipe=N] [n=COUNT] [pio] [pads=K] [keep]
- *   WARPTRI starts=N [reload] [pads=K] [keep] [pio]
+ *   WARPTRI [pipe=N] [n=COUNT] [pio] [pci] [pads=K] [keep]
+ *   WARPTRI starts=N [reload] [pads=K] [keep] [pio] [pci]
  *   WARPTRI switch=N [pipe=P]: the cycles of a T0/T2 pipe switch (N triangles on one pipe, then N switching)
  *   WARPTRI hazards: each hazard 86Box's silicon checks report (local patch 0124), beside its safe form
  *
  * The vertices go by bus-master DMA (warp.c's default) or, with pio,
- * through the DMA window by the CPU. pads sets warp_start_pads; keep leaves
+ * through the DMA window by the CPU. By DMA, the HAL turns AGP on where the
+ * card and the bridge have it (warp_use_agp); pci keeps the fetches on PCI
+ * (cached rings), as DOS-GL's DGL_AGP=0 does. pads sets warp_start_pads; keep leaves
  * the engine as it is at exit (as DOS-GL does: the WARP suspended), where
  * WARPTRI otherwise resets it.
  *
@@ -172,7 +174,18 @@ static void flush_caches(void)
     (void)sum;
 }
 
-static int agp_hcap;
+static int agp_hcap;                            /* agp=N: the bridge's AGP capability */
+
+/* With agp=N, after the first start: what the HAL turned on. */
+static void agp_log(void)
+{
+    if (!agp_hcap)
+        return;
+    hx_log("HX-STAT agp ring=%d xfer=%d host cmd=%08lx card cmd=%08lx agp_pll=%08lx", warp_ring_mode, warp_agp_xfer,
+           (unsigned long)mga_pci_read32(0, 0, 0, agp_hcap + 8),
+           (unsigned long)mga_pci_read32(mga.bus, mga.dev, mga.fn, 0xF8),
+           mga.family == MGA_FAMILY_G200 ? (unsigned long)MGA_RD32(MGAREG_AGP_PLL) : 0ul);
+}
 
 int main(int argc, char **argv)
 {
@@ -192,6 +205,7 @@ int main(int argc, char **argv)
         if (!strncmp(argv[i], "pipe=", 5)) pipe = atoi(argv[i] + 5);
         else if (!strncmp(argv[i], "n=", 2)) count = atoi(argv[i] + 2);
         else if (!strcmp(argv[i], "pio")) warp_use_dma = 0;
+        else if (!strcmp(argv[i], "pci")) warp_use_agp = 0;
         else if (!strncmp(argv[i], "pads=", 5)) warp_start_pads = atoi(argv[i] + 5);
         else if (!strncmp(argv[i], "starts=", 7)) starts = atoi(argv[i] + 7);
         else if (!strcmp(argv[i], "reload")) reload = 1;
@@ -210,7 +224,6 @@ int main(int argc, char **argv)
     }
     hx_init(1, argv, "warptri");
     ok = mga_find(&mga) == 0 && mga_map(&mga) == 0;
-    warp_g200 = 1;                              /* (the G200's WARP: this test drives it) */
     if (!ok || !warp_available()) {
         hx_test("init", 0, "a G200, G400 or G450 is needed");
         hx_done(HX_INIT_FAILED);
@@ -247,9 +260,9 @@ int main(int argc, char **argv)
         goto out;
     }
     if (agp_rate) {
-        /* EXPERIMENT: AGP on, the target (host bridge's capability) first,
-         * then the G400 (AGP_CMD F8h), at agp_rate x with sideband
-         * addressing, the card's queue depth the bridge's. */
+        /* AGP at agp_rate x at most: the HAL turns it on at the first start
+         * (warp.c's agp_enable: the bridge, then the card, then the G200's
+         * AGP_PLL) and off at warp_stop. */
         int hcap = (int)(mga_pci_read32(0, 0, 0, 0x34) & 0xFC), k;
         uint32_t hsts, csts, rate = agp_rate == 2 ? 2u : 1u;
         for (k = 0; k < 8 && hcap && (mga_pci_read32(0, 0, 0, hcap) & 0xFF) != 2; k++)
@@ -267,13 +280,9 @@ int main(int argc, char **argv)
             hx_test("agp", 0, "rate %lux or sideband not supported by both", (unsigned long)rate);
             goto out;
         }
-        mga_pci_write32(0, 0, 0, hcap + 8, rate | (1u << 8) | (1u << 9));
-        mga_pci_write32(mga.bus, mga.dev, mga.fn, 0xF8, rate | (1u << 8) | (1u << 9) |
-                        ((((hsts >> 24) & 0xFF) > 31 ? 31u : ((hsts >> 24) & 0xFF)) << 24));
-        hx_log("HX-STAT agp on: host cmd=%08lx card cmd=%08lx", (unsigned long)mga_pci_read32(0, 0, 0, hcap + 8),
-               (unsigned long)mga_pci_read32(mga.bus, mga.dev, mga.fn, 0xF8));
         agp_hcap = hcap;
-        warp_agp_xfer = 1;
+        warp_use_agp = 1;
+        warp_agp_rate = (int)rate;
         warp_pre_kick = agp_noflush ? NULL : flush_caches;   /* (the CPU's writes out of its caches before each fetch) */
         dmabw = !agp_draw;
     }
@@ -285,6 +294,7 @@ int main(int argc, char **argv)
             hx_test("dmabw", 0, "the WARP did not start");
             goto out;
         }
+        agp_log();
         for (k = 0; k < 20; k++) {
             got = warp_dma_bandwidth(8192, rdtsc, &ticks, flush_caches);
             if (got && ticks < best)
@@ -526,6 +536,7 @@ int main(int argc, char **argv)
 
     /* a) the pipe */
     ok = warp_select(pipe) == 0;
+    agp_log();
     {
         uint32_t lo, hi;
         MGA_WR32(MGAREG_WIMEMADDR, 0);
@@ -623,13 +634,8 @@ int main(int argc, char **argv)
                (unsigned long)((t1 - t0) / (uint64_t)count));
     }
 out:
-    warp_stop();
-    if (agp_hcap) {                             /* AGP off again: the card first, then the bridge */
-        warp_agp_xfer = 0;
-        warp_pre_kick = NULL;
-        mga_pci_write32(mga.bus, mga.dev, mga.fn, 0xF8, 0);
-        mga_pci_write32(0, 0, 0, agp_hcap + 8, 0);
-    }
+    warp_stop();                                /* (AGP off again, as it was) */
+    warp_pre_kick = NULL;
     MGA_WR32(MGAREG_OPMODE, opmode_saved);
     if (!keep)
         engine_reset();                         /* the next program finds the engine and the WARPs reset */

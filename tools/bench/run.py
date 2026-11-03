@@ -155,7 +155,19 @@ def build_job(a, pc, cfg, job, token, jd, upload=True):
     addr = pc.get("address", host["address"])
     run = ["C:", "CD \\TEST", "IF NOT EXIST C:\\OUT\\NUL MD C:\\OUT",
            "ECHO Y| DEL C:\\OUT\\*.* > NUL", "SET HX_CAPWAIT=%d" % a.capwait]
-    run += ["SET %s" % s for s in a.set]
+    for spec in a.set:
+        name, _, value = spec.partition("=")
+        if "=" not in value:
+            run += ["SET %s" % spec]
+        elif name.upper() == "MGAGLIDE" and not a.game:
+            # DOS's SET (bench-g400's) answers "Syntax error" to an "=" in a value and sets nothing:
+            # Glide's options go in C:\TEST\MGAGLIDE.CFG instead (read from the current directory).
+            open(os.path.join(jd, "MGAGLIDE.CFG"), "wb").write(("\r\n".join(value.split()) + "\r\n").encode())
+            files.append("MGAGLIDE.CFG")
+        else:
+            run += ["SET %s" % spec]
+            print("bench: warning: some DOSes (bench-g400's) refuse '=' in a SET value (--set %s)" % spec,
+                  file=sys.stderr)
     run += ["SERSAY HX-JOB %s" % job]
     if a.game:
         game = json.load(open(os.path.join(ROOT, "tools/games/games.json")))[a.game]

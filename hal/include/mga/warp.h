@@ -24,9 +24,8 @@ typedef struct {
 enum { WARP_F = 1, WARP_A = 2, WARP_S = 4, WARP_T2 = 8 };
 
 /* 1 when the chip has a WARP this HAL drives: the G400 family, and the
- * G200 when warp_g200 is set (off until the real card has passed:
- * docs/g200-warp.md). The G200 has pipes 0-7 only (no WARP_T2) and no
- * sequencer (warp_reserve_seq returns NULL). */
+ * G200 unless warp_g200 is 0 (docs/g200-warp.md). The G200 has pipes 0-7
+ * only (no WARP_T2) and no sequencer (warp_reserve_seq returns NULL). */
 int  warp_available(void);
 extern int warp_g200;
 /* The pipe loaded and started (loaded only if another one is in the
@@ -90,8 +89,13 @@ extern uint32_t warp_tris, warp_failures, warp_dma_kicks, warp_seqs, warp_seqs_t
  * window by the CPU. Read at the first warp_select. */
 extern int warp_use_dma;
 /* 1 (default): write-combining rings fetched by AGP cycles when GLOS gives
- * them (GLOS_FN_CACHE, docs/g400-warp.md); 0: cached rings, PCI cycles. */
+ * them (GLOS_FN_CACHE, docs/g400-warp.md); 0: cached rings, PCI cycles. The
+ * G200 keeps cached rings and PCI unless warp_agp_rate is set (its AGP drew
+ * nothing on the real card: docs/g200-warp.md). */
 extern int warp_use_agp;
+/* With AGP: 0 (default) the fastest rate the card and the bridge both have;
+ * 1 or 2 at most 1x or 2x. */
+extern int warp_agp_rate;
 extern uint32_t warp_ring_bytes;        /* the rings' size at most (256 KB) */
 extern uint32_t warp_kick_bytes;        /* vertex bytes between kicks (6 KB) */
 extern int warp_list_div;               /* the list's share of the rings' block: 1/warp_list_div (8) */

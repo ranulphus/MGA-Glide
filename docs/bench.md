@@ -113,6 +113,10 @@ tools/bench/run.py --pc bench-g450 --file A.EXE --file B.EXE --ovl build/ow/GLID
     --cmd "A.EXE --x" --cmd "B.EXE --glide=C:\TEST\GLIDE2X.OVL"
 ```
 
+bench-g400's DOS refuses an `=` in a `SET` value ("Syntax error", nothing set), so `run.py` writes
+`--set MGAGLIDE=...` into `C:\TEST\MGAGLIDE.CFG` instead, which Glide reads from the current directory. With
+`--game` (another directory) it stays a `SET` line, and `run.py` warns.
+
 `--cmd` runs several programs in one job, each line in turn in `C:\TEST`
 (DOSBench runs its OpenGL and Glide programs back to back this way): every
 EXE shipped with `--file` gets its DOS extender, and the job passes when every

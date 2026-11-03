@@ -19,8 +19,10 @@
 #   fifth     Fifth Wheel's tour with the WARP and without: FW-STAT, frame times
 #   glide     the acceptance games' traces through Glide, warp=2 against 0
 #   agp       last (a hang needs a person): AGP 1x and 2x by sideband
-# Phases before agp keep the DMA on PCI (DGL_AGP=0, MGAGLIDE agp=0).
-# SCENES_TESTS and SCENES_SECS narrow the scenes phase (the dry run: G1ARNA, 1).
+# Phases before agp keep the DMA on PCI (WARPTRI pci, DGL_AGP=0, MGAGLIDE
+# agp=0): the HAL otherwise turns AGP on wherever the card and bridge have it.
+# SCENES_TESTS, SCENES_SECS and SCENES_APIS (gl, glide) narrow the scenes
+# phase (the dry run: G1ARNA, 1).
 set -uo pipefail
 pc=${1:?PC}; shift
 phases=${*:-warptri conform scenes fifth glide agp}
@@ -74,7 +76,7 @@ phase_warptri() {
     local st
     for args in "" "pipe=7" "pio" "starts=30 reload" "starts=30 reload noreset" "n=20000"; do
         local n=warptri-$(echo "${args:-dma}" | tr ' =' '-_')
-        st=$(bench "$n" --exe "$MGA/build/djgpp/WARPTRI.EXE" --args "$args" --set DGL_AGP=0 --timeout 300)
+        st=$(bench "$n" --exe "$MGA/build/djgpp/WARPTRI.EXE" --args "$args pci" --timeout 300)
         say warptri "$args: $st; $(serial "$n" | grep -ao 'HX-TEST [a-z0-9-]* [A-Z]*\|per_tri=[0-9]*\|dead\|start [0-9]* pipe' \
             | sort | uniq -c | tr '\n' ' ' | tr -s ' ')"
     done
@@ -82,8 +84,11 @@ phase_warptri() {
 
 phase_conform() {
     local w
+    # (make conform-bench's steps: its PRE is one line, and these need two)
+    (cd "$DOSGL" && make -s MGA_GLIDE="$MGA" conform-dos && "$MGA/tools/dev" sh -c 'make -s conform-host && python3 tools/conform/run.py --refs') \
+        > "$out/conform-refs.log" 2>&1
     for w in 1 0; do
-        (cd "$DOSGL" && make conform-bench MGA_GLIDE="$MGA" PC="$pc" PRE="SET DGL_WARP=$w") > "$out/conform-$w.log" 2>&1
+        (cd "$DOSGL" && python3 tools/conform/run.py --bench "$pc" --pre "SET DGL_WARP=$w" --pre "SET DGL_AGP=0") > "$out/conform-$w.log" 2>&1
         say conform "DGL_WARP=$w: $(grep -c ' PASS ' "$out/conform-$w.log") pass, $(grep -c ' FAIL ' "$out/conform-$w.log") fail"
         cp "$DOSGL/out/conform/summary-$pc.json" "$out/conform-$w.json" 2>/dev/null
         [ -d "$DOSGL/out/conform/$pc" ] && rm -rf "$out/conform-$w" && cp -r "$DOSGL/out/conform/$pc" "$out/conform-$w"
@@ -97,6 +102,7 @@ phase_scenes() {
         --cmd "COPY C:\\TEST\\*.DBS C:\\DOSBENCH\\DATA > NUL" --cmd "SERSAY HX-DONE 0" --timeout 1200)
     say scenes "data: $st"
     for w in 1 0; do
+        case " ${SCENES_APIS:-gl glide} " in *" gl "*) ;; *) continue;; esac
         st=$(bench "scenes-gl-$w" --file "$DOSBENCH/build/dos/BENCHGL.EXE" --set "DGL_WARP=$w" --set DGL_AGP=0 \
             --cmd "BENCHGL.EXE $common" --timeout 3600 --idle 900)
         say scenes "OpenGL DGL_WARP=$w: $st"
@@ -104,6 +110,7 @@ phase_scenes() {
             | tee -a "$out/summary.txt"
     done
     for w in 2 0; do
+        case " ${SCENES_APIS:-gl glide} " in *" glide "*) ;; *) continue;; esac
         st=$(bench "scenes-glide-$w" --file "$DOSBENCH/build/dos/BENCHG.EXE" --ovl "$MGA/build/ow/GLIDE2X.OVL" \
             --set "MGAGLIDE=warp=$w agp=0" --cmd "BENCHG.EXE $common --glide=C:\\TEST\\GLIDE2X.OVL" --timeout 3600 --idle 900)
         say scenes "Glide warp=$w: $st"
@@ -141,17 +148,17 @@ phase_glide() {
 }
 
 phase_agp() {
-    local st a
+    local st a r
     for a in "agpinfo" "agp=1 agpdraw" "agp=2 agpdraw" "agp=2 dmabw"; do
         local n=agp-$(echo "$a" | tr ' =' '-_')
         st=$(bench "$n" --exe "$MGA/build/djgpp/WARPTRI.EXE" --args "$a" --timeout 300)
-        say agp "$a: $st; $(serial "$n" | grep -ao 'HX-TEST [a-z0-9-]* [A-Z]*\|sba[^ ]*\|per_tri=[0-9]*' | tr '\n' ' ')"
+        say agp "$a: $st; $(serial "$n" | grep -ao 'HX-TEST [a-z0-9-]* [A-Z]*\|agp ring=[0-9]* xfer=[0-9]*\|agp_pll=[0-9a-f]*\|per_tri=[0-9]*\|mb_s=[0-9]*' | tr '\n' ' ')"
     done
-    for w in 1; do
-        st=$(bench "agp-scenes-gl" --file "$DOSBENCH/build/dos/BENCHGL.EXE" --set "DGL_WARP=$w" \
+    for r in 1 2; do                    # (DGL_AGP=r: at most r x)
+        st=$(bench "agp-scenes-gl-$r" --file "$DOSBENCH/build/dos/BENCHGL.EXE" --set DGL_WARP=1 --set "DGL_AGP=$r" \
             --cmd "BENCHGL.EXE --tests G --data C:\\DOSBENCH\\DATA --secs 5" --timeout 3600 --idle 900)
-        say agp "OpenGL scenes by AGP: $st"
-        serial agp-scenes-gl | grep -a 'HX-STAT bench T ' | sed -n 's/.*test=\([A-Z0-9]*\).* fps=\([0-9.]*\).*/  \1 \2 fps/p' | tee -a "$out/summary.txt"
+        say agp "OpenGL scenes by AGP ${r}x: $st; $(serial "agp-scenes-gl-$r" | grep -ao 'DGL-WARP tris=[0-9]* failures=[0-9]*\|ring=[0-9/K]*' | tr '\n' ' ')"
+        serial "agp-scenes-gl-$r" | grep -a 'HX-STAT bench T ' | sed -n 's/.*test=\([A-Z0-9]*\).* fps=\([0-9.]*\).*/  \1 \2 fps/p' | tee -a "$out/summary.txt"
     done
 }
 

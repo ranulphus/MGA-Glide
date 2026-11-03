@@ -32,6 +32,7 @@ uint32_t warp_ring_bytes = 262144;     /* the rings' size at most: halved until 
 uint32_t warp_kick_bytes = 6144;       /* vertex bytes between kicks */
 int warp_list_div = 8;                 /* the list's share of the block: 1/warp_list_div */
 int warp_use_agp = 1;
+int warp_agp_rate;                  /* 0: the fastest the card and the bridge both have; 1 or 2: at most 1x or 2x */
 int warp_ring_mode;                 /* 0 none, 1 cached rings (PCI), 2 write-combining (PCI), 3 write-combining by AGP */
 int warp_wc_status;                 /* write-combining rings: 0 not asked, 1 given, -1 no DOS memory for them, -2 refused */
 uint32_t warp_ring_kb;
@@ -40,7 +41,7 @@ int warp_reset_before_load = 1;
 int warp_agp_xfer;                  /* the channels fetch by AGP cycles (AGP on, write-combining rings) */
 void (*warp_pre_kick)(void);        /* EXPERIMENT: called before each kick (a cache flush for AGP cycles) */
 uint32_t warp_diag[5];
-int warp_g200;                      /* the G200's WARP driven (off until checked on the real card) */
+int warp_g200 = 1;                  /* the G200's WARP driven (on since the real card passed: docs/g200-warp.md, G6) */
 
 static int g200(void)
 {
@@ -487,6 +488,20 @@ static void on_reset(void)
 static uint32_t agp_hcmd0, agp_ccmd0;   /* the commands as they were */
 static uint32_t agp_pll0;               /* the G200's AGP_PLL as it was */
 
+/* The G200's AGP_PLL: written only when it changes, then 10 ms for the
+ * clock to settle before the next transfer (a real G200 drew two batches
+ * by AGP 2x, then hung, with the PLL switched at every start and stop and
+ * no wait: bench-g400's PC, 2026-11-03). */
+static void pll_set(uint32_t v)
+{
+    uint32_t t0;
+    if ((MGA_RD32(MGAREG_AGP_PLL) & 1u) == (v & 1u))
+        return;
+    MGA_WR32_DIRECT(MGAREG_AGP_PLL, v);
+    for (t0 = sys_time_us(); (uint32_t)(sys_time_us() - t0) < 10000u;)
+        ;
+}
+
 static int agp_enable(void)
 {
     uint32_t hsts, csts, both, rate, cmd;
@@ -505,19 +520,19 @@ static int agp_enable(void)
     hsts = mga_pci_read32(0, 0, 0, (uint8_t)(agp_hcap + 4));
     csts = mga_pci_read32(mga.bus, mga.dev, mga.fn, 0xF4);
     both = hsts & csts;
-    rate = (both & 2u) ? 2u : (both & 1u) ? 1u : 0;
+    rate = (both & 2u) && warp_agp_rate != 1 ? 2u : (both & 1u) ? 1u : 0;
     if (!rate)
         return -1;
     if (g200() && !(both & (1u << 9)))
         return -1;                      /* (the G200 masters by AGP only with sideband addressing: 3-3, 5.2.2) */
-    if (g200()) {
-        agp_pll0 = MGA_RD32(MGAREG_AGP_PLL);
-        MGA_WR32_DIRECT(MGAREG_AGP_PLL, rate == 2u ? 1u : 0u);    /* agp2xpllen for 2x (the DRM's mga_dma.c) */
-    }
     cmd = rate | (1u << 8) | (both & (1u << 9));     /* (enable; sideband if both) */
     mga_pci_write32(0, 0, 0, (uint8_t)(agp_hcap + 8), cmd);
     mga_pci_write32(mga.bus, mga.dev, mga.fn, 0xF8,
                     cmd | ((((hsts >> 24) & 0xFF) > 31 ? 31u : ((hsts >> 24) & 0xFF)) << 24));
+    if (g200()) {                       /* agp2xpllen for 2x, after the modes, as the DRM's mga_dma.c */
+        agp_pll0 = MGA_RD32(MGAREG_AGP_PLL);
+        pll_set(rate == 2u ? 1u : 0u);
+    }
     agp_on = 1;
     return 0;
 }
@@ -529,7 +544,7 @@ static void agp_disable(void)
     mga_pci_write32(mga.bus, mga.dev, mga.fn, 0xF8, agp_ccmd0);
     mga_pci_write32(0, 0, 0, (uint8_t)(agp_hcap + 8), agp_hcmd0);
     if (g200())
-        MGA_WR32_DIRECT(MGAREG_AGP_PLL, agp_pll0);
+        pll_set(agp_pll0);
     agp_on = 0;
 }
 
@@ -553,7 +568,10 @@ static void dma_setup(void)
         return;
     /* Write-combining rings: whole 64 KB units, so a block 64 KB larger
        than the rings to align them in. */
-    if (warp_use_agp && (p = sys_dos_alloc(warp_ring_bytes + 0x10000u - 16u, &seg)) == NULL)
+    /* Not on the G200 unless warp_agp_rate asks: a real G200 drew nothing by
+       AGP, 1x or 2x, and PCI's bandwidth isn't what limits it (docs/g200-warp.md). */
+    if (warp_use_agp && (!g200() || warp_agp_rate) &&
+        (p = sys_dos_alloc(warp_ring_bytes + 0x10000u - 16u, &seg)) == NULL)
         warp_wc_status = -1;
     if (p) {
         uint32_t lin = (uint32_t)seg << 4, al = (lin + 0xFFFFu) & ~0xFFFFu;

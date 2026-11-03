@@ -284,7 +284,7 @@ index c2abe8b..4724dec 100644
      mgawarp_chip.has_alpha_test  = 1;
      mgawarp_chip.has_specular = 1;
 -    mgawarp_chip.has_dual_tex = 1;
--    mgawarp_chip.texel_centre = 1;
+     mgawarp_chip.texel_centre = 1;
 +    if (r->g200) {                      /* (the HAL's mga_chip_caps for the G200) */
 +        mgawarp_chip.family       = MGA_FAMILY_G200;
 +        mgawarp_chip.fifo_depth   = 64;
@@ -299,7 +299,6 @@ index c2abe8b..4724dec 100644
 +        mgawarp_chip.fifo_mask    = 0x1f;
 +        mgawarp_chip.ar_bits      = 22;
 +        mgawarp_chip.has_dual_tex = 1;
-+        mgawarp_chip.texel_centre = 1;
 +    }
      mgawarp_setup_valid       = 0;      /* the host may have written any register since: write them all */
  
