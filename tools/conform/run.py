@@ -29,6 +29,11 @@ CHIP = CARD[:-3] if CARD.endswith("pci") else CARD     # (a PCI card draws as it
 # Manifest entries keyed by card: the G400 family draws with the G200's
 # combine and blend capabilities, so it shares the G200's expectations.
 CARD_CLASS = {"g400": "g200", "g450": "g200"}.get(CHIP, CHIP)
+# The G200 and the G400 family set triangles up with the WARP (on the G200
+# since G7: docs/g200-warp.md) unless MGA_OPTS turns it off with warp=0; a
+# test's "warp" entry then holds (its own edge rule: docs/g400-warp.md).
+WARP = CHIP in ("g200", "g400", "g450") and \
+    "warp=0" not in os.environ.get("MGA_OPTS", "").replace(";", " ").split()
 MANIFEST = json.load(open(os.path.join(ROOT, "tests", "conform", "manifest.json")))
 JOBS = int(os.environ.get("LOOPA_JOBS", "6"))
 
@@ -80,7 +85,7 @@ def cmd_check(tests):
         r = run_one(t, MGA_OVL, out)
         cfg = dict(MANIFEST["_default"])
         cfg.update(MANIFEST.get(t, {}))
-        if CARD.startswith(("g400", "g450")):
+        if WARP:
             cfg.update(cfg.get("warp", {}))     # the WARP's own edges (docs/g400-warp.md)
         frames = {}
         refd = os.path.join(REFDIR, t)

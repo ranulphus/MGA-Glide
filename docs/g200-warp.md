@@ -134,6 +134,12 @@ without a failure.
 | G6 | The real card: one session (below) | done, 2026-11-03 (above) |
 | G7 | `warp_g200` on by default (and DOS-GL's and Glide's); the G200 by PCI only; Echoes of the Void's presets re-based | done |
 
+After G7, MGA-Glide's own conformance (`make conform-ci`) failed t04 on the G200: 237 edge pixels against the
+Voodoo's frame. The WARP sets triangles up with its own edge rule, and t04's manifest entry already allowed for it
+(`"warp": {"edge": true}`), but `tools/conform/run.py` applied that only on the G400 family. It now applies it
+wherever the WARP draws: the G200, G400 and G450, unless `MGA_OPTS` has `warp=0` (2026-11-04: 27 of 27 on the
+G200; t04 drew 39 triangles through the WARP).
+
 ## G6: the session on the real G200
 
 The owner swaps the G200 into bench-g400's PC (an IBM 300PL, Pentium II 400) once. Everything after that runs over
