@@ -47,8 +47,10 @@ ln -sfn "$(basename "$out")" "$BOX86_DIR/bin/86Box"
 
 roms=$BOX86_DIR/roms
 # The BF6 and Matrox ROMs for the Pentium II profile; the Shuttle HOT-433A and
-# the S3 Trio64V2/DX for the 486 profiles (run.py --machine, --card vbe).
-rom_dirs="/machines/bf6/ /video/matrox/ /machines/hot433/ /video/s3/"
+# the S3 Trio64V2/DX for the 486 profiles (run.py --machine, --card vbe); the
+# Crystal CS423x cards' Plug and Play data (run.py --sound cs4232, cs4235,
+# cs4236b: 86Box offers them only when it is there; GLOS's crystal.c).
+rom_dirs="/machines/bf6/ /video/matrox/ /machines/hot433/ /video/s3/ /sound/crystal/"
 if [ "$(cat "$roms/.commit" 2>/dev/null)" != "$ROMS_COMMIT" ]; then
   rm -rf "$roms"
   git init -q "$roms"
