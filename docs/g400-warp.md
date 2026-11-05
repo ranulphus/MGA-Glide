@@ -178,6 +178,10 @@ fetch by AGP cycles (WARPTRI `agp=N`, 2026-10-27):
 - **Coherency:** AGP reads don't snoop the CPU's caches. With the caches flushed before each kick (2 MB read) the
   WARP draws exactly as by PCI (`agpdraw`); without, nothing (`noflush`).
 
+WARPTRI turned AGP on itself then. Now the HAL does (below): `agp=N` asks it for N x at most, and the `agp` check
+fails if the fetches stay on PCI (as without GLOS). `cached` still forces AGP from the cached rings as above, the
+unsafe form that 86Box's silicon checks report as `agp-cached` (`make loopa-selftest-ext CHECKS=hazards`).
+
 So the rings must be write-combining, which takes ring 0 (the MTRRs). Under GLOS (API 1.4) the HAL asks for it:
 - `dma_setup` allocates the rings 64 KB larger and aligns them to 64 KB, and asks GLOS to make them write-combining
   (`sys_cache_wc`: `GLOS_FN_CACHE`, which sets the fixed MTRRs below A0000h; GLOS gives them back when the program

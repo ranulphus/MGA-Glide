@@ -15,6 +15,16 @@
  * the engine as it is at exit (as DOS-GL does: the WARP suspended), where
  * WARPTRI otherwise resets it.
  *
+ *   WARPTRI agp=N [agpdraw] [noflush] [cached]
+ *
+ * agp=N: AGP at N x at most (warp_agp_rate), the bandwidth (dmabw) or with
+ * agpdraw the drawing tests; the agp check fails if the fetches stayed on
+ * PCI (the HAL turns AGP on only with write-combining rings, which need
+ * GLOS). cached: AGP on by WARPTRI itself with the HAL's cached rings, the
+ * unsafe form 86Box's silicon checks report as agp-cached (the caches
+ * flushed before each kick, unless noflush, so it still draws); not on the
+ * G200, whose AGP_PLL is the HAL's.
+ *
  * starts=N instead starts the WARP N times, a small triangle and a stop
  * each time, and logs each start (warp_diag); reload alternates pipes 0 and
  * 7, so every start loads the microcode again.
@@ -175,12 +185,20 @@ static void flush_caches(void)
 }
 
 static int agp_hcap;                            /* agp=N: the bridge's AGP capability */
+static int agp_forced;                          /* cached: AGP turned on by WARPTRI, not the HAL */
+static uint32_t agp_hcmd0, agp_ccmd0;           /* (the commands as they were) */
 
-/* With agp=N, after the first start: what the HAL turned on. */
+/* With agp=N, after the first start: what the HAL turned on (logged at
+ * each start; checked at the first). */
 static void agp_log(void)
 {
+    static int checked;
     if (!agp_hcap)
         return;
+    if (!checked++)
+        hx_test("agp", warp_agp_xfer, "%s", warp_agp_xfer ? (agp_forced ? "fetches by AGP from cached rings (forced)"
+                                                             : "fetches by AGP from write-combining rings")
+                : "the fetches stayed on PCI (write-combining rings need GLOS; cached forces AGP)");
     hx_log("HX-STAT agp ring=%d xfer=%d host cmd=%08lx card cmd=%08lx agp_pll=%08lx", warp_ring_mode, warp_agp_xfer,
            (unsigned long)mga_pci_read32(0, 0, 0, agp_hcap + 8),
            (unsigned long)mga_pci_read32(mga.bus, mga.dev, mga.fn, 0xF8),
@@ -193,7 +211,7 @@ int main(int argc, char **argv)
     static const vtx z1[3] = { { 30, 260, 1000, 255, 255, 0 }, { 280, 270, 60000, 255, 255, 0 }, { 150, 460, 30000, 255, 255, 0 } };
     static const vtx z2[3] = { { 40, 450, 60000, 0, 255, 255 }, { 290, 300, 1000, 0, 255, 255 }, { 200, 470, 30000, 0, 255, 255 } };
     int pipe = 0, count = 4000, i, ok, pitch, cover, colour, drawn, starts = 0, reload = 0, keep = 0, dmabw = 0;
-    int agpinfo = 0, agp_rate = 0, agp_draw = 0, agp_noflush = 0, seqtest = 0, switches = 0, hazards = 0;
+    int agpinfo = 0, agp_rate = 0, agp_draw = 0, agp_noflush = 0, agp_cached = 0, seqtest = 0, switches = 0, hazards = 0;
     uint32_t seq_fan = 0, seq_strip = 0;
     mga_vbe_mode mode;
     mga_target tg;
@@ -216,6 +234,7 @@ int main(int argc, char **argv)
         else if (!strncmp(argv[i], "agp=", 4)) agp_rate = atoi(argv[i] + 4);
         else if (!strcmp(argv[i], "agpdraw")) agp_draw = 1;     /* with agp=N: the drawing tests, not dmabw */
         else if (!strcmp(argv[i], "noflush")) agp_noflush = 1;  /* EXPERIMENT: does the bridge snoop AGP reads? */
+        else if (!strcmp(argv[i], "cached")) agp_cached = 1;    /* with agp=N: AGP on with cached rings (the agp-cached hazard) */
         else if (!strcmp(argv[i], "seq")) seqtest = 1;          /* EXPERIMENT: strips and fans by the ACCEPT sequencer */
         else if (!strncmp(argv[i], "switch=", 7)) switches = atoi(argv[i] + 7);   /* the cost of a pipe switch */
         else if (!strncmp(argv[i], "seqf=", 5)) seq_fan = (uint32_t)strtoul(argv[i] + 5, NULL, 16);
@@ -262,7 +281,7 @@ int main(int argc, char **argv)
     if (agp_rate) {
         /* AGP at agp_rate x at most: the HAL turns it on at the first start
          * (warp.c's agp_enable: the bridge, then the card, then the G200's
-         * AGP_PLL) and off at warp_stop. */
+         * AGP_PLL) and off at warp_stop; with cached, WARPTRI does. */
         int hcap = (int)(mga_pci_read32(0, 0, 0, 0x34) & 0xFC), k;
         uint32_t hsts, csts, rate = agp_rate == 2 ? 2u : 1u;
         for (k = 0; k < 8 && hcap && (mga_pci_read32(0, 0, 0, hcap) & 0xFF) != 2; k++)
@@ -285,6 +304,25 @@ int main(int argc, char **argv)
         warp_agp_rate = (int)rate;
         warp_pre_kick = agp_noflush ? NULL : flush_caches;   /* (the CPU's writes out of its caches before each fetch) */
         dmabw = !agp_draw;
+        if (agp_cached) {
+            /* The bridge, then the card, at rate x with sideband addressing,
+             * the card's queue the bridge's depth (as agp_enable); the HAL
+             * keeps its cached rings, and the channels fetch them by AGP. */
+            if (mga.family == MGA_FAMILY_G200) {
+                hx_test("agp", 0, "cached: not on the G200 (its AGP_PLL is the HAL's)");
+                goto out;
+            }
+            agp_hcmd0 = mga_pci_read32(0, 0, 0, hcap + 8);
+            agp_ccmd0 = mga_pci_read32(mga.bus, mga.dev, mga.fn, 0xF8);
+            warp_use_agp = 0;
+            mga_pci_write32(0, 0, 0, hcap + 8, rate | (1u << 8) | (1u << 9));
+            mga_pci_write32(mga.bus, mga.dev, mga.fn, 0xF8, rate | (1u << 8) | (1u << 9) |
+                            ((((hsts >> 24) & 0xFF) > 31 ? 31u : ((hsts >> 24) & 0xFF)) << 24));
+            hx_log("HX-STAT agp on: host cmd=%08lx card cmd=%08lx", (unsigned long)mga_pci_read32(0, 0, 0, hcap + 8),
+                   (unsigned long)mga_pci_read32(mga.bus, mga.dev, mga.fn, 0xF8));
+            agp_forced = 1;
+            warp_agp_xfer = 1;
+        }
     }
     if (dmabw) {
         uint64_t ticks = 0, best = ~(uint64_t)0;
@@ -636,6 +674,11 @@ int main(int argc, char **argv)
 out:
     warp_stop();                                /* (AGP off again, as it was) */
     warp_pre_kick = NULL;
+    if (agp_forced) {                           /* (cached: the card first, then the bridge, as they were) */
+        warp_agp_xfer = 0;
+        mga_pci_write32(mga.bus, mga.dev, mga.fn, 0xF8, agp_ccmd0);
+        mga_pci_write32(0, 0, 0, agp_hcap + 8, agp_hcmd0);
+    }
     MGA_WR32(MGAREG_OPMODE, opmode_saved);
     if (!keep)
         engine_reset();                         /* the next program finds the engine and the WARPs reset */

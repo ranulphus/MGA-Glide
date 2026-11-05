@@ -207,11 +207,11 @@ def check_hazards():
     got = dict((k, v["count"]) for k, v in hz.items())
     want = {"warp-inflight": 2, "warp-opmode": 1, "rfw": 1, "tlut": 1}
     ok &= report("hazards", st == "PASS" and got == want, "WARPTRI hazards %s, %s (want %s)" % (st, got, want))
-    st, serial = job("selftest-hazards-agp", *exe, "--args", "agp=2 agpdraw")
+    st, serial = job("selftest-hazards-agp", *exe, "--args", "agp=2 agpdraw cached")   # (AGP from cached rings: the hazard)
     hz = hazards_of("selftest-hazards-agp") or {}
     on = next((l for l in serial.split("\n") if l.startswith("HX-STAT agp on:")), "")
     good = st == "PASS" and set(hz) == {"agp-cached"} and on.endswith("card cmd=1f000302")
-    ok &= report("hazards-agp", good, "WARPTRI agp=2 %s, %s; %s" % (st, sorted(hz), on[len("HX-STAT "):] or "AGP not on"))
+    ok &= report("hazards-agp", good, "WARPTRI agp=2 cached %s, %s; %s" % (st, sorted(hz), on[len("HX-STAT "):] or "AGP not on"))
     st, serial = job("selftest-hazards-probe", "--card", "g400", "--exe", "build/djgpp/PROBE.EXE")
     pci = next((l for l in serial.split("\n") if l.startswith("HX-TEST pci ")), "no pci case")
     ok &= report("hazards-probe", st == "PASS" and " rev=05 " in pci, "PROBE %s: %s" % (st, pci[len("HX-TEST pci "):]))
